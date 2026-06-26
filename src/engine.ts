@@ -52,6 +52,7 @@ export class Lucarne {
   private readonly record: boolean;
   private readonly fps: number;
   private readonly retentionMin: number;
+  private readonly segmentSeconds: number;
   private nextCdp: number;
   private readonly sessions = new Map<string, Tracked>();
   private readonly backends: Record<string, Backend> = { docker: dockerBackend, native: nativeBackend };
@@ -74,6 +75,7 @@ export class Lucarne {
     this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
     this.fps = opts.fps ?? 4;
     this.retentionMin = opts.retentionMin ?? 60;
+    this.segmentSeconds = opts.segmentSeconds ?? 60;
     this.nextCdp = opts.cdpPortBase ?? 9300;
     this.registryFile = opts.registryFile ?? registryFilePath();
     this.maxConcurrent = opts.maxConcurrent ?? Infinity;
@@ -111,7 +113,7 @@ export class Lucarne {
       });
       media = await startSessionMedia({
         cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
-        record: this.record, fps: this.fps, retentionMin: this.retentionMin, mobile: opts.mobile, quality: opts.quality, geo: opts.geo,
+        record: this.record, fps: this.fps, retentionMin: this.retentionMin, segmentSeconds: this.segmentSeconds, mobile: opts.mobile, quality: opts.quality, geo: opts.geo,
       });
     } catch (e) {
       this.releaseSlot();

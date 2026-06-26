@@ -17,6 +17,8 @@ export function startRecorder(opts: {
   recDir: string;
   fps: number;
   retentionMin: number;
+  /** Seconds per segment (default 60). Lower for tests so a segment finalizes fast. */
+  segmentSeconds?: number;
   frames: FrameSource;
 }): Recorder | null {
   try {
@@ -34,7 +36,7 @@ export function startRecorder(opts: {
     "-hide_banner", "-loglevel", "error", "-y",
     "-f", "image2pipe", "-framerate", String(opts.fps), "-i", "-",
     ...enc, "-pix_fmt", "yuv420p",
-    "-f", "segment", "-segment_time", "60", "-reset_timestamps", "1",
+    "-f", "segment", "-segment_time", String(opts.segmentSeconds ?? 60), "-reset_timestamps", "1",
     `${opts.recDir}/seg_%05d.mp4`,
   ], { stdio: ["pipe", "ignore", "ignore"] });
   ff.on("error", () => { /* surfaced via the version check above */ });

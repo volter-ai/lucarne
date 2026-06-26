@@ -1,5 +1,9 @@
 # lucarne
 
+[![CI](https://github.com/volter-ai/lucarne/actions/workflows/ci.yml/badge.svg)](https://github.com/volter-ai/lucarne/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/lucarne.svg)](https://www.npmjs.com/package/lucarne)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 **Self-hostable browser sessions you can drive, watch, and record — on your own machine and your own IP.**
 
 A browser session in `lucarne` exposes three surfaces at once:
@@ -214,6 +218,20 @@ minutes (default 60) of one-minute segments.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
 `lucarne` ships an *optional* token, but deliberately does **not** ship tunneling or a fleet UI — those belong to whatever consumes it.
+
+## Status & testing
+
+Pre-1.0 (`0.x`): the API is settling and **minor versions may make breaking changes**
+— pin a version and read [`CHANGELOG.md`](./CHANGELOG.md) before upgrading.
+
+Every feature lands with a committed, re-runnable acceptance proof that asserts **real
+behavior** — a rendered JPEG frame, real-Chrome state, a valid mp4, an RFC TOTP vector —
+**never an HTTP 200** (see [`ROADMAP.md`](./ROADMAP.md) "Proof of completion" and
+[`CONTRIBUTING.md`](./CONTRIBUTING.md)). The suite (`npm test`) runs the **native** backend
+against real Chrome and is enforced in CI on Linux (`google-chrome-stable` + `ffmpeg`,
+under `xvfb`). The **docker** backend is smoke-tested when Docker is available (building the
+~700 MB image per CI run is intentionally not gated); the native lane is the primary,
+fully-proven path.
 
 ## Why "lucarne"
 

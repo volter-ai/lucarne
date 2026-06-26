@@ -28,7 +28,7 @@ export function startMcpServer(client: LucarneClient, io: Io = process): void {
     const id = req.id;
     try {
       if (req.method === "initialize") {
-        return send({ jsonrpc: "2.0", id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "lucarne", version: "0.8.0" } } });
+        return send({ jsonrpc: "2.0", id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "lucarne", version: "0.9.0" } } });
       }
       if (req.method === "notifications/initialized") return; // notification, no reply
       if (req.method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });

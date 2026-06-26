@@ -58,7 +58,12 @@ try {
   // 3. INPUT PARITY — caps/shift, and Cmd+A editing command, reach real Chrome
   b = await chromium.connectOverCDP(session.cdpUrl);
   p = b.contexts()[0].pages()[0];
-  await p.evaluate(() => document.getElementById("i").focus());
+  // self-contained: re-create the fields if the about:blank DOM didn't survive the
+  // reconnect (keeps the input proofs robust on slower/CI machines)
+  await p.evaluate(() => {
+    if (!document.getElementById("i")) document.body.innerHTML = '<input id=i><textarea id=t>hello world foo</textarea>';
+    document.getElementById("i").focus();
+  });
   const iw = new WS(WSURL);
   await new Promise((r, j) => { iw.on("open", r); iw.on("error", j); });
   const key = (k, mod = 0, code = "") => { iw.send(JSON.stringify({ t: "keydown", key: k, code, mod })); iw.send(JSON.stringify({ t: "keyup", key: k, code, mod })); };
@@ -697,6 +702,34 @@ try {
   check("python-sdk: client module loads with all methods", out.trim() === "True");
 } catch (e) {
   check("python-sdk: client module loads with all methods", false, String(e.message));
+}
+
+// ── Recording: a record:true session produces a playable mp4 segment ─────────
+const recEngine = new Lucarne({ port: 7833, token: TOKEN, record: true, fps: 6, segmentSeconds: 2 });
+await recEngine.listen();
+try {
+  const rs = await recEngine.create({ backend: "native", profile: "rec" });
+  const rc = await attachPage(rs.cdpUrl);
+  rc.send("Page.navigate", { url: "https://example.com" });
+  // wait until at least one segment has FINALIZED (a 2nd appears ⇒ the 1st is closed)
+  let segs = [];
+  for (let i = 0; i < 48 && segs.length < 2; i++) { await sleep(250); segs = recEngine.recordings(rs.id); }
+  rc.close();
+  let bytes = 0, durationOk = false;
+  if (segs.length) {
+    const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7833/sessions/rec/recordings/${segs[0]}?token=${TOKEN}`)).arrayBuffer());
+    bytes = buf.length;
+    const tmpMp4 = path.join(os.tmpdir(), `lucarne-rec-${ID}.mp4`);
+    fs.writeFileSync(tmpMp4, buf);
+    try {
+      const dur = execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", tmpMp4], { encoding: "utf8" }).trim();
+      durationOk = parseFloat(dur) > 0;
+    } catch { /* ffprobe missing */ }
+    fs.rmSync(tmpMp4, { force: true });
+  }
+  check("recording: a record:true session produces a playable mp4 segment", segs.length >= 1 && bytes > 1000 && durationOk, segs[0] ? `${segs[0]} ${bytes}B` : "no segment");
+} finally {
+  await recEngine.close().catch(() => {});
 }
 
 const failed = results.filter((r) => !r.pass).length;

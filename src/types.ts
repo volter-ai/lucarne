@@ -92,6 +92,8 @@ export interface EngineOptions {
   fps?: number;
   /** Minutes of recording to retain. Default 60. */
   retentionMin?: number;
+  /** Seconds per recording segment. Default 60. */
+  segmentSeconds?: number;
   /** First CDP port to allocate. Default 9300. */
   cdpPortBase?: number;
   /** How often the lifecycle reaper checks timeout/inactivity. Default 500ms. */

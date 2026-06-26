@@ -55,6 +55,7 @@ export async function startSessionMedia(opts: {
   record: boolean;
   fps: number;
   retentionMin: number;
+  segmentSeconds?: number;
   mobile?: boolean;
   quality?: number;
   geo?: { latitude: number; longitude: number; accuracy?: number };
@@ -174,7 +175,7 @@ export async function startSessionMedia(opts: {
   };
 
   const recorder: Recorder | null = opts.record
-    ? startRecorder({ recDir: opts.recDir, fps: opts.fps, retentionMin: opts.retentionMin, frames })
+    ? startRecorder({ recDir: opts.recDir, fps: opts.fps, retentionMin: opts.retentionMin, segmentSeconds: opts.segmentSeconds, frames })
     : null;
 
   const ret: SessionMedia = {
