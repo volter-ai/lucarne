@@ -20,7 +20,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ create / get / list / destroy session, token auth
 - ✅ P1 explicit **`status`** + rich session object (uptime, idle, dims, limits); `GET /sessions/:id/status`. *(Proof: status returns uptime + dims.)* · ✅ P1 `release-all` (`DELETE /sessions`). *(Proof: destroys every live session.)*
 - ✅ P1 **`timeout`** (max duration) and **`inactivityTimeout`** (idle auto-release; `touch` / porthole input resets it). *(Proof: idle session reaped · touch keeps alive · timeout reaps even an active session.)*
-- ✅ P1 **session outlives the driver** — sessions are engine-owned processes; a porthole/CDP client disconnect never ends them, reconnect by id. 🔨 P1 survive *daemon* restart (persisted registry — see "survive restart")
+- ✅ P1 **session outlives the driver** — sessions are engine-owned processes; a porthole/CDP client disconnect never ends them, reconnect by id. ✅ P1 **survive daemon restart** — durable specs persisted to `LUCARNE_HOME/sessions.json`; `close()` keeps them, `restore()` (called by `serve`) re-spawns from the on-disk profile; explicit `destroy` forgets. *(Proof: session restored by id after restart, cookie/login intact; destroy drops the spec.)*
 - 🔨 P2 `userMetadata` tags + list-query filter
 - 🔨 P3 concurrency allocation / pooling / queue
 - 🚫 regions / multi-region (your machine *is* the location) · billing/credits · rate-limits
@@ -111,7 +111,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 **Phase 1 — "actually be me" (P0):** persistent profiles · seed-from-real-Chrome · clipboard sync · file upload · download retrieval. *Without these, "operate my accounts" isn't real.*
 
-**Phase 2 — daily-driver robustness (P1):** session durability (timeout / inactivity / keepAlive / reconnect / persisted registry / survive restart) · multi-tab porthole · view-only + nav controls · touch input · screenshot/PDF API · health/metrics · session-context export/import · extensions · files API · idle reaping.
+**Phase 2 — daily-driver robustness (P1): ✅ COMPLETE** — session durability (timeout / inactivity / survive restart) · multi-tab porthole · view-only + nav controls · touch input · mobile viewport · screenshot/PDF API · health/metrics + per-session stats · session-context export/import · extensions · files API · profile API · idle reaping. *(38/38 proofs.)*
 
 **Phase 3 — observability & DX (P2):** network/console/CDP log capture + stream · replay viewer · typed SDK + OpenAPI · credentials API (+ TOTP) · IME · WebRTC porthole option · native-UI-capture decision · encrypted profiles.
 
@@ -140,7 +140,8 @@ P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) �
 into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
 runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile API (list/active-guard/delete) ·
 ✅ per-session stats (frames + bytes) · ✅ showControls nav (go + back) · ✅ files workspace (global +
-per-session round-trip) · ✅ mobile viewport (390 + touch + iPhone UA). **35/35.**
+per-session round-trip) · ✅ mobile viewport (390 + touch + iPhone UA) · ✅ survive-restart (restored by
+id + login intact). **38/38. Phase 2 (P1) complete.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

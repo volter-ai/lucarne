@@ -26,13 +26,21 @@ export interface SessionDirs {
 
 /** The durable, session-independent files workspace. */
 export function globalFilesDir(): string {
-  const home = process.env.LUCARNE_HOME ?? path.join(os.homedir(), ".lucarne");
-  return path.join(home, "files");
+  return path.join(lucarneHome(), "files");
+}
+
+/** The lucarne home root (durable state lives here). */
+export function lucarneHome(): string {
+  return process.env.LUCARNE_HOME ?? path.join(os.homedir(), ".lucarne");
 }
 
 export function profilesRoot(): string {
-  const home = process.env.LUCARNE_HOME ?? path.join(os.homedir(), ".lucarne");
-  return path.join(home, "profiles");
+  return path.join(lucarneHome(), "profiles");
+}
+
+/** Where the persisted session registry (for surviving daemon restart) lives. */
+export function registryFilePath(): string {
+  return path.join(lucarneHome(), "sessions.json");
 }
 
 export function sessionDirs(id: string, persist: boolean): SessionDirs {

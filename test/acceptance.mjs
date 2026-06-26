@@ -393,6 +393,42 @@ try {
   await moEngine.close().catch(() => {});
 }
 
+// ── P1: survive daemon restart (persisted session registry) ──────────────────
+const RHOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-restart-"));
+process.env.LUCARNE_HOME = RHOME;                                // isolate this block's durable state
+const REG = path.join(RHOME, "sessions.json");
+const readCookieAt = async (cdpUrl) => {
+  const b = await chromium.connectOverCDP(cdpUrl);
+  const c = (await b.contexts()[0].cookies("https://example.com")).find((x) => x.name === "rst_c");
+  await b.close();
+  return c?.value;
+};
+try {
+  // engine1: durable session + a persistent cookie, then the daemon STOPS
+  const e1 = new Lucarne({ port: 7822, token: TOKEN, record: false, registryFile: REG });
+  await e1.listen();
+  const r1 = await e1.create({ backend: "native", profile: "rst" });
+  const b = await chromium.connectOverCDP(r1.cdpUrl);
+  await b.contexts()[0].addCookies([{ name: "rst_c", value: "kept", url: "https://example.com", expires: 2000000000 }]);
+  await b.close();
+  await e1.close();                                              // kills Chrome, KEEPS the persisted spec
+
+  // engine2: a fresh daemon restores durable sessions from the registry
+  const e2 = new Lucarne({ port: 7823, token: TOKEN, record: false, registryFile: REG });
+  await e2.listen();
+  const restored = await e2.restore();
+  const back = e2.get("rst");
+  check("survive-restart: durable session restored by id after restart", restored.includes("rst") && !!back);
+  check("survive-restart: restored session keeps its logged-in state", back && (await readCookieAt(back.cdpUrl)) === "kept");
+
+  // an EXPLICIT destroy forgets the spec — a later restart won't resurrect it
+  await e2.destroy("rst");
+  check("survive-restart: explicit destroy drops the persisted spec", !("rst" in JSON.parse(fs.readFileSync(REG, "utf8"))));
+  await e2.close();
+} finally {
+  fs.rmSync(RHOME, { recursive: true, force: true });
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

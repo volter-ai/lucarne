@@ -65,6 +65,8 @@ async function main(): Promise<void> {
       });
       await engine.listen();
       process.stdout.write(`lucarne engine on http://${engine.host}:${engine.port}\n`);
+      const restored = await engine.restore();
+      if (restored.length) process.stdout.write(`lucarne restored ${restored.length} durable session(s): ${restored.join(", ")}\n`);
       const shutdown = async (): Promise<void> => { await engine.close(); process.exit(0); };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);

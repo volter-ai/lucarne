@@ -119,6 +119,11 @@ seeded cookies decrypt and you start authenticated.
 Load custom unpacked extensions with `create({ extensions: ["/path/to/ext"] })` (native
 backend) — a persistent/seeded profile also brings its own installed extensions along.
 
+Durable sessions **survive a daemon restart**: their specs persist to
+`LUCARNE_HOME/sessions.json`, and `lucarne serve` re-spawns them on startup from the
+on-disk profile (login state intact). A clean `close()` keeps them; an explicit
+`destroy` / `DELETE /sessions/:id` forgets them so a restart won't bring them back.
+
 ## API
 
 ```ts

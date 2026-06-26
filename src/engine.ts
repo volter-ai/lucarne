@@ -7,7 +7,7 @@ import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { portholeHtml } from "./porthole.js";
-import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
+import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
@@ -55,6 +55,7 @@ export class Lucarne {
   private readonly wss = new WebSocketServer({ noServer: true });
   private server: http.Server | undefined;
   private reaper: ReturnType<typeof setInterval> | undefined;
+  private readonly registryFile: string;
 
   constructor(opts: EngineOptions = {}) {
     this.host = opts.host ?? "127.0.0.1";
@@ -67,6 +68,7 @@ export class Lucarne {
     this.fps = opts.fps ?? 4;
     this.retentionMin = opts.retentionMin ?? 60;
     this.nextCdp = opts.cdpPortBase ?? 9300;
+    this.registryFile = opts.registryFile ?? registryFilePath();
     // The lifecycle reaper runs whether or not the HTTP API is listening (embedded
     // use too); unref'd so it never keeps the process alive on its own.
     this.reaper = setInterval(() => this.reap(), opts.reapIntervalMs ?? 500);
@@ -116,7 +118,39 @@ export class Lucarne {
       timeoutMs: opts.timeoutMs, inactivityMs: opts.inactivityMs,
     };
     this.sessions.set(id, s);
+    if (persist) this.persistSpec(id, { ...opts, profile: id, persist: true });
     return pub(s);
+  }
+
+  // ── Persisted session registry (survive daemon restart) ──
+  private readReg(): Record<string, CreateSessionOptions> {
+    try { return JSON.parse(fs.readFileSync(this.registryFile, "utf8")); } catch { return {}; }
+  }
+  private writeReg(reg: Record<string, CreateSessionOptions>): void {
+    try {
+      fs.mkdirSync(path.dirname(this.registryFile), { recursive: true });
+      fs.writeFileSync(this.registryFile, JSON.stringify(reg, null, 2));
+    } catch { /* best-effort durability */ }
+  }
+  private persistSpec(id: string, spec: CreateSessionOptions): void {
+    const reg = this.readReg(); reg[id] = spec; this.writeReg(reg);
+  }
+  private forgetSpec(id: string): void {
+    const reg = this.readReg(); if (id in reg) { delete reg[id]; this.writeReg(reg); }
+  }
+
+  /**
+   * Re-spawn durable sessions persisted by a previous daemon run. Their profiles
+   * are on disk, so state (logins/cookies) is intact. Called by `listen()`.
+   */
+  async restore(): Promise<string[]> {
+    const reg = this.readReg();
+    const restored: string[] = [];
+    for (const [id, spec] of Object.entries(reg)) {
+      if (this.sessions.has(id)) continue;
+      try { await this.create(spec); restored.push(id); } catch { /* skip a spec that won't boot */ }
+    }
+    return restored;
   }
 
   list(): Session[] { return [...this.sessions.values()].map(pub); }
@@ -293,7 +327,12 @@ export class Lucarne {
     }
   }
 
-  async destroy(id: string): Promise<boolean> {
+  /**
+   * Tear a session down. `forget` (default true) is an EXPLICIT end — it also
+   * drops the persisted spec so a restart won't bring it back. `close()` passes
+   * `forget=false` so durable sessions are restored after a daemon restart.
+   */
+  async destroy(id: string, forget = true): Promise<boolean> {
     const s = this.sessions.get(id);
     if (!s) return false;
     try { s.media.close(); } catch { /* ignore */ }
@@ -301,6 +340,7 @@ export class Lucarne {
     try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
     try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
     this.sessions.delete(id);
+    if (forget) this.forgetSpec(id);
     return true;
   }
 
@@ -504,7 +544,9 @@ export class Lucarne {
   async close(): Promise<void> {
     if (this.reaper) clearInterval(this.reaper);
     this.server?.close();
-    await Promise.all([...this.sessions.keys()].map((id) => this.destroy(id)));
+    // Daemon stopping — kill the browsers but KEEP durable specs so `restore()`
+    // brings them back on the next start. (`destroy(id)` is the explicit end.)
+    await Promise.all([...this.sessions.keys()].map((id) => this.destroy(id, false)));
   }
 }
 

@@ -86,6 +86,11 @@ export interface EngineOptions {
   cdpPortBase?: number;
   /** How often the lifecycle reaper checks timeout/inactivity. Default 500ms. */
   reapIntervalMs?: number;
+  /**
+   * Where durable session specs are persisted so they survive a daemon restart.
+   * Default `LUCARNE_HOME/sessions.json`. `listen()` restores them on startup.
+   */
+  registryFile?: string;
   /** First porthole (view) port to allocate. Default 8100. */
   viewPortBase?: number;
 }
