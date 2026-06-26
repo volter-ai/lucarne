@@ -118,6 +118,28 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ---
 
+## Proof of completion (the discipline)
+
+**No feature is "done" until a committed, re-runnable acceptance proof asserts its REAL
+behavior and passes (exit 0)** — at the level that actually matters (rendered pixels /
+real-Chrome state / the loaded UI), **never an HTTP 200.** (This session repeatedly
+mistook "the proxy returns 200" for "it works" when the UI was blank/offline — the proof
+discipline exists to kill that.) Proofs live in `test/acceptance.mjs` (`npm test`). CI runs
+build/typecheck; acceptance runs where Chrome is available. Every feature PR must add/extend
+a proof, green, before it counts.
+
+### Green today (committed in `test/acceptance.mjs`)
+✅ drive (connectOverCDP navigates) · ✅ porthole renders a real JPEG frame · ✅ input: caps/shift
+typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command). **4/4.**
+Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
+full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
+
+### Acceptance proof each roadmap item must meet
+**P0** — persistent profiles: set cookie/login in profile X, destroy + recreate same profile, assert it persists · seed: fixture profile's known cookie present in new session · clipboard: paste delivers text into a focused real-Chrome input · file upload: page's file input reports matching filename + sha256 · downloads: triggered download listed + fetched bytes' sha256 match.
+**P1** — durability: keepAlive session survives daemon kill+restart, reconnect by id, state intact · multi-tab: API lists 2 tabs, porthole switches, frames differ · touch: dispatched tap fires page handler at mapped coords · screenshot/PDF: valid PNG(magic+dims)/PDF(%PDF+pagecount) · health: count == live sessions · context export/import: exported cookies/storage equal after import.
+**P2** — logs: captured log contains the known request URL + console line · replay: ≥N frames for N seconds recorded · credentials/TOTP: auto-fills a fixture login, generates a valid TOTP · SDK/OpenAPI: SDK round-trips create/list/destroy, spec validates.
+**P3** — MCP: client calls create/list/drive/destroy with asserted results · termfleet-native: the in-UI proof (provider green + window renders live pixel + click/type lands) — committed, not ad hoc.
+
 ## The thesis
 > Steel/Browserbase/Browserless = *ephemeral, managed, anonymized* browsers at scale — **spoof to evade.**
 > **lucarne = your durable, authenticated, real browser identities — *be genuinely you* — an agent

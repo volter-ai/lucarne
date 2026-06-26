@@ -50,7 +50,9 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "build:image": "docker build -t lucarne-browser:latest docker"
+    "build:image": "docker build -t lucarne-browser:latest docker",
+    "test": "npm run build && node test/acceptance.mjs",
+    "test:acceptance": "node test/acceptance.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
