@@ -1,6 +1,14 @@
 import { attachPage } from "./cdp.js";
 import { startRecorder, type Recorder } from "./recorder.js";
+import { virtualKeyCode } from "./keymap.js";
 import type { FrameSource, InputEvent } from "./porthole.js";
+
+const MOUSE_BUTTON = ["left", "middle", "right"] as const;
+
+// editing accelerators (Cmd/Ctrl + key) → CDP edit command
+const EDIT_COMMANDS: Record<string, string> = {
+  KeyA: "selectAll", KeyC: "copy", KeyV: "paste", KeyX: "cut", KeyZ: "undo", KeyY: "redo", RedoZ: "redo",
+};
 
 export interface SessionMedia {
   frames: FrameSource;
@@ -38,17 +46,36 @@ export async function startSessionMedia(opts: {
     subscribe: (cb) => { subs.add(cb); return () => subs.delete(cb); },
   };
   const onInput = (ev: InputEvent): void => {
-    const button = (["left", "middle", "right"] as const)[ev.button ?? 0] ?? "left";
-    if (ev.t === "down") conn.send("Input.dispatchMouseEvent", { type: "mousePressed", x: ev.x, y: ev.y, button, clickCount: 1 });
-    else if (ev.t === "up") conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: ev.x, y: ev.y, button, clickCount: 1 });
-    else if (ev.t === "move") conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: ev.x, y: ev.y });
-    else if (ev.t === "wheel") conn.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy });
-    else if (ev.t === "key" && ev.key) {
-      if (ev.key.length === 1) conn.send("Input.insertText", { text: ev.key });
-      else if (["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(ev.key)) {
-        conn.send("Input.dispatchKeyEvent", { type: "keyDown", key: ev.key, code: ev.key });
-        conn.send("Input.dispatchKeyEvent", { type: "keyUp", key: ev.key, code: ev.key });
-      }
+    const modifiers = ev.mod ?? 0;
+    if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
+      conn.send("Input.dispatchMouseEvent", {
+        type: ev.t === "down" ? "mousePressed" : ev.t === "up" ? "mouseReleased" : "mouseMoved",
+        x: ev.x, y: ev.y,
+        button: ev.t === "move" ? "none" : (MOUSE_BUTTON[ev.button ?? 0] ?? "left"),
+        buttons: ev.buttons ?? 0,           // held buttons → enables drags
+        clickCount: ev.t === "move" ? 0 : (ev.clickCount || 1), // double/triple-click
+        modifiers,
+      });
+    } else if (ev.t === "wheel") {
+      conn.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy, modifiers });
+    } else if ((ev.t === "keydown" || ev.t === "keyup") && ev.key) {
+      const down = ev.t === "keydown";
+      const cmdKey = (modifiers & 2) !== 0 || (modifiers & 4) !== 0; // ctrl or meta = "command" modifier
+      // a printable char inserts text on keyDown — UNLESS a command modifier is held (that's a shortcut)
+      const text = down && ev.key.length === 1 && !cmdKey ? ev.key : undefined;
+      // editing accelerators must be sent as CDP `commands` — synthetic keydowns alone don't fire them
+      const command = down && cmdKey && ev.code ? EDIT_COMMANDS[ev.code === "KeyZ" && modifiers & 8 ? "RedoZ" : ev.code] : undefined;
+      conn.send("Input.dispatchKeyEvent", {
+        type: down ? (text !== undefined ? "keyDown" : "rawKeyDown") : "keyUp",
+        key: ev.key,
+        code: ev.code ?? "",
+        windowsVirtualKeyCode: virtualKeyCode(ev.key, ev.code),
+        ...(text !== undefined ? { text, unmodifiedText: text } : {}),
+        ...(command ? { commands: [command] } : {}),
+        modifiers,
+        autoRepeat: !!ev.repeat,
+        location: 0,
+      });
     }
   };
 

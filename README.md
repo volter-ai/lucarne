@@ -83,6 +83,11 @@ over a **WebSocket** → canvas — survives reverse proxies/tunnels, unlike MJP
 engine host). The container is therefore tiny — just Chrome + Xvfb + a CDP bridge, no
 VNC/GStreamer stack.
 
+The porthole has **full input fidelity** — modifiers, virtual key codes, editing shortcuts
+(select-all / copy / cut / paste / undo via CDP `commands`), drag, double/triple-click,
+right-click, and scroll. Not yet handled: **clipboard sync** (cross-machine copy/paste),
+**IME** (CJK composition), and **touch** events (phone) — the known tail.
+
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 
 Build the docker image once:
