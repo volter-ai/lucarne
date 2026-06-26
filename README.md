@@ -64,17 +64,24 @@ console.log(session.cdpUrl, session.viewUrl);
 
 ## Backends
 
-One API, two backends — pick per session via `backend`:
+**A backend is only an isolation strategy.** Drive, watch (porthole), and record are
+shared engine code over CDP — *identical* for every backend. Both backends just spawn
+an isolated Chrome and expose CDP; the engine does the rest, so a session behaves the
+same whichever backend it ran on.
 
 | | `native` | `docker` |
 |---|---|---|
-| Chrome | real local Chrome, launched off-screen | Linux Chrome in a container |
+| isolation | local process + own profile | container (process + fs + net) |
+| Chrome | real local Chrome, off-screen | Linux Chrome in a container |
 | fingerprint | **real** (your actual machine) | Linux / no-GPU (bot-detectable) |
 | IP | your residential IP | your residential IP |
-| isolation | per-profile data isolation | container (process + fs + net) |
-| porthole | raw-CDP screencast (MJPEG), token-gated | noVNC (loopback-only) |
-| recording | CDP screencast → ffmpeg (hardware-encoded on macOS) | in-container GStreamer |
-| needs | Google Chrome (+ ffmpeg for recording) | Docker + `lucarne build-image` |
+| needs | Google Chrome | Docker + `lucarne build-image` |
+
+*Shared by both* (engine-side, over CDP): the **porthole** (CDP screencast → JPEG frames
+over a **WebSocket** → canvas — survives reverse proxies/tunnels, unlike MJPEG), and
+**recording** (CDP screencast → ffmpeg, hardware-encoded on macOS; needs `ffmpeg` on the
+engine host). The container is therefore tiny — just Chrome + Xvfb + a CDP bridge, no
+VNC/GStreamer stack.
 
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 
@@ -118,9 +125,8 @@ minutes (default 60) of one-minute segments.
 `lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
 
 - **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host.
-- **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** native portholes. Set this whenever you bind to a non-loopback host.
-- **Native portholes are served under the daemon** at `/sessions/:id/view` — one origin, token-gated, so the whole engine sits behind a single reverse proxy / tunnel cleanly (the porthole uses relative URLs, so it nests under any proxy path).
-- **The docker (noVNC) porthole is served by the container**, so it is **not** token-gated by lucarne — keep it on loopback, or front it with your own proxy.
+- **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** the porthole (HTTP + the WebSocket). Set this whenever you bind to a non-loopback host.
+- **All portholes are served under the daemon** at `/sessions/:id/view` — one origin, token-gated, relative URLs — so the whole engine sits behind a single reverse proxy / tunnel cleanly, for every backend.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
 `lucarne` ships an *optional* token, but deliberately does **not** ship tunneling or a fleet UI — those belong to whatever consumes it.

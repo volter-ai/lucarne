@@ -1,39 +1,28 @@
 import type { BackendKind } from "../types.js";
-import type { ViewHandler } from "../porthole.js";
 
+/**
+ * A backend is ONLY an isolation strategy: spawn a browser so its CDP is reachable
+ * at `http://${ctx.host}:${ports.cdp}`, and tear it down. Everything else — view,
+ * drive, record — is shared engine code over CDP, identical for every backend.
+ */
 export interface BackendContext {
   host: string;
   image: string;
   chromePath: string;
   viewport: { width: number; height: number };
-  /** Optional bearer token gating the daemon API + native portholes. */
-  token?: string | undefined;
-  /** Record sessions (default true). */
-  record: boolean;
-  /** Recording frame-rate floor / segment cadence. */
-  fps: number;
-  /** Minutes of recording to retain (ring buffer). */
-  retentionMin: number;
 }
 
 export interface BackendHandle {
-  /**
-   * A porthole mounted under the daemon (native): the engine serves it at
-   * `/sessions/:id/view` and computes `viewUrl`. Takes precedence over `viewUrl`.
-   */
-  viewHandler?: ViewHandler;
-  /** Absolute porthole URL when the backend serves it itself (docker → container port). */
-  viewUrl?: string;
-  /** Directory where this session's recording segments land. */
+  /** Directory (on the engine host) where this session's recordings land. */
   recDir: string;
-  /** Tear down the browser + its porthole/recorder and reclaim resources. */
+  /** Tear down the browser and reclaim resources. */
   stop(): Promise<void>;
 }
 
-/** A way to spawn + serve a single browser session. */
 export interface Backend {
   readonly kind: BackendKind;
-  start(id: string, ports: { cdp: number; view: number }, ctx: BackendContext): Promise<BackendHandle>;
+  /** Must return only once CDP is reachable at `http://${ctx.host}:${ports.cdp}`. */
+  start(id: string, ports: { cdp: number }, ctx: BackendContext): Promise<BackendHandle>;
 }
 
 export async function waitForCdp(host: string, port: number, ms = 25_000): Promise<void> {

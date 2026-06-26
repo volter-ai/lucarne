@@ -2,17 +2,12 @@ import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { Backend, BackendContext, BackendHandle } from "./types.js";
 import { waitForCdp } from "./types.js";
-import { attachPage } from "../cdp.js";
-import { createViewHandler, type FrameSource, type InputEvent } from "../porthole.js";
-import { startRecorder } from "../recorder.js";
 
 const exec = promisify(execFile);
 
 /**
- * Real local Chrome launched off-screen, with ONE raw-CDP screencast tap fanned
- * out to both the porthole (view + control) and the recorder. Real fingerprint +
- * your residential IP; remotely viewable without a virtual display or OS
- * screen-recording permission. `connectOverCDP` stays free for a driver/agent.
+ * Isolation = a local Chrome process with its own profile, launched off-screen.
+ * Real fingerprint + your residential IP. The engine drives view/record over CDP.
  */
 export const nativeBackend: Backend = {
   kind: "native",
@@ -21,7 +16,6 @@ export const nativeBackend: Backend = {
     const recDir = `${dir}/recordings`;
     await exec("rm", ["-rf", dir]).catch(() => {});
     await exec("mkdir", ["-p", recDir]);
-
     const chrome: ChildProcess = spawn(ctx.chromePath, [
       `--remote-debugging-port=${ports.cdp}`,
       `--user-data-dir=${dir}`,
@@ -38,47 +32,9 @@ export const nativeBackend: Backend = {
     chrome.on("error", () => { /* surfaced via waitForCdp timeout */ });
 
     await waitForCdp(ctx.host, ports.cdp);
-
-    // one screencast tap, shared by porthole + recorder
-    const conn = await attachPage(`http://${ctx.host}:${ports.cdp}`);
-    let latest: Buffer | null = null;
-    const subs = new Set<(f: Buffer) => void>();
-    conn.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
-      latest = Buffer.from(p.data, "base64");
-      for (const cb of subs) cb(latest);
-      conn.send("Page.screencastFrameAck", { sessionId: p.sessionId });
-    });
-    conn.send("Page.enable");
-    conn.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: ctx.viewport.width, maxHeight: ctx.viewport.height, everyNthFrame: 1 });
-
-    const frames: FrameSource = {
-      get: () => latest,
-      subscribe: (cb) => { subs.add(cb); return () => subs.delete(cb); },
-    };
-    const onInput = (ev: InputEvent): void => {
-      const button = (["left", "middle", "right"] as const)[ev.button ?? 0] ?? "left";
-      if (ev.t === "down") conn.send("Input.dispatchMouseEvent", { type: "mousePressed", x: ev.x, y: ev.y, button, clickCount: 1 });
-      else if (ev.t === "up") conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: ev.x, y: ev.y, button, clickCount: 1 });
-      else if (ev.t === "move") conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: ev.x, y: ev.y });
-      else if (ev.t === "wheel") conn.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy });
-      else if (ev.t === "key" && ev.key) {
-        if (ev.key.length === 1) conn.send("Input.insertText", { text: ev.key });
-        else if (["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(ev.key)) {
-          conn.send("Input.dispatchKeyEvent", { type: "keyDown", key: ev.key, code: ev.key });
-          conn.send("Input.dispatchKeyEvent", { type: "keyUp", key: ev.key, code: ev.key });
-        }
-      }
-    };
-
-    const viewHandler = createViewHandler({ viewport: ctx.viewport, token: ctx.token, frames, onInput });
-    const recorder = ctx.record ? startRecorder({ recDir, fps: ctx.fps, retentionMin: ctx.retentionMin, frames }) : null;
-
     return {
-      viewHandler,   // engine mounts it at /sessions/:id/view and computes viewUrl
       recDir,
       async stop(): Promise<void> {
-        try { recorder?.close(); } catch { /* ignore */ }
-        try { conn.close(); } catch { /* ignore */ }
         try { chrome.kill("SIGKILL"); } catch { /* ignore */ }
         await exec("rm", ["-rf", dir]).catch(() => {});
       },
