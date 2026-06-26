@@ -118,8 +118,9 @@ Concrete jobs, each a runnable example in [`examples/`](./examples):
 ## Use it from Python
 
 The daemon is a Node CLI, but you only ever talk to it over **HTTP + CDP**, so the
-language you drive from is your choice. There's a **stdlib-only** Python client —
-**no PyPI package**; it's a single file you vendor:
+language you drive from is your choice. There's a **stdlib-only** Python client.
+**There is no PyPI package — `pip install lucarne` will not find it.** It's a single
+file you vendor (or read straight from the shipped npm tarball):
 
 ```sh
 npm install -g lucarne && lucarne serve          # the daemon (Node ≥ 22), once
@@ -163,6 +164,9 @@ the MCP server is a thin bridge to it over `LUCARNE_URL`, so sessions outlive th
 Tools: **`lucarne_create`**, **`lucarne_list`**, **`lucarne_destroy`**, **`lucarne_act`**
 (click/move/type/key/scroll/screenshot), **`lucarne_content`** (rendered HTML).
 `LUCARNE_TOKEN: ""` = no auth (fine on loopback); set it if you started `serve` with a token.
+(Restart your MCP client after editing its config.) The MCP lane is deliberately thin and
+`act` is **coordinate-based** — for selector-driven automation, drive the session's `cdpUrl`
+with Playwright instead.
 
 ## Backends
 
@@ -302,7 +306,7 @@ minutes (default 60) of one-minute segments.
 
 `lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
 
-- **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host. (The `docker` backend publishes its container CDP to `127.0.0.1` only — never the LAN.)
+- **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host. The `docker` backend publishes container CDP with `docker run -p 127.0.0.1:<port>:9222` — explicitly bound to loopback, never the LAN (it is **not** a bare `-p 9222`).
 - **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** the porthole (HTTP + the WebSocket). Use a long random value, e.g. `export LUCARNE_TOKEN=$(openssl rand -hex 32)`. **Required** whenever you bind off loopback.
 - **All portholes are served under the daemon** at `/sessions/:id/view` — one origin, token-gated, relative URLs — so the whole engine sits behind a single reverse proxy / tunnel cleanly, for every backend. Append `?interactable=0` for a read-only viewer (input dropped server-side), or `?controls=1` for a URL bar + back/forward/reload chrome.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
@@ -328,6 +332,27 @@ cloudflared tunnel --url http://127.0.0.1:7800   # or: tailscale serve / caddy /
 token is mandatory and you own the TLS. Never tunnel a `cdpUrl`; only the `viewUrl`.
 `lucarne` ships an *optional* token but deliberately does **not** bundle tunneling or a
 fleet UI — those belong to whatever consumes it.
+
+### Run it as a service (systemd)
+
+Durable sessions survive a daemon restart, so a unit + `Restart=always` is enough. Keep
+the token in a `0600` env-file, not inline (so it isn't in `systemctl show`):
+
+```ini
+# /etc/systemd/system/lucarne.service
+[Service]
+EnvironmentFile=/etc/lucarne.env          # LUCARNE_TOKEN=...  (chmod 0600)
+Environment=LUCARNE_HOME=/var/lib/lucarne
+ExecStart=/usr/bin/lucarne serve
+Restart=always
+User=lucarne
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Health-probe it at `GET /health` (`{ ok, sessions }`, no token needed). The `docker`
+backend is selected per session — `lucarne create -b docker -p alpha` (or `{"backend":"docker"}`).
 
 ## Status & testing
 

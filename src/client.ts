@@ -1,3 +1,4 @@
+import type { BlurredCredential, Credential } from "./credentials.js";
 import type { ActAction, ActivityEvent, ActivityNow, CreateSessionOptions, LogEntry, Session, SessionContext, SessionStatus } from "./types.js";
 
 /**
@@ -39,6 +40,17 @@ export class LucarneClient {
     return new Uint8Array(await res.arrayBuffer());
   }
 
+  /** PUT a raw (binary or text) body — for the file workspaces, which store bytes. */
+  private async putRaw(path: string, data: Uint8Array | string): Promise<{ ok: boolean }> {
+    const res = await fetch(this.baseUrl + path, {
+      method: "PUT",
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+      body: data,
+    });
+    if (!res.ok) throw new Error(`lucarne PUT ${path} -> ${res.status}`);
+    return res.json() as Promise<{ ok: boolean }>;
+  }
+
   health(): Promise<{ ok: boolean; sessions: number; ids?: string[] }> { return this.req("GET", "/health") as Promise<{ ok: boolean; sessions: number; ids?: string[] }>; }
   create(opts: CreateSessionOptions = {}): Promise<Session> { return this.req("POST", "/sessions", opts) as Promise<Session>; }
   list(filter?: Record<string, string>): Promise<Session[]> {
@@ -78,4 +90,27 @@ export class LucarneClient {
   download(id: string, file: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/downloads/${encodeURIComponent(file)}`); }
   screenshot(id: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/screenshot`); }
   pdf(id: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/pdf`); }
+
+  // ── credentials (encrypted at rest; reads are blurred — never returns secrets) ──
+  putCredential(name: string, cred: Credential): Promise<{ ok: boolean }> { return this.req("PUT", `/credentials/${encodeURIComponent(name)}`, cred) as Promise<{ ok: boolean }>; }
+  credentials(): Promise<BlurredCredential[]> { return this.req("GET", "/credentials") as Promise<BlurredCredential[]>; }
+  credential(name: string): Promise<BlurredCredential> { return this.req("GET", `/credentials/${encodeURIComponent(name)}`) as Promise<BlurredCredential>; }
+  deleteCredential(name: string): Promise<{ ok: boolean }> { return this.req("DELETE", `/credentials/${encodeURIComponent(name)}`) as Promise<{ ok: boolean }>; }
+  credentialTotp(name: string): Promise<{ code: string }> { return this.req("GET", `/credentials/${encodeURIComponent(name)}/totp`) as Promise<{ code: string }>; }
+
+  // ── managed extensions ──
+  extensions(): Promise<string[]> { return this.req("GET", "/extensions") as Promise<string[]>; }
+  deleteExtension(name: string): Promise<{ ok: boolean }> { return this.req("DELETE", `/extensions/${encodeURIComponent(name)}`) as Promise<{ ok: boolean }>; }
+
+  // ── durable global files workspace ──
+  files(): Promise<string[]> { return this.req("GET", "/files") as Promise<string[]>; }
+  file(name: string): Promise<Uint8Array> { return this.reqBytes("GET", `/files/${encodeURIComponent(name)}`); }
+  putFile(name: string, data: Uint8Array | string): Promise<{ ok: boolean }> { return this.putRaw(`/files/${encodeURIComponent(name)}`, data); }
+  deleteFile(name: string): Promise<{ ok: boolean }> { return this.req("DELETE", `/files/${encodeURIComponent(name)}`) as Promise<{ ok: boolean }>; }
+
+  // ── per-session scratch files workspace ──
+  sessionFiles(id: string): Promise<string[]> { return this.req("GET", `/sessions/${id}/files`) as Promise<string[]>; }
+  sessionFile(id: string, name: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/files/${encodeURIComponent(name)}`); }
+  putSessionFile(id: string, name: string, data: Uint8Array | string): Promise<{ ok: boolean }> { return this.putRaw(`/sessions/${id}/files/${encodeURIComponent(name)}`, data); }
+  deleteSessionFile(id: string, name: string): Promise<{ ok: boolean }> { return this.req("DELETE", `/sessions/${id}/files/${encodeURIComponent(name)}`) as Promise<{ ok: boolean }>; }
 }

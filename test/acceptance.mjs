@@ -593,6 +593,19 @@ try {
   const dp = await client.deleteProfile("definitely-not-a-real-profile-xyz");
   check("sdk: deleteProfile() returns {ok}", typeof dp.ok === "boolean");
 
+  // SDK parity: credentials + global files + extensions over the typed client (no Chrome needed)
+  await client.putCredential("sdkcred", { username: "u@x", password: "p", totp: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" });
+  const creds = await client.credentials();
+  const blurred = creds.find((c) => c.name === "sdkcred") || {};
+  check("sdk: credentials() lists blurred (no secret leaks)", blurred.hasPassword === true && !("password" in blurred));
+  check("sdk: credentialTotp() returns a 6-digit code", /^[0-9]{6}$/.test((await client.credentialTotp("sdkcred")).code));
+  check("sdk: deleteCredential() works", (await client.deleteCredential("sdkcred")).ok === true);
+  await client.putFile("sdk.txt", "hello-sdk");
+  const fbytes = await client.file("sdk.txt");
+  check("sdk: files put/list/get round-trips bytes", (await client.files()).includes("sdk.txt") && Buffer.from(fbytes).toString() === "hello-sdk");
+  check("sdk: deleteFile() works", (await client.deleteFile("sdk.txt")).ok === true);
+  check("sdk: extensions() returns a list", Array.isArray(await client.extensions()));
+
   // theme: the porthole HTML honors ?theme (client-side cosmetic)
   const view = await (await fetch(`http://127.0.0.1:7827/sessions/sdk/view/?token=${TOKEN}`)).text();
   check("theme: porthole supports the theme param", view.includes("theme") && view.includes("light"));

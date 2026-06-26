@@ -23,8 +23,10 @@ daemon as access to those accounts.
 
 ## Supported versions
 
-Pre-1.0: only the latest published `0.x` receives fixes. Pin a version and read the
-CHANGELOG before upgrading — the API may change between minor releases until 1.0.
+The latest published `1.x` receives security fixes. The API is stable under
+[SemVer](https://semver.org/) — no breaking changes without a major bump — so staying
+current on `1.x` is safe. Rotate `LUCARNE_TOKEN` by setting a new value and restarting
+the daemon; the credential-store key lives at `LUCARNE_HOME/.cred-key` (`0600`).
 
 ## Reporting a vulnerability
 

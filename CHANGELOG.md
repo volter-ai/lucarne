@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.1.0]
+
+### Added
+- **Full SDK ↔ HTTP parity.** `LucarneClient` now covers the whole API: credentials
+  (`putCredential`/`credentials`/`credential`/`deleteCredential`/`credentialTotp`),
+  managed `extensions`/`deleteExtension`, the global + per-session file workspaces
+  (`files`/`file`/`putFile`/`deleteFile`, `sessionFiles`/`sessionFile`/`putSessionFile`/
+  `deleteSessionFile`). The "typed SDK" now reaches every documented route.
+
+### Docs
+- Closed the residual gaps a second onboarding pass surfaced: a **systemd service**
+  unit, the explicit `pip install lucarne` "won't find it — vendor the file" note, the
+  MCP `act`-is-coordinate-based tradeoff, the docker CDP `-p 127.0.0.1:<port>:9222`
+  loopback mechanism (stated, not just asserted), and `SECURITY.md` updated to 1.x +
+  token/key rotation.
+
 ## [1.0.0]
 
 First stable release. The API now follows SemVer — no breaking changes to the
