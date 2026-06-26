@@ -29,10 +29,14 @@ export interface ActivityEvent {
   url?: string;
   x?: number;
   y?: number;
-  /** focused field for `type` (name/id/aria) — A2 enriches `click` too. */
+  /** focused field for `type` (name/id/aria). */
   field?: string;
   /** typed text for `type`, "‹redacted›" for password/sensitive fields. */
   value?: string;
+  /** the clicked element (A2): a CSS-ish selector, its visible text, and role. */
+  selector?: string;
+  text?: string;
+  role?: string;
 }
 
 /** Where the session is RIGHT NOW + how fresh the human's last action is. */
@@ -152,6 +156,17 @@ export async function startSessionMedia(opts: {
     typeBuf.text += text;
     clearTimeout(typeTimer); typeTimer = setTimeout(() => void flushType(), 800);
   };
+  // A2: resolve the clicked element off the hot path (the input already dispatched).
+  const enrichClick = async (actor: "human" | "agent", x?: number, y?: number): Promise<void> => {
+    const ts = Date.now();
+    let selector: string | undefined, text: string | undefined, role: string | undefined;
+    try {
+      const expr = `(()=>{const e=document.elementFromPoint(${x ?? 0},${y ?? 0});if(!e)return null;const id=e.id?'#'+e.id:'';const cls=(!id&&typeof e.className==='string'&&e.className.trim())?'.'+e.className.trim().split(/\\s+/)[0]:'';return JSON.stringify({s:e.tagName.toLowerCase()+id+cls,t:((e.innerText||e.value||e.getAttribute('aria-label')||'').trim().slice(0,60)),r:e.getAttribute('role')||e.tagName.toLowerCase()})})()`;
+      const r = await page.call("Runtime.evaluate", { expression: expr, returnByValue: true });
+      if (r.result?.value) { const o = JSON.parse(String(r.result.value)); selector = o.s; text = o.t || undefined; role = o.r; }
+    } catch { /* page gone */ }
+    pushAct({ ts, actor, kind: "click", x, y, selector, text, role });
+  };
   const wireActivity = (c: CdpConn): void => {
     c.on("Page.frameNavigated", (p: { frame?: { url?: string; parentId?: string } }) => {
       if (p.frame?.parentId) return; // main frame only
@@ -202,7 +217,7 @@ export async function startSessionMedia(opts: {
     const modifiers = ev.mod ?? 0;
     if (actor === "human") lastHumanMs = Date.now();
     // activity log: a click (down) and typed text are the human/agent's semantic acts
-    if (ev.t === "down") { void flushType(); pushAct({ ts: Date.now(), actor, kind: "click", x: ev.x, y: ev.y }); }
+    if (ev.t === "down") { void flushType(); void enrichClick(actor, ev.x, ev.y); }
     else if (ev.t === "paste" && typeof ev.text === "string") appendType(actor, ev.text);
     else if (ev.t === "ime" && ev.phase === "commit" && ev.text) appendType(actor, ev.text);
     else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);

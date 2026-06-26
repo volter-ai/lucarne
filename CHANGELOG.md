@@ -7,13 +7,15 @@ to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
 ## [0.10.0]
 
 ### Added
-- **Activity log (Initiative II, A1)** — an agent-ergonomic feed of what the *human* (and agent)
+- **Activity log (Initiative II, A1–A3)** — an agent-ergonomic feed of what the *human* (and agent)
   did in a session, so an agent collaborates instead of fighting. `create({ activity: true })` /
   `LUCARNE_ACTIVITY=1`; `GET /sessions/:id/activity` → `{ now, recent }`, `?format=text|playwright`,
   `?stream=1` SSE. Events are **actor-tagged** (`human` = porthole input, `agent` = act/CDP driver),
   navigation from CDP, clicks/typing from the porthole; typed text is coalesced and **redacted** for
-  password/sensitive fields. The Playwright-verb format renders the trail in the agent's own
-  vocabulary; `now` carries `url`/`title`/`focusedField`/`lastHumanActionMsAgo` (the "don't fight" signal).
+  password/sensitive fields. **Clicks resolve `{selector, text, role}`** (`elementFromPoint`, off the hot
+  path), so the Playwright-verb format renders `await page.click("button#login")` in the agent's own
+  vocabulary. `now` carries `url`/`title`/`focusedField`/`lastHumanActionMsAgo` — the **presence-to-yield**
+  signal an agent uses to avoid fighting the human.
 
 ## [0.9.1]
 

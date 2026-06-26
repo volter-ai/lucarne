@@ -721,6 +721,21 @@ try {
   // human types a "password" through the porthole
   for (const k of ["s", "e", "c", "r", "e", "t"]) { aw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); aw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
   await sleep(1100);                                          // coalesce + flush → redact
+  // A2: a click resolves the element under the cursor (selector + text)
+  await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<button id=login style=\"position:fixed;top:20px;left:20px;width:120px;height:40px\">Log in</button>'" });
+  aw.send(JSON.stringify({ t: "down", x: 80, y: 40, button: 0, buttons: 1, clickCount: 1 }));
+  aw.send(JSON.stringify({ t: "up", x: 80, y: 40, button: 0, buttons: 0, clickCount: 1 }));
+  await sleep(500);
+  const clickEv = aEngine.sessionActivity("act").find((a) => a.kind === "click" && a.selector);
+  check("activity(A2): a click resolves its element (selector + text)", !!clickEv && (clickEv.selector || "").includes("#login") && (clickEv.text || "").includes("Log in"));
+
+  // A3: presence-to-yield — `now` exposes the focused field + how fresh the human's last action is
+  await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<input id=q name=query>';document.getElementById('q').focus()" });
+  aw.send(JSON.stringify({ t: "keydown", key: "h", code: "KeyH" })); aw.send(JSON.stringify({ t: "keyup", key: "h", code: "KeyH" }));
+  await sleep(200);
+  const now3 = await aEngine.activityNow("act");
+  check("activity(A3): now exposes focused field + fresh human-action time (don't-fight signal)", now3?.focusedField === "query" && now3.lastHumanActionMsAgo !== null && now3.lastHumanActionMsAgo < 3000);
+
   aw.send(JSON.stringify({ t: "nav", action: "go", url: "https://example.com" }));  // human nav
   await sleep(1800);
   await sleep(1800);                                          // let human-action freshness lapse

@@ -200,10 +200,12 @@ Phasing — each lands with a committed acceptance proof (the discipline applies
   + **redacted** for password/sensitive fields; `GET /sessions/:id/activity` → `{ now, recent }`
   (`?format=text|playwright`, `?stream=1` SSE). *(Proof: human typing into a password field → `type`
   REDACTED + `human`; porthole nav = `human` vs CDP nav = `agent`; `now.url` + Playwright-verb view render.)*
-- ⬜ **A2 — DOM enrichment.** click → `{selector,text,role}` via `getNodeForLocation`; typing → focused
-  field name. *(Proof: a porthole click on a labeled button logs its text + selector.)*
-- ⬜ **A3 — presence-to-yield.** `now.lastHumanActionMsAgo` + `focusedField`. *(Proof: after a human input,
-  `now` reports the focused field + a fresh timestamp.)*
+- ✅ **A2 — DOM enrichment.** click → `{selector,text,role}` via `elementFromPoint` (off the hot path);
+  typing already carries the focused field. The Playwright view renders `await page.click("button#login")`.
+  *(Proof: a porthole click on a labeled button logs its selector + text.)*
+- ✅ **A3 — presence-to-yield.** `now.lastHumanActionMsAgo` + `now.focusedField` — the signal an agent
+  derives "don't touch what the human is on" from. *(Proof: after a human input, `now` reports the focused
+  field + a fresh timestamp.)*
 
 Carry-over native polish (not activity-log, but the "runs without disturbing you" promise):
 - ✅ **Headless** option (`0.9.1`) — no window, no focus steal; the test suite runs headless.

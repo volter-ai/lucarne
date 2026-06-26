@@ -36,12 +36,14 @@ function activityLine(e: ActivityEvent, format: "text" | "playwright"): string {
   if (format === "playwright") {
     const verb =
       e.kind === "nav" ? `await page.goto(${JSON.stringify(e.url ?? "")})`
-        : e.kind === "click" ? `await page.mouse.click(${e.x ?? 0}, ${e.y ?? 0})`
+        : e.kind === "click" ? (e.selector ? `await page.click(${JSON.stringify(e.selector)})${e.text ? `  // "${e.text}"` : ""}` : `await page.mouse.click(${e.x ?? 0}, ${e.y ?? 0})`)
           : e.kind === "type" ? `await page.keyboard.type(${JSON.stringify(e.value ?? "")})`
             : `// ${e.kind} ${e.url ?? e.field ?? ""}`.trimEnd();
     return `# ${e.actor}  ${verb}`;
   }
-  return `${new Date(e.ts).toISOString()}  ${e.actor}  ${e.kind}  ${e.url ?? e.field ?? ""}${e.value ? "  " + e.value : ""}`.trimEnd();
+  const subject = e.url ?? e.selector ?? e.field ?? "";
+  const extra = e.value ?? e.text ?? "";
+  return `${new Date(e.ts).toISOString()}  ${e.actor}  ${e.kind}  ${subject}${extra ? "  " + extra : ""}`.trimEnd();
 }
 
 const pub = (s: Session): Session => ({
