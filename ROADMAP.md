@@ -45,7 +45,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 ## D. Live view / human takeover (the porthole)
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
 - 🔨 P1 **multi-tab** — list pages, per-tab view, switch/focus tab (sessions have >1 tab today; porthole shows one)
-- 🔨 P1 view-only mode (`interactable=false`) · `showControls` nav chrome (URL bar + back/forward) · quality control · theme
+- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · 🔨 P1 `showControls` nav chrome (URL bar + back/forward) · quality control · theme
 - 🔨 P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`) + mobile viewport / virtual keyboard
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
 - 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
@@ -136,7 +136,7 @@ destroy + recreate · ✅ persist→seed: fresh profile seeded from another carr
 only on first creation · ✅ clipboard: paste lands in focused input · ✅ upload: file input reports
 name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **Phase 1 (P0) complete.**
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
-✅ max-duration timeout. **18/18.**
+✅ max-duration timeout · ✅ view-only (input dropped server-side). **19/19.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

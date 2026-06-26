@@ -327,11 +327,14 @@ export class Lucarne {
       if (!wm || !this.tokenOk(url, req.headers.authorization)) { socket.destroy(); return; }
       const s = this.sessions.get(wm[1]!);
       if (!s) { socket.destroy(); return; }
+      // View-only is enforced server-side (?interactable=0): input is dropped, not
+      // merely hidden — a read-only viewer genuinely cannot drive the browser.
+      const interactable = new URL(url, "http://x").searchParams.get("interactable") !== "0";
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         const cur = s.media.frames.get();
         if (cur) ws.send(cur);
         const unsub = s.media.frames.subscribe((f) => { if (ws.readyState === ws.OPEN) ws.send(f); });
-        ws.on("message", (d) => { s.lastActivityMs = Date.now(); try { s.media.onInput(JSON.parse(d.toString())); } catch { /* ignore */ } });
+        ws.on("message", (d) => { if (!interactable) return; s.lastActivityMs = Date.now(); try { s.media.onInput(JSON.parse(d.toString())); } catch { /* ignore */ } });
         ws.on("close", unsub);
         ws.on("error", unsub);
       });

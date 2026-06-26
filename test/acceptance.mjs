@@ -181,6 +181,16 @@ try {
   const h = dEngine.health();
   check("health: session count == live sessions", h.ok && h.sessions === dEngine.list().length && h.sessions === 1);
 
+  // ── P1: view-only mode (input dropped server-side) ────────────────────────
+  await setup.call("Runtime.evaluate", { expression: `(()=>{document.body.innerHTML='<input id=vo>';document.getElementById('vo').focus();})()` });
+  const vo = new WS(`ws://127.0.0.1:7813/sessions/dl/view/ws?token=${TOKEN}&interactable=0`);
+  await new Promise((r, j) => { vo.on("open", r); vo.on("error", j); });
+  for (const k of ["N", "O"]) { vo.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k, mod: 8 })); vo.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k, mod: 8 })); }
+  await sleep(300);
+  const voVal = (await setup.call("Runtime.evaluate", { expression: `document.getElementById('vo').value`, returnByValue: true })).result.value;
+  vo.close();
+  check("view-only: input is dropped server-side (read-only viewer)", voVal === "");
+
   setup.close();
 } finally {
   await dEngine.close().catch(() => {});
