@@ -116,6 +116,9 @@ Seeding copies cookies/logins/storage **only on a profile's first creation** —
 clobbers an established profile. On the same machine the OS-keychain key is shared, so
 seeded cookies decrypt and you start authenticated.
 
+Load custom unpacked extensions with `create({ extensions: ["/path/to/ext"] })` (native
+backend) — a persistent/seeded profile also brings its own installed extensions along.
+
 ## API
 
 ```ts

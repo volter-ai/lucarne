@@ -73,7 +73,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🚫 `/search` · `/map` · `/crawl` · `/smart-scrape` — the *scraping platform* surface, the other lane
 
 ## I. Extensions
-- 🔨 P1 extensions — load custom extensions; **your profile's extensions come free** once persistent profiles land
+- ✅ P1 extensions — load custom unpacked extensions (`extensions: [dir]`) via CDP `Extensions.loadUnpacked` (modern Chrome blocks `--load-extension`; we set `--enable-unsafe-extension-debugging` + load over CDP). Your profile's own extensions come free with a persistent/seeded profile. *(Proof: a loaded extension's content script runs on the page.)*
 - 🔨 P2 extension upload/manage API
 
 ## J. Credentials / auth injection
@@ -137,7 +137,8 @@ only on first creation · ✅ clipboard: paste lands in focused input · ✅ upl
 name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **Phase 1 (P0) complete.**
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
 ✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
-into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords). **23/23.**
+into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
+runs). **24/24.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

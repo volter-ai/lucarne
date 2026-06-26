@@ -33,6 +33,8 @@ export interface CreateSessionOptions {
   seedFrom?: string;
   /** On first creation, seed from your real local Chrome profile. */
   seedFromChrome?: boolean;
+  /** Unpacked extension dirs to load (native backend). Your profile's own extensions load anyway. */
+  extensions?: string[];
   /** Auto-release this session after this many ms of wall-clock, regardless of use. */
   timeoutMs?: number;
   /**

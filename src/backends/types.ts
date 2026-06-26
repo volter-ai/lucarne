@@ -16,6 +16,8 @@ export interface BackendContext {
   recDir: string;
   /** Preserve `profileDir` on stop (durable named profile). */
   persist: boolean;
+  /** Unpacked extension dirs to load (native backend honours these). */
+  extensions?: string[];
 }
 
 export interface BackendHandle {

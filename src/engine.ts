@@ -5,6 +5,7 @@ import { WebSocketServer } from "ws";
 import type { Backend } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
+import { attachBrowser } from "./cdp.js";
 import { portholeHtml } from "./porthole.js";
 import { profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type SessionMedia } from "./session-media.js";
@@ -90,12 +91,19 @@ export class Lucarne {
     const cdpUrl = `http://${this.host}:${cdp}`;
     const handle = await backend.start(id, { cdp }, {
       host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
-      profileDir: dirs.profileDir, recDir: dirs.recDir, persist,
+      profileDir: dirs.profileDir, recDir: dirs.recDir, persist, extensions: opts.extensions,
     });
     const media = await startSessionMedia({
       cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
       record: this.record, fps: this.fps, retentionMin: this.retentionMin,
     });
+    // Load any custom unpacked extensions via CDP (the only path modern Chrome
+    // allows); the launch flag was set by the backend.
+    if (opts.extensions?.length) {
+      const bconn = await attachBrowser(cdpUrl);
+      for (const ext of opts.extensions) await bconn.call("Extensions.loadUnpacked", { path: ext }).catch(() => {});
+      bconn.close();
+    }
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
     const s: Tracked = {
       id, backend: backend.kind, cdpUrl,

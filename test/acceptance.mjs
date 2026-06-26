@@ -265,6 +265,28 @@ try {
   await cEngine.close().catch(() => {});
 }
 
+// ── P1: extensions (load a custom unpacked extension) ────────────────────────
+const extDir = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-ext-"));
+fs.writeFileSync(path.join(extDir, "manifest.json"), JSON.stringify({
+  manifest_version: 3, name: "lucarne-ext", version: "1.0",
+  content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"], run_at: "document_idle" }],
+}));
+fs.writeFileSync(path.join(extDir, "content.js"), `document.documentElement.setAttribute('data-lucarne-ext','loaded-${ID}');`);
+const xEngine = new Lucarne({ port: 7816, token: TOKEN, record: false });
+await xEngine.listen();
+try {
+  const xs = await xEngine.create({ backend: "native", profile: "ext", extensions: [extDir] });
+  const xc = await attachPage(xs.cdpUrl);
+  xc.send("Page.navigate", { url: "https://example.com" });
+  await sleep(2000);
+  const attr = (await xc.call("Runtime.evaluate", { expression: "document.documentElement.getAttribute('data-lucarne-ext')", returnByValue: true })).result.value;
+  xc.close();
+  check("extensions: custom extension content script runs on the page", attr === `loaded-${ID}`);
+} finally {
+  await xEngine.close().catch(() => {});
+  fs.rmSync(extDir, { recursive: true, force: true });
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

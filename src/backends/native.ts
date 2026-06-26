@@ -39,6 +39,11 @@ export const nativeBackend: Backend = {
       "--disable-backgrounding-occluded-windows",       // keep rendering while hidden
       "--disable-renderer-backgrounding",
       "--disable-background-timer-throttling",
+      // Modern Chrome blocks --load-extension; extensions load at runtime via CDP
+      // Extensions.loadUnpacked, which needs this launch flag.
+      ...(ctx.extensions?.length
+        ? ["--enable-unsafe-extension-debugging", "--disable-features=DisableLoadExtensionCommandLineSwitch"]
+        : []),
       "about:blank",
     ], { stdio: "ignore" });
     chrome.on("error", () => { /* surfaced via waitForCdp timeout */ });
