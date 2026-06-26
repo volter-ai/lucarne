@@ -1,4 +1,4 @@
-import { attachPage } from "./cdp.js";
+import { attachBrowser, attachPage, type CdpConn } from "./cdp.js";
 import { startRecorder, type Recorder } from "./recorder.js";
 import { virtualKeyCode } from "./keymap.js";
 import type { FrameSource, InputEvent } from "./porthole.js";
@@ -11,6 +11,8 @@ const EDIT_COMMANDS: Record<string, string> = {
 };
 
 export interface SessionMedia {
+  /** The shared CDP tap — reused by engine-level features (upload, screenshot…). */
+  cdp: CdpConn;
   frames: FrameSource;
   onInput(ev: InputEvent): void;
   close(): void;
@@ -25,12 +27,18 @@ export interface SessionMedia {
 export async function startSessionMedia(opts: {
   cdpUrl: string;
   recDir: string;
+  downloadDir: string;
   viewport: { width: number; height: number };
   record: boolean;
   fps: number;
   retentionMin: number;
 }): Promise<SessionMedia> {
   const conn = await attachPage(opts.cdpUrl);
+  // Capture downloads to a retrievable per-session dir (list/get over the API).
+  // MUST be browser-level + kept open: a page-session setting only scopes to that
+  // session, so a download from any other page/driver would escape it.
+  const browserConn = await attachBrowser(opts.cdpUrl);
+  browserConn.call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: opts.downloadDir, eventsEnabled: true }).catch(() => {});
   let latest: Buffer | null = null;
   const subs = new Set<(f: Buffer) => void>();
   conn.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
@@ -58,6 +66,10 @@ export async function startSessionMedia(opts: {
       });
     } else if (ev.t === "wheel") {
       conn.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy, modifiers });
+    } else if (ev.t === "paste" && typeof ev.text === "string") {
+      // Clipboard sync: deliver text the operator pasted into the porthole as if
+      // pasted into the focused field (CDP inserts it like a real paste).
+      conn.send("Input.insertText", { text: ev.text });
     } else if ((ev.t === "keydown" || ev.t === "keyup") && ev.key) {
       const down = ev.t === "keydown";
       const cmdKey = (modifiers & 2) !== 0 || (modifiers & 4) !== 0; // ctrl or meta = "command" modifier
@@ -84,11 +96,13 @@ export async function startSessionMedia(opts: {
     : null;
 
   return {
+    cdp: conn,
     frames,
     onInput,
     close(): void {
       try { recorder?.close(); } catch { /* ignore */ }
       try { conn.close(); } catch { /* ignore */ }
+      try { browserConn.close(); } catch { /* ignore */ }
     },
   };
 }

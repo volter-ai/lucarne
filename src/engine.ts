@@ -12,6 +12,7 @@ import type { CreateSessionOptions, EngineOptions, Session } from "./types.js";
 
 interface Tracked extends Session {
   recDir: string;
+  downloadDir: string;
   media: SessionMedia;
   stop(): Promise<void>;
 }
@@ -75,6 +76,7 @@ export class Lucarne {
       const source = opts.seedFromChrome ? realChromeUserDataDir() : opts.seedFrom;
       if (source) seedProfile(source, dirs.profileDir);
     }
+    fs.mkdirSync(dirs.downloadDir, { recursive: true });
     const cdp = this.nextCdp++;
     const cdpUrl = `http://${this.host}:${cdp}`;
     const handle = await backend.start(id, { cdp }, {
@@ -82,7 +84,7 @@ export class Lucarne {
       profileDir: dirs.profileDir, recDir: dirs.recDir, persist,
     });
     const media = await startSessionMedia({
-      cdpUrl, recDir: dirs.recDir, viewport: this.viewport,
+      cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
       record: this.record, fps: this.fps, retentionMin: this.retentionMin,
     });
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
@@ -90,7 +92,7 @@ export class Lucarne {
       id, backend: backend.kind, cdpUrl,
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
-      recDir: dirs.recDir, media, stop: handle.stop,
+      recDir: dirs.recDir, downloadDir: dirs.downloadDir, media, stop: handle.stop,
     };
     this.sessions.set(id, s);
     return pub(s);
@@ -106,11 +108,48 @@ export class Lucarne {
     catch { return []; }
   }
 
+  /**
+   * Inject a host file into the session's `<input type=file>` (the human can't
+   * use the native picker — CDP screencast doesn't show it — so this is the path).
+   * `selector` defaults to the first file input.
+   */
+  async uploadFile(id: string, hostPath: string, selector = "input[type=file]"): Promise<void> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    if (!fs.existsSync(hostPath)) throw new Error(`no such file: ${hostPath}`);
+    const cdp = s.media.cdp;
+    await cdp.call("DOM.enable");
+    const { root } = await cdp.call("DOM.getDocument", { depth: 0 });
+    const { nodeId } = await cdp.call("DOM.querySelector", { nodeId: root.nodeId, selector });
+    if (!nodeId) throw new Error(`no element matching '${selector}'`);
+    await cdp.call("DOM.setFileInputFiles", { files: [hostPath], nodeId });
+  }
+
+  /** Files the session has downloaded (newest last), retrievable via the API. */
+  downloads(id: string): string[] {
+    const s = this.sessions.get(id);
+    if (!s) return [];
+    try {
+      return fs.readdirSync(s.downloadDir)
+        .filter((f) => !f.endsWith(".crdownload") && !f.startsWith("."))
+        .sort((a, b) => fs.statSync(path.join(s.downloadDir, a)).mtimeMs - fs.statSync(path.join(s.downloadDir, b)).mtimeMs);
+    } catch { return []; }
+  }
+
+  /** Absolute path of a named download (validated against traversal), or null. */
+  downloadPath(id: string, file: string): string | null {
+    const s = this.sessions.get(id);
+    if (!s) return null;
+    const fp = path.join(s.downloadDir, path.basename(file));
+    return fs.existsSync(fp) ? fp : null;
+  }
+
   async destroy(id: string): Promise<boolean> {
     const s = this.sessions.get(id);
     if (!s) return false;
     try { s.media.close(); } catch { /* ignore */ }
     await s.stop().catch(() => {});
+    try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
     this.sessions.delete(id);
     return true;
   }
@@ -138,6 +177,33 @@ export class Lucarne {
           if (sub === "" || sub === "/") { res.writeHead(200, { "content-type": "text/html" }); res.end(portholeHtml(this.viewport)); return; }
           // /ws is handled by the upgrade listener; any other subpath is 404
           res.writeHead(404); res.end(); return;
+        }
+        const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
+        if (up) {
+          const [, id] = up;
+          if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
+          let body = ""; for await (const c of req) body += c;
+          const { path: hostPath, selector } = body ? (JSON.parse(body) as { path: string; selector?: string }) : { path: "" };
+          await this.uploadFile(id!, hostPath, selector);
+          return send(res, 200, { ok: true });
+        }
+        const dl = pathname.match(/^\/sessions\/([^/]+)\/downloads\/?(.*)$/);
+        if (dl) {
+          const [, id, file] = dl;
+          if (req.method === "GET" && !file) return send(res, 200, this.downloads(id!));
+          if (req.method === "GET" && file) {
+            const fp = this.downloadPath(id!, file);
+            if (!fp) return send(res, 404, { error: "no such download" });
+            res.writeHead(200, { "content-type": "application/octet-stream" });
+            fs.createReadStream(fp).pipe(res);
+            return;
+          }
+          if (req.method === "DELETE" && file) {
+            const fp = this.downloadPath(id!, file);
+            if (fp) fs.rmSync(fp, { force: true });
+            return send(res, 200, { ok: !!fp });
+          }
+          return send(res, 405, { error: "method not allowed" });
         }
         const rec = pathname.match(/^\/sessions\/([^/]+)\/recordings\/?(.*)$/);
         if (rec) {

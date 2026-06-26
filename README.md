@@ -84,9 +84,9 @@ engine host). The container is therefore tiny — just Chrome + Xvfb + a CDP bri
 VNC/GStreamer stack.
 
 The porthole has **full input fidelity** — modifiers, virtual key codes, editing shortcuts
-(select-all / copy / cut / paste / undo via CDP `commands`), drag, double/triple-click,
-right-click, and scroll. Not yet handled: **clipboard sync** (cross-machine copy/paste),
-**IME** (CJK composition), and **touch** events (phone) — the known tail.
+(select-all / copy / cut / paste / undo via CDP `commands`), **clipboard paste** (text pasted
+in the porthole lands in the focused field), drag, double/triple-click, right-click, and
+scroll. Not yet handled: **IME** (CJK composition) and **touch** events (phone) — the known tail.
 
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 
@@ -95,6 +95,25 @@ Build the docker image once:
 ```sh
 npx lucarne build-image     # builds lucarne-browser:latest from the bundled Dockerfile
 ```
+
+## Profiles (stay logged in)
+
+A **named** profile is durable: its cookies, logins, localStorage and extensions live
+under `~/.lucarne/profiles/<name>` (override the root with `LUCARNE_HOME`) and persist
+across sessions — so an agent operating *your* accounts stays logged in. An anonymous
+session (no `profile`) is ephemeral and wiped on stop. Durable profiles graceful-shutdown
+so writes flush to disk.
+
+```ts
+await engine.create({ profile: "alpha" });                    // durable, reused by name
+await engine.create({ profile: "alpha", seedFromChrome: true }); // first run: seed from your real Chrome
+await engine.create({ profile: "alpha", seedFrom: "/path/to/Chrome" }); // …or any user-data-dir
+await engine.create({ persist: false });                       // one-off, ephemeral
+```
+
+Seeding copies cookies/logins/storage **only on a profile's first creation** — it never
+clobbers an established profile. On the same machine the OS-keychain key is shared, so
+seeded cookies decrypt and you start authenticated.
 
 ## API
 
@@ -113,10 +132,14 @@ await engine.close();                           // stop API + tear down all sess
 HTTP control API (what the CLI talks to):
 
 ```
-POST   /sessions                          {profile?, backend?}  -> Session
+POST   /sessions                          {profile?, backend?, persist?, seedFrom?, seedFromChrome?}  -> Session
 GET    /sessions                          -> Session[]
 GET    /sessions/:id                      -> Session
 DELETE /sessions/:id                      -> { ok }
+POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject a host file into <input type=file>)
+GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)
+GET    /sessions/:id/downloads/:file      -> application/octet-stream
+DELETE /sessions/:id/downloads/:file      -> { ok }
 GET    /sessions/:id/recordings           -> string[]   (segment filenames, oldest first)
 GET    /sessions/:id/recordings/:file     -> video/mp4
 ```

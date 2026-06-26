@@ -1,7 +1,9 @@
 export interface InputEvent {
-  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup";
+  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste";
   x?: number;
   y?: number;
+  /** clipboard text for `paste` (clipboard sync into the focused field) */
+  text?: string;
   /** which button changed (0 left / 1 middle / 2 right) */
   button?: number;
   /** DOM `buttons` bitmask of held buttons (for drags) */
@@ -56,5 +58,6 @@ cv.addEventListener('wheel',e=>{e.preventDefault();send({t:'wheel',...c(e),dx:e.
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 cv.addEventListener('keydown',e=>{e.preventDefault();send({t:'keydown',key:e.key,code:e.code,repeat:e.repeat,mod:mod(e)})});
 cv.addEventListener('keyup',e=>{e.preventDefault();send({t:'keyup',key:e.key,code:e.code,mod:mod(e)})});
+cv.addEventListener('paste',e=>{e.preventDefault();const t=(e.clipboardData||window.clipboardData).getData('text');if(t)send({t:'paste',text:t})});
 </script>`;
 }

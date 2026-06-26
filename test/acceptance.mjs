@@ -2,14 +2,17 @@
 // "Done" for a feature means its proof here passes. Run: npm run test:acceptance
 // (needs Google Chrome installed — exercises the native backend.)
 import { Lucarne } from "../dist/index.js";
+import { attachPage } from "../dist/cdp.js";
 import { chromium } from "playwright";
 import WS from "ws";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 
 // Durable profiles must be isolated + reclaimable across runs.
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-acc-"));
+const FILES = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-files-"));
 process.env.LUCARNE_HOME = HOME;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -63,7 +66,28 @@ try {
   key("a", 4, "KeyA"); // Cmd+A
   await sleep(250);
   check("input: Cmd+A select-all (CDP editing command)", (await p.evaluate(() => { const t = document.getElementById("t"); return t.selectionEnd - t.selectionStart; })) === 15);
+
+  // 5. CLIPBOARD PASTE — text pasted in the porthole lands in the focused field
+  await p.evaluate(() => { const i = document.getElementById("i"); i.value = ""; i.focus(); });
+  iw.send(JSON.stringify({ t: "paste", text: "pw-9f3!" }));
+  await sleep(250);
+  check("clipboard: paste delivers text into focused input", (await p.evaluate(() => document.getElementById("i").value)) === "pw-9f3!");
   iw.close();
+
+  // 6. FILE UPLOAD — inject a host file into <input type=file>; page sees name + bytes
+  const upBytes = crypto.randomBytes(2048);
+  const upSha = crypto.createHash("sha256").update(upBytes).digest("hex");
+  const upPath = path.join(FILES, "up.bin");
+  fs.writeFileSync(upPath, upBytes);
+  await p.evaluate(() => document.body.insertAdjacentHTML("beforeend", "<input id=f type=file>"));
+  await engine.uploadFile(session.id, upPath);
+  const rep = await p.evaluate(async () => {
+    const f = document.getElementById("f").files[0];
+    if (!f) return null;
+    return { name: f.name, bytes: Array.from(new Uint8Array(await f.arrayBuffer())) };
+  });
+  const pageSha = rep ? crypto.createHash("sha256").update(Buffer.from(rep.bytes)).digest("hex") : null;
+  check("upload: file input reports matching name + sha256", !!rep && rep.name === "up.bin" && pageSha === upSha);
   await b.close();
 } finally {
   if (session) await engine.destroy(session.id).catch(() => {});
@@ -107,6 +131,41 @@ try {
 } finally {
   await pEngine.close().catch(() => {});
   fs.rmSync(HOME, { recursive: true, force: true });
+  fs.rmSync(FILES, { recursive: true, force: true });
+}
+
+// ── P0: download retrieval ──────────────────────────────────────────────────
+// The operator triggers a download in the porthole; lucarne captures it to a
+// retrievable per-session dir. Driven via raw CDP + the porthole input socket
+// (NO Playwright — a Playwright driver manages its own downloads and would
+// hijack the capture, which is exactly the path a human operator does NOT take).
+const dEngine = new Lucarne({ port: 7813, token: TOKEN, record: false });
+await dEngine.listen();
+try {
+  const dl = await dEngine.create({ backend: "native", profile: "dl" });
+  const setup = await attachPage(dl.cdpUrl);
+  setup.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1200);
+  const dlContent = "lucarne-dl-" + ID;
+  await setup.call("Runtime.evaluate", {
+    expression: `(()=>{const a=document.createElement('a');a.id='dl';a.style='position:fixed;top:8px;left:8px;font-size:50px';a.textContent='DL';`
+      + `a.href=URL.createObjectURL(new Blob([${JSON.stringify(dlContent)}],{type:'text/plain'}));a.download='report.txt';document.body.appendChild(a);})()`,
+  });
+  // click the link through the porthole input socket — the real operator path
+  const dw = new WS(`ws://127.0.0.1:7813/sessions/dl/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { dw.on("open", r); dw.on("error", j); });
+  dw.send(JSON.stringify({ t: "down", x: 25, y: 30, button: 0, buttons: 1, clickCount: 1 }));
+  dw.send(JSON.stringify({ t: "up", x: 25, y: 30, button: 0, buttons: 0, clickCount: 1 }));
+  let dlGot = null;
+  for (let i = 0; i < 40 && dlGot === null; i++) {
+    await sleep(150);
+    const fp = dEngine.downloadPath(dl.id, "report.txt");
+    if (fp) dlGot = fs.readFileSync(fp, "utf8");
+  }
+  dw.close(); setup.close();
+  check("download: porthole-triggered download captured + bytes match", dlGot === dlContent && dEngine.downloads(dl.id).includes("report.txt"));
+} finally {
+  await dEngine.close().catch(() => {});
 }
 
 const failed = results.filter((r) => !r.pass).length;

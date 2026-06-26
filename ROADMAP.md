@@ -47,7 +47,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🔨 P1 **multi-tab** — list pages, per-tab view, switch/focus tab (sessions have >1 tab today; porthole shows one)
 - 🔨 P1 view-only mode (`interactable=false`) · `showControls` nav chrome (URL bar + back/forward) · quality control · theme
 - 🔨 P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`) + mobile viewport / virtual keyboard
-- 🔨 P0 **clipboard sync** (paste passwords / 2FA / text into the porthole)
+- ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
 - 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
 - 🔨 P2 **native-UI capture decision** — CDP screencast shows the *page*, not native browser UI (file-picker, basic-auth, print, OS dropdowns). Decide: keep CDP-screencast + handle those over CDP, or capture the real window (native backend *has* a real window). Known architectural gap for the native lane.
 - 🔨 P2 disconnect events · IME / composition input
@@ -62,8 +62,8 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🔨 P3 log export · OpenTelemetry
 
 ## G. File handling
-- 🔨 **P0 download retrieval** — capture files the session downloads; list / get / delete API
-- 🔨 **P0 file upload into the browser** — inject a local file into `<input type=file>` via CDP `DOM.setFileInputFiles`, exposed in porthole + API
+- ✅ **P0 download retrieval** — downloads captured to a per-session dir (browser-level `Browser.setDownloadBehavior`); `GET/DELETE /sessions/:id/downloads[/file]`. *(Proof: porthole-triggered download captured, bytes match.)*
+- ✅ **P0 file upload into the browser** — inject a host file into `<input type=file>` via CDP `DOM.setFileInputFiles`; `POST /sessions/:id/upload`. *(Proof: page's file input reports matching name + sha256.)*
 - 🔨 P1 session + global files/workspace API
 
 ## H. Capture / output
@@ -133,7 +133,8 @@ a proof, green, before it counts.
 ✅ drive (connectOverCDP navigates) · ✅ porthole renders a real JPEG frame · ✅ input: caps/shift
 typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command) · ✅ persist: cookie survives
 destroy + recreate · ✅ persist→seed: fresh profile seeded from another carries its cookie · ✅ seed:
-only on first creation. **8/8.**
+only on first creation · ✅ clipboard: paste lands in focused input · ✅ upload: file input reports
+name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **11/11. Phase 1 (P0) complete.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

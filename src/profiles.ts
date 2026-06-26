@@ -16,6 +16,8 @@ export interface SessionDirs {
   profileDir: string;
   /** Where this session's recordings land (always ephemeral). */
   recDir: string;
+  /** Where this session's browser downloads land (retrievable via the API). */
+  downloadDir: string;
   /** Preserve `profileDir` on stop (durable named profile). */
   persist: boolean;
 }
@@ -30,7 +32,8 @@ export function sessionDirs(id: string, persist: boolean): SessionDirs {
     ? path.join(profilesRoot(), id)
     : path.join(os.tmpdir(), "lucarne", "ephemeral-" + id);
   const recDir = path.join(os.tmpdir(), "lucarne", "rec-" + id);
-  return { profileDir, recDir, persist };
+  const downloadDir = path.join(os.tmpdir(), "lucarne", "dl-" + id);
+  return { profileDir, recDir, downloadDir, persist };
 }
 
 /** A persisted profile exists once Chrome has written its `Default` subdir. */
