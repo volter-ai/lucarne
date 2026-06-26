@@ -727,7 +727,9 @@ try {
     } catch { /* ffprobe missing */ }
     fs.rmSync(tmpMp4, { force: true });
   }
-  check("recording: a record:true session produces a playable mp4 segment", segs.length >= 1 && bytes > 1000 && durationOk, segs[0] ? `${segs[0]} ${bytes}B` : "no segment");
+  let detail = segs[0] ? `${segs[0]} ${bytes}B` : "no segment";
+  if (!segs.length) { try { detail += " | ffmpeg: " + fs.readFileSync(path.join(os.tmpdir(), "lucarne", "rec-rec", "ffmpeg.log"), "utf8").trim().split("\n").slice(-3).join(" / "); } catch { detail += " (no ffmpeg.log)"; } }
+  check("recording: a record:true session produces a playable mp4 segment", segs.length >= 1 && bytes > 1000 && durationOk, detail);
 } finally {
   await recEngine.close().catch(() => {});
 }

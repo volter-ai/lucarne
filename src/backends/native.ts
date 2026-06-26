@@ -1,5 +1,6 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
+import { attachBrowser } from "../cdp.js";
 import type { Backend, BackendContext, BackendHandle } from "./types.js";
 import { waitForCdp } from "./types.js";
 
@@ -57,10 +58,18 @@ export const nativeBackend: Backend = {
     await waitForCdp(ctx.host, ports.cdp);
     return {
       async stop(): Promise<void> {
-        // A durable profile must be FLUSHED to disk (cookies, localStorage) — that
-        // only happens on a graceful shutdown, so SIGTERM and let Chrome exit
-        // before the SIGKILL backstop. Anonymous sessions skip the wait.
-        if (persist) { try { chrome.kill("SIGTERM"); } catch { /* ignore */ } await waitExit(chrome, 4000); }
+        // A durable profile must be FLUSHED to disk (cookies, localStorage). A
+        // process SIGTERM doesn't reliably flush on headless Linux, so ask Chrome
+        // to close itself over CDP (`Browser.close` — a clean shutdown that
+        // flushes the profile), fall back to SIGTERM, then SIGKILL as a backstop.
+        if (persist) {
+          try {
+            const b = await attachBrowser(`http://${ctx.host}:${ports.cdp}`);
+            b.send("Browser.close");
+            b.close();
+          } catch { try { chrome.kill("SIGTERM"); } catch { /* ignore */ } }
+          await waitExit(chrome, 6000);
+        }
         try { chrome.kill("SIGKILL"); } catch { /* ignore */ }
         await exec("rm", ["-rf", recDir]).catch(() => {});
         if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // keep durable profiles

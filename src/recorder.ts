@@ -38,8 +38,10 @@ export function startRecorder(opts: {
     ...enc, "-pix_fmt", "yuv420p",
     "-f", "segment", "-segment_time", String(opts.segmentSeconds ?? 60), "-reset_timestamps", "1",
     `${opts.recDir}/seg_%05d.mp4`,
-  ], { stdio: ["pipe", "ignore", "ignore"] });
+  ], { stdio: ["pipe", "ignore", "pipe"] });
   ff.on("error", () => { /* surfaced via the version check above */ });
+  // keep ffmpeg's stderr (encoder errors) next to the segments for diagnosis
+  ff.stderr?.on("data", (d) => { try { fs.appendFileSync(path.join(opts.recDir, "ffmpeg.log"), d); } catch { /* ignore */ } });
 
   // constant-fps tick: write whatever the latest frame is, so a static page
   // still produces regular, clippable minute-segments.
