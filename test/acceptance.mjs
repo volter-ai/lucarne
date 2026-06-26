@@ -18,6 +18,10 @@ import crypto from "node:crypto";
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-acc-"));
 const FILES = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-files-"));
 process.env.LUCARNE_HOME = HOME;
+// Run the suite HEADLESS by default — no window, no focus steal (the suite spins
+// up ~25 Chromes). Headful is verified by the one gated `headed:` proof
+// (LUCARNE_TEST_HEADED=1, set in CI). Set LUCARNE_HEADLESS=0 to force headful.
+if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -745,6 +749,25 @@ try {
   check("recording: real frames produce a finalized, playable mp4", dur > 0 && !!segName, segName ? `${segName} ${segBytes}B ${dur}s` : (frame ? "no playable segment" : "no frame"));
 } finally {
   await recEngine.close().catch(() => {});
+}
+
+// ── Headful path (the real default for users) — gated so local runs stay focus-free ──
+if (process.env.LUCARNE_TEST_HEADED === "1") {
+  const hEngine = new Lucarne({ port: 7835, token: TOKEN, record: false });
+  await hEngine.listen();
+  try {
+    const hs = await hEngine.create({ backend: "native", profile: "headed", headless: false });
+    const hb = await chromium.connectOverCDP(hs.cdpUrl);
+    const hp = hb.contexts()[0].pages()[0];
+    await hp.goto("https://example.com", { waitUntil: "domcontentloaded" });
+    const ok = (await hp.title()) === "Example Domain";
+    await hb.close();
+    check("headed: native launches a real headful Chrome + drives", ok);
+  } finally {
+    await hEngine.close().catch(() => {});
+  }
+} else {
+  console.log("  SKIP  headed: native headful path (set LUCARNE_TEST_HEADED=1 to verify)");
 }
 
 const failed = results.filter((r) => !r.pass).length;

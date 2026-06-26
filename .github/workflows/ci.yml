@@ -35,5 +35,8 @@ jobs:
           google-chrome --version
       - run: npm ci
       - run: npm run build
-      # headful Chrome (real fingerprint) needs a display → xvfb
+      # The suite runs headless by default (fast, no display needed); xvfb +
+      # LUCARNE_TEST_HEADED=1 additionally exercise the real headful path.
       - run: xvfb-run -a npm run test:acceptance
+        env:
+          LUCARNE_TEST_HEADED: "1"

@@ -111,6 +111,11 @@ scroll, and **touch** (phone gestures → `Input.dispatchTouchEvent`). Not yet h
 
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 
+By default `native` is **headful** (a real, off-screen window — the authentic lane). Pass
+`headless: true` (or `LUCARNE_HEADLESS=1`, or per session `create({ headless: true })`) to run
+`--headless=new` instead — no window and **no focus steal**, ideal for servers, CI, or when you
+don't need to watch it on this machine.
+
 Build the docker image once:
 
 ```sh

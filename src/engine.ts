@@ -50,6 +50,7 @@ export class Lucarne {
   private readonly chromePath: string;
   private readonly viewport: { width: number; height: number };
   private readonly record: boolean;
+  private readonly headless: boolean;
   private readonly fps: number;
   private readonly retentionMin: number;
   private readonly segmentSeconds: number;
@@ -73,6 +74,7 @@ export class Lucarne {
     this.chromePath = opts.chromePath ?? DEFAULT_CHROME[process.platform] ?? "google-chrome";
     this.viewport = opts.viewport ?? { width: 1280, height: 720 };
     this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
+    this.headless = opts.headless ?? process.env.LUCARNE_HEADLESS === "1";
     this.fps = opts.fps ?? 4;
     this.retentionMin = opts.retentionMin ?? 60;
     this.segmentSeconds = opts.segmentSeconds ?? 60;
@@ -110,6 +112,7 @@ export class Lucarne {
       handle = await backend.start(id, { cdp }, {
         host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
         profileDir: dirs.profileDir, recDir: dirs.recDir, persist, extensions: opts.extensions, proxy: opts.proxy,
+        headless: opts.headless ?? this.headless,
       });
       media = await startSessionMedia({
         cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,

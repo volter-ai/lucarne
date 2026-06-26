@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.9.1]
+
+### Added
+- **Headless option** for the native backend (`headless: true` / `LUCARNE_HEADLESS=1`,
+  per-session `create({ headless })`) — `--headless=new`, no window, **no focus steal**.
+  Headful stays the default (the authentic lane). The acceptance suite now runs headless
+  by default (no more stolen focus / no xvfb needed for most of it); a gated `headed:`
+  proof (`LUCARNE_TEST_HEADED=1`, run in CI) still verifies the real headful path.
+
 ## [0.9.0]
 
 ### Added

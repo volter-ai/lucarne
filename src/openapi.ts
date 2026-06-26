@@ -1,7 +1,7 @@
 /** A hand-maintained OpenAPI 3.1 description of the lucarne control API. */
 export const openApiSpec = {
   openapi: "3.1.0",
-  info: { title: "lucarne", version: "0.9.0", description: "Self-hostable browser sessions you can drive, watch, and record." },
+  info: { title: "lucarne", version: "0.9.1", description: "Self-hostable browser sessions you can drive, watch, and record." },
   paths: {
     "/health": { get: { summary: "Liveness + session count", responses: { "200": { description: "ok" } } } },
     "/sessions": {

@@ -35,6 +35,8 @@ export interface CreateSessionOptions {
   seedFrom?: string;
   /** On first creation, seed from your real local Chrome profile. */
   seedFromChrome?: boolean;
+  /** Run this session's Chrome headless (no window, no focus steal). Overrides the engine default. */
+  headless?: boolean;
   /** Unpacked extension dirs to load (native backend). Your profile's own extensions load anyway. */
   extensions?: string[];
   /** Emulate a mobile device (viewport, DPR, touch, mobile UA) for the porthole. */
@@ -88,6 +90,12 @@ export interface EngineOptions {
   viewport?: { width: number; height: number };
   /** Record sessions to a rolling buffer. Default true (`LUCARNE_RECORD=0` disables). */
   record?: boolean;
+  /**
+   * Default to headless Chrome for the native backend (no window, no focus steal).
+   * Default false — the authentic lane is headful; opt in via `LUCARNE_HEADLESS=1`
+   * or per session with `create({ headless })`. Use for servers / tests.
+   */
+  headless?: boolean;
   /** Recording frame-rate / segment cadence. Default 4. */
   fps?: number;
   /** Minutes of recording to retain. Default 60. */

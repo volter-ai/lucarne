@@ -36,7 +36,8 @@ export const nativeBackend: Backend = {
       "--no-first-run", "--no-default-browser-check",
       "--force-device-scale-factor=1",
       `--window-size=${ctx.viewport.width},${ctx.viewport.height}`,
-      "--window-position=-4000,-4000",                 // off your visible screen
+      // headless = no window at all (no focus steal); headful = off-screen window
+      ...(ctx.headless ? ["--headless=new"] : ["--window-position=-4000,-4000"]),
       "--disable-backgrounding-occluded-windows",       // keep rendering while hidden
       "--disable-renderer-backgrounding",
       "--disable-background-timer-throttling",

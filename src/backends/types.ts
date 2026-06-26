@@ -20,6 +20,8 @@ export interface BackendContext {
   extensions?: string[];
   /** BYO passthrough proxy (native backend `--proxy-server`). */
   proxy?: string;
+  /** Launch headless (native backend `--headless=new`) — no window, no focus steal. */
+  headless?: boolean;
 }
 
 export interface BackendHandle {
