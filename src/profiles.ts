@@ -41,6 +41,24 @@ export function profileExists(profileDir: string): boolean {
   return fs.existsSync(path.join(profileDir, "Default"));
 }
 
+/** Names of durable profiles on disk. */
+export function listProfileNames(): string[] {
+  try {
+    return fs.readdirSync(profilesRoot(), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+  } catch { return []; }
+}
+
+/** Delete a durable profile's directory (caller guards against a live session). */
+export function deleteProfileDir(name: string): boolean {
+  const dir = path.join(profilesRoot(), path.basename(name));
+  if (!fs.existsSync(dir)) return false;
+  fs.rmSync(dir, { recursive: true, force: true });
+  return true;
+}
+
 /** The real local Chrome user-data-dir for this platform (parent of `Default`). */
 export function realChromeUserDataDir(): string | null {
   const home = os.homedir();

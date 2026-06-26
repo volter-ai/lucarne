@@ -156,6 +156,8 @@ GET    /sessions/:id/pdf                   -> application/pdf
 GET    /sessions/:id/recordings           -> string[]   (segment filenames, oldest first)
 GET    /sessions/:id/recordings/:file     -> video/mp4
 GET    /health                            -> { ok, sessions }   (no token needed; ids only when authed)
+GET    /profiles                          -> [{ name, active }]   (durable profiles on disk)
+DELETE /profiles/:name                    -> { ok }   (refused while a session is live)
 ```
 
 `Session = { id, backend, cdpUrl, viewUrl, createdAt }`. Recording is on by default

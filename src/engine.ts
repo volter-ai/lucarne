@@ -7,7 +7,7 @@ import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { portholeHtml } from "./porthole.js";
-import { profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
+import { deleteProfileDir, listProfileNames, profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
@@ -194,6 +194,17 @@ export class Lucarne {
     await s.media.switchTab(targetId);
   }
 
+  /** Durable profiles on disk, each flagged if a live session is using it. */
+  profiles(): { name: string; active: boolean }[] {
+    return listProfileNames().map((name) => ({ name, active: this.sessions.has(name) }));
+  }
+
+  /** Delete a durable profile (refused while a live session is using it). */
+  deleteProfile(name: string): { ok: boolean; reason?: string } {
+    if (this.sessions.has(name)) return { ok: false, reason: "session live" };
+    return { ok: deleteProfileDir(name) };
+  }
+
   /** Liveness + session count, for monitoring. */
   health(): { ok: boolean; sessions: number; ids: string[] } {
     return { ok: true, sessions: this.sessions.size, ids: [...this.sessions.keys()] };
@@ -298,6 +309,13 @@ export class Lucarne {
           return send(res, 200, this.tokenOk(req.url ?? "/", req.headers.authorization) ? h : { ok: h.ok, sessions: h.sessions });
         }
         if (!this.tokenOk(req.url ?? "/", req.headers.authorization)) return send(res, 401, { error: "unauthorized" });
+        const prof = pathname.match(/^\/profiles\/?(.*)$/);
+        if (prof) {
+          const name = prof[1];
+          if (req.method === "GET" && !name) return send(res, 200, this.profiles());
+          if (req.method === "DELETE" && name) return send(res, 200, this.deleteProfile(decodeURIComponent(name)));
+          return send(res, 405, { error: "method not allowed" });
+        }
         const viewM = pathname.match(/^\/sessions\/([^/]+)\/view(?:\/(.*))?$/);
         if (viewM) {
           const [, id, sub] = viewM;

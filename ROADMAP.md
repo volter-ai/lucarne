@@ -32,7 +32,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
   *(Proof: cookie survives destroy + recreate.)*
 - ✅ **P0 seed from your real Chrome profile** — `seedFrom`/`seedFromChrome` copy cookies/logins/storage
   on a profile's first creation so it starts authenticated. *(Proof: seeded profile carries the source cookie.)*
-- 🔨 P1 profile API — create / get / list / update / delete
+- ✅ P1 profile API — `GET /profiles` (list, each flagged `active`), `DELETE /profiles/:name` (refused while a session is live); create = `create({profile})`. *(Proof: listed + active-flagged · delete refused while live · delete removes it after release.)*
 - ✅ P1 **session-context export/import** — `GET/POST /sessions/:id/context` dumps cookies + the current origin's localStorage and restores them into another live session (runtime transfer, no profile sharing). *(Proof: cookies + localStorage round-trip into a different session.)* · 🔨 P2 also sessionStorage + IndexedDB
 - 🔨 P2 encrypted profiles/credentials at rest
 - 🚫 stored *spoofed* fingerprints (native = real fingerprint)
@@ -138,7 +138,7 @@ name + sha256 · ✅ download: porthole-triggered download captured + bytes matc
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
 ✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
 into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
-runs) · ✅ multi-tab (list + switch changes the rendered frame). **26/26.**
+runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile API (list/active-guard/delete). **29/29.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

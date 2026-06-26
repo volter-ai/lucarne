@@ -312,6 +312,20 @@ try {
   await mEngine.close().catch(() => {});
 }
 
+// ── P1: profile API (list · active-guard · delete) ───────────────────────────
+const fEngine = new Lucarne({ port: 7818, token: TOKEN, record: false });
+await fEngine.listen();
+try {
+  const fs1 = await fEngine.create({ backend: "native", profile: "pf-keep" });
+  check("profiles: durable profile listed + flagged active while live", fEngine.profiles().some((p) => p.name === "pf-keep" && p.active));
+  check("profiles: delete refused while a session is live", fEngine.deleteProfile("pf-keep").ok === false);
+  await fEngine.destroy(fs1.id);
+  const del = fEngine.deleteProfile("pf-keep");
+  check("profiles: delete removes the profile after release", del.ok === true && !fEngine.profiles().some((p) => p.name === "pf-keep"));
+} finally {
+  await fEngine.close().catch(() => {});
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);
