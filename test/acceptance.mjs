@@ -191,6 +191,17 @@ try {
   vo.close();
   check("view-only: input is dropped server-side (read-only viewer)", voVal === "");
 
+  // ── P1: touch input (phone gestures) ──────────────────────────────────────
+  await setup.call("Runtime.evaluate", { expression: `document.body.innerHTML='<div style="width:100vw;height:100vh"></div>';window.__t=null;document.addEventListener('touchstart',ev=>{const t=ev.changedTouches[0];window.__t={x:t.clientX,y:t.clientY}},{passive:true});'ok'` });
+  const tw = new WS(`ws://127.0.0.1:7813/sessions/dl/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { tw.on("open", r); tw.on("error", j); });
+  tw.send(JSON.stringify({ t: "touch", phase: "start", x: 140, y: 160 }));
+  tw.send(JSON.stringify({ t: "touch", phase: "end", x: 140, y: 160 }));
+  await sleep(300);
+  const tr = JSON.parse((await setup.call("Runtime.evaluate", { expression: "JSON.stringify(window.__t)", returnByValue: true })).result.value || "null");
+  tw.close();
+  check("touch: porthole tap fires page touch handler at mapped coords", !!tr && tr.x === 140 && tr.y === 160);
+
   setup.close();
 } finally {
   await dEngine.close().catch(() => {});

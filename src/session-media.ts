@@ -66,6 +66,9 @@ export async function startSessionMedia(opts: {
       });
     } else if (ev.t === "wheel") {
       conn.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy, modifiers });
+    } else if (ev.t === "touch") {
+      const type = ev.phase === "start" ? "touchStart" : ev.phase === "end" ? "touchEnd" : "touchMove";
+      conn.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: ev.x, y: ev.y }] });
     } else if (ev.t === "paste" && typeof ev.text === "string") {
       // Clipboard sync: deliver text the operator pasted into the porthole as if
       // pasted into the focused field (CDP inserts it like a real paste).

@@ -86,7 +86,8 @@ VNC/GStreamer stack.
 The porthole has **full input fidelity** — modifiers, virtual key codes, editing shortcuts
 (select-all / copy / cut / paste / undo via CDP `commands`), **clipboard paste** (text pasted
 in the porthole lands in the focused field), drag, double/triple-click, right-click, and
-scroll. Not yet handled: **IME** (CJK composition) and **touch** events (phone) — the known tail.
+scroll, and **touch** (phone gestures → `Input.dispatchTouchEvent`). Not yet handled: **IME**
+(CJK composition) — the known tail.
 
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 

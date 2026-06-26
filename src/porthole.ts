@@ -1,7 +1,9 @@
 export interface InputEvent {
-  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste";
+  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste" | "touch";
   x?: number;
   y?: number;
+  /** phase for a `touch` event (phone gestures) */
+  phase?: "start" | "move" | "end";
   /** clipboard text for `paste` (clipboard sync into the focused field) */
   text?: string;
   /** which button changed (0 left / 1 middle / 2 right) */
@@ -59,5 +61,9 @@ cv.addEventListener('contextmenu',e=>e.preventDefault());
 cv.addEventListener('keydown',e=>{e.preventDefault();send({t:'keydown',key:e.key,code:e.code,repeat:e.repeat,mod:mod(e)})});
 cv.addEventListener('keyup',e=>{e.preventDefault();send({t:'keyup',key:e.key,code:e.code,mod:mod(e)})});
 cv.addEventListener('paste',e=>{e.preventDefault();const t=(e.clipboardData||window.clipboardData).getData('text');if(t)send({t:'paste',text:t})});
+const tc=t=>{const r=cv.getBoundingClientRect();return{x:Math.round((t.clientX-r.left)/r.width*VW),y:Math.round((t.clientY-r.top)/r.height*VH)}};
+cv.addEventListener('touchstart',e=>{e.preventDefault();send({t:'touch',phase:'start',...tc(e.changedTouches[0])})},{passive:false});
+cv.addEventListener('touchmove',e=>{e.preventDefault();send({t:'touch',phase:'move',...tc(e.changedTouches[0])})},{passive:false});
+cv.addEventListener('touchend',e=>{e.preventDefault();send({t:'touch',phase:'end',...tc(e.changedTouches[0])})},{passive:false});
 </script>`;
 }

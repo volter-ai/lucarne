@@ -46,7 +46,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
 - 🔨 P1 **multi-tab** — list pages, per-tab view, switch/focus tab (sessions have >1 tab today; porthole shows one)
 - ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · 🔨 P1 `showControls` nav chrome (URL bar + back/forward) · quality control · theme
-- 🔨 P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`) + mobile viewport / virtual keyboard
+- ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · 🔨 P1 mobile viewport / virtual keyboard
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
 - 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
 - 🔨 P2 **native-UI capture decision** — CDP screencast shows the *page*, not native browser UI (file-picker, basic-auth, print, OS dropdowns). Decide: keep CDP-screencast + handle those over CDP, or capture the real window (native backend *has* a real window). Known architectural gap for the native lane.
@@ -137,7 +137,7 @@ only on first creation · ✅ clipboard: paste lands in focused input · ✅ upl
 name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **Phase 1 (P0) complete.**
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
 ✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
-into another session) · ✅ release-all. **22/22.**
+into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords). **23/23.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 
