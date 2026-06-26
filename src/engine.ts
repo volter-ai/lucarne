@@ -8,12 +8,16 @@ import { nativeBackend } from "./backends/native.js";
 import { portholeHtml } from "./porthole.js";
 import { profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type SessionMedia } from "./session-media.js";
-import type { CreateSessionOptions, EngineOptions, Session } from "./types.js";
+import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
 interface Tracked extends Session {
   recDir: string;
   downloadDir: string;
   media: SessionMedia;
+  createdAtMs: number;
+  lastActivityMs: number;
+  timeoutMs?: number;
+  inactivityMs?: number;
   stop(): Promise<void>;
 }
 
@@ -48,6 +52,7 @@ export class Lucarne {
   private readonly backends: Record<string, Backend> = { docker: dockerBackend, native: nativeBackend };
   private readonly wss = new WebSocketServer({ noServer: true });
   private server: http.Server | undefined;
+  private reaper: ReturnType<typeof setInterval> | undefined;
 
   constructor(opts: EngineOptions = {}) {
     this.host = opts.host ?? "127.0.0.1";
@@ -60,6 +65,10 @@ export class Lucarne {
     this.fps = opts.fps ?? 4;
     this.retentionMin = opts.retentionMin ?? 60;
     this.nextCdp = opts.cdpPortBase ?? 9300;
+    // The lifecycle reaper runs whether or not the HTTP API is listening (embedded
+    // use too); unref'd so it never keeps the process alive on its own.
+    this.reaper = setInterval(() => this.reap(), opts.reapIntervalMs ?? 500);
+    this.reaper.unref?.();
   }
 
   async create(opts: CreateSessionOptions = {}): Promise<Session> {
@@ -93,6 +102,8 @@ export class Lucarne {
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
       recDir: dirs.recDir, downloadDir: dirs.downloadDir, media, stop: handle.stop,
+      createdAtMs: Date.now(), lastActivityMs: Date.now(),
+      timeoutMs: opts.timeoutMs, inactivityMs: opts.inactivityMs,
     };
     this.sessions.set(id, s);
     return pub(s);
@@ -165,6 +176,39 @@ export class Lucarne {
     return { ok: true, sessions: this.sessions.size, ids: [...this.sessions.keys()] };
   }
 
+  /** Mark a session active (resets its inactivity clock). */
+  touch(id: string): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    s.lastActivityMs = Date.now();
+    return true;
+  }
+
+  /** Rich status: uptime, idle time, dims, configured lifecycle limits. */
+  status(id: string): SessionStatus | undefined {
+    const s = this.sessions.get(id);
+    if (!s) return undefined;
+    const now = Date.now();
+    return {
+      ...pub(s),
+      uptimeMs: now - s.createdAtMs,
+      idleMs: now - s.lastActivityMs,
+      viewport: this.viewport,
+      ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
+      ...(s.inactivityMs !== undefined ? { inactivityMs: s.inactivityMs } : {}),
+    };
+  }
+
+  /** Destroy any session that hit its max-duration or inactivity limit. */
+  private reap(): void {
+    const now = Date.now();
+    for (const s of [...this.sessions.values()]) {
+      const overDuration = s.timeoutMs !== undefined && now - s.createdAtMs >= s.timeoutMs;
+      const overIdle = s.inactivityMs !== undefined && now - s.lastActivityMs >= s.inactivityMs;
+      if (overDuration || overIdle) void this.destroy(s.id);
+    }
+  }
+
   async destroy(id: string): Promise<boolean> {
     const s = this.sessions.get(id);
     if (!s) return false;
@@ -213,6 +257,13 @@ export class Lucarne {
           res.writeHead(200, { "content-type": kind === "pdf" ? "application/pdf" : "image/png" });
           res.end(buf);
           return;
+        }
+        const st = pathname.match(/^\/sessions\/([^/]+)\/(status|touch)$/);
+        if (st) {
+          const [, id, kind] = st;
+          if (kind === "status") { const s = this.status(id!); return s ? send(res, 200, s) : send(res, 404, { error: "no such session" }); }
+          if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
+          return send(res, 200, { ok: this.touch(id!) });
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {
@@ -280,7 +331,7 @@ export class Lucarne {
         const cur = s.media.frames.get();
         if (cur) ws.send(cur);
         const unsub = s.media.frames.subscribe((f) => { if (ws.readyState === ws.OPEN) ws.send(f); });
-        ws.on("message", (d) => { try { s.media.onInput(JSON.parse(d.toString())); } catch { /* ignore */ } });
+        ws.on("message", (d) => { s.lastActivityMs = Date.now(); try { s.media.onInput(JSON.parse(d.toString())); } catch { /* ignore */ } });
         ws.on("close", unsub);
         ws.on("error", unsub);
       });
@@ -290,6 +341,7 @@ export class Lucarne {
   }
 
   async close(): Promise<void> {
+    if (this.reaper) clearInterval(this.reaper);
     this.server?.close();
     await Promise.all([...this.sessions.keys()].map((id) => this.destroy(id)));
   }

@@ -186,6 +186,33 @@ try {
   await dEngine.close().catch(() => {});
 }
 
+// ── P1: session lifecycle (status · inactivity reap · max-duration) ──────────
+const lEngine = new Lucarne({ port: 7814, token: TOKEN, record: false, reapIntervalMs: 200 });
+await lEngine.listen();
+try {
+  // rich status
+  const ls = await lEngine.create({ backend: "native", profile: "life", inactivityMs: 700 });
+  const st = lEngine.status(ls.id);
+  check("status: rich object (uptime + dims)", !!st && st.uptimeMs >= 0 && st.viewport.width === 1280 && st.viewport.height === 720 && typeof st.idleMs === "number");
+
+  // activity resets the idle clock: touch through the window, stays alive past it
+  for (let i = 0; i < 6; i++) { await sleep(200); lEngine.touch(ls.id); }    // ~1.2s of touches, deadline 700ms
+  check("inactivity: touch keeps a session alive past its idle window", !!lEngine.get(ls.id));
+
+  // stop touching: reaped after the idle window elapses
+  let reaped = false;
+  for (let i = 0; i < 20 && !reaped; i++) { await sleep(150); reaped = !lEngine.get(ls.id); }
+  check("inactivity: idle session auto-reaped", reaped);
+
+  // max-duration: dies on schedule regardless of activity (touch every tick, still reaped)
+  const lt = await lEngine.create({ backend: "native", profile: "life2", timeoutMs: 700 });
+  let tReaped = false;
+  for (let i = 0; i < 20 && !tReaped; i++) { await sleep(150); lEngine.touch(lt.id); tReaped = !lEngine.get(lt.id); }
+  check("timeout: max-duration reaps even an active session", tReaped);
+} finally {
+  await lEngine.close().catch(() => {});
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

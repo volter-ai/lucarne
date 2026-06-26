@@ -18,9 +18,9 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## A. Session lifecycle & management
 - ✅ create / get / list / destroy session, token auth
-- 🔨 P1 `release-all`, explicit `status` + rich session object (createdAt, duration, eventCount, dims)
-- 🔨 P1 **`timeout`** (max duration) and **`inactivityTimeout`** (idle auto-release; reset on CDP/input)
-- 🔨 P1 **`keepAlive` + reconnect** across client disconnect (session outlives the driver)
+- ✅ P1 explicit **`status`** + rich session object (uptime, idle, dims, limits); `GET /sessions/:id/status`. *(Proof: status returns uptime + dims.)* · 🔨 P1 `release-all`
+- ✅ P1 **`timeout`** (max duration) and **`inactivityTimeout`** (idle auto-release; `touch` / porthole input resets it). *(Proof: idle session reaped · touch keeps alive · timeout reaps even an active session.)*
+- ✅ P1 **session outlives the driver** — sessions are engine-owned processes; a porthole/CDP client disconnect never ends them, reconnect by id. 🔨 P1 survive *daemon* restart (persisted registry — see "survive restart")
 - 🔨 P2 `userMetadata` tags + list-query filter
 - 🔨 P3 concurrency allocation / pooling / queue
 - 🚫 regions / multi-region (your machine *is* the location) · billing/credits · rate-limits
@@ -101,7 +101,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## O. Deployment / ops
 - ✅ Docker self-host (thin image) · token auth
-- 🔨 P1 idle reaping / TTL · health endpoint
+- ✅ P1 idle reaping / TTL (inactivity + max-duration reaper) · ✅ health endpoint
 - 🔨 P3 concurrency / queue config · CORS · env config
 - 🚫 managed cloud / HA / autoscaling / multi-region (local by design)
 
@@ -135,7 +135,8 @@ typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command) · �
 destroy + recreate · ✅ persist→seed: fresh profile seeded from another carries its cookie · ✅ seed:
 only on first creation · ✅ clipboard: paste lands in focused input · ✅ upload: file input reports
 name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **Phase 1 (P0) complete.**
-P1 so far: ✅ screenshot (valid PNG) · ✅ pdf (valid PDF ≥1 page) · ✅ health (count == live). **14/14.**
+P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
+✅ max-duration timeout. **18/18.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

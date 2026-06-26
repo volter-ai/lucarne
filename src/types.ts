@@ -33,6 +33,22 @@ export interface CreateSessionOptions {
   seedFrom?: string;
   /** On first creation, seed from your real local Chrome profile. */
   seedFromChrome?: boolean;
+  /** Auto-release this session after this many ms of wall-clock, regardless of use. */
+  timeoutMs?: number;
+  /**
+   * Auto-release after this many ms with no porthole interaction or `touch`.
+   * Off by default (a CDP-driven session with no porthole input is not "idle").
+   */
+  inactivityMs?: number;
+}
+
+/** Rich, live view of a session (uptime / idle / dims) for status + monitoring. */
+export interface SessionStatus extends Session {
+  uptimeMs: number;
+  idleMs: number;
+  viewport: { width: number; height: number };
+  timeoutMs?: number;
+  inactivityMs?: number;
 }
 
 export interface EngineOptions {
@@ -60,6 +76,8 @@ export interface EngineOptions {
   retentionMin?: number;
   /** First CDP port to allocate. Default 9300. */
   cdpPortBase?: number;
+  /** How often the lifecycle reaper checks timeout/inactivity. Default 500ms. */
+  reapIntervalMs?: number;
   /** First porthole (view) port to allocate. Default 8100. */
   viewPortBase?: number;
 }

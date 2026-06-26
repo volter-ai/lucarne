@@ -132,9 +132,11 @@ await engine.close();                           // stop API + tear down all sess
 HTTP control API (what the CLI talks to):
 
 ```
-POST   /sessions                          {profile?, backend?, persist?, seedFrom?, seedFromChrome?}  -> Session
+POST   /sessions                          {profile?, backend?, persist?, seedFrom?, seedFromChrome?, timeoutMs?, inactivityMs?}  -> Session
 GET    /sessions                          -> Session[]
 GET    /sessions/:id                      -> Session
+GET    /sessions/:id/status               -> SessionStatus   (uptime, idle, dims, limits)
+POST   /sessions/:id/touch                -> { ok }   (reset the inactivity clock)
 DELETE /sessions/:id                      -> { ok }
 POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject a host file into <input type=file>)
 GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)
