@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.11.0]
+
+### Added
+- **Full-surface typed SDK** — `LucarneClient` now covers `screenshot`/`pdf`/`recordings`/
+  `recording`/`downloads`/`download`/`activity`/`touch`/`exportContext`/`importContext`
+  (binary endpoints return `Uint8Array`). New exported types `ActivityEvent`/`ActivityNow`/
+  `SessionContext`, and an exported `VERSION`.
+- **`lucarne --version`** (`-v`), sourced from `package.json` — the CLI, MCP `serverInfo`,
+  and OpenAPI `info.version` now share one version (no more hard-coded drift).
+- **`LUCARNE_CHROME`** env to point the native backend at a specific Chrome/Chromium binary.
+- **Runnable examples** for every advertised capability (computer-use, record/replay,
+  supervised login, porthole embed, Python, MCP config) + a README **Recipes** section.
+- **Docker-backend CI proof** — a smoke job builds the image and drives a real container
+  (`test/docker-smoke.mjs`), so the docker path is proven, not assumed.
+
+### Changed
+- **Clearer failures, never silent.** The CLI now exits non-zero with a message on an HTTP
+  error (was: print body, exit 0); a missing Chrome binary fails fast with guidance (was: a
+  25 s timeout); a taken port rejects with a clear message (was: a raw crash). The **docker
+  backend now rejects** `proxy`/`extensions` (native-only) instead of silently ignoring them.
+- The OpenAPI spec documents the full session surface (`act`/`activity`/`context`/`touch`/
+  `recordings`/`downloads`/`files`/`view`), and the published package ships `clients/` +
+  `examples/` (the README-referenced Python client was previously orphaned).
+
 ## [0.10.0]
 
 ### Added

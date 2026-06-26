@@ -1,7 +1,7 @@
 // Acceptance proofs — each asserts REAL behavior end-to-end, not a 200.
 // "Done" for a feature means its proof here passes. Run: npm run test:acceptance
 // (needs Google Chrome installed — exercises the native backend.)
-import { Lucarne, LucarneClient } from "../dist/index.js";
+import { Lucarne, LucarneClient, VERSION } from "../dist/index.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -564,8 +564,29 @@ try {
   // OpenAPI + /docs (token-exempt, like /health)
   const spec = await (await fetch("http://127.0.0.1:7827/openapi.json")).json();
   check("openapi: served spec validates structurally", spec.openapi.startsWith("3.") && !!spec.paths["/sessions"] && !!spec.info.title);
+  check("openapi: spec version tracks the package (no hard-coded drift)", spec.info.version === VERSION);
+  // the spec must cover the routes that were previously undocumented (drift guard)
+  const mustDocument = ["/sessions/{id}/act", "/sessions/{id}/activity", "/sessions/{id}/context", "/sessions/{id}/touch", "/sessions/{id}/recordings", "/sessions/{id}/downloads/{file}", "/sessions/{id}/files/{name}", "/sessions/{id}/view"];
+  const missing = mustDocument.filter((p) => !spec.paths[p]);
+  check("openapi: documents the full session surface (act/activity/context/…)", missing.length === 0, missing.length ? `missing ${missing.join(", ")}` : "all present");
   const docs = await (await fetch("http://127.0.0.1:7827/docs")).text();
   check("docs: serves a Swagger UI referencing the spec", docs.toLowerCase().includes("swagger") && docs.includes("openapi.json"));
+
+  // SDK methods added to cover the binary + JSON surface beyond create/list
+  const nc = await attachPage(sdkS.cdpUrl);
+  nc.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1500);
+  nc.close();
+  const shot = await client.screenshot(sdkS.id);
+  check("sdk: screenshot() returns PNG bytes", shot instanceof Uint8Array && shot[0] === 0x89 && shot[1] === 0x50 && shot[2] === 0x4e && shot[3] === 0x47, `${shot.length}B`);
+  const tch = await client.touch(sdkS.id);
+  check("sdk: touch() resets the inactivity clock", tch.ok === true);
+  const recs = await client.recordings(sdkS.id);
+  check("sdk: recordings() returns the segment list", Array.isArray(recs));
+  const xc = await client.exportContext(sdkS.id);
+  check("sdk: exportContext() returns cookies + origin", Array.isArray(xc.cookies) && typeof xc.origin === "string");
+  const av = await client.activity(sdkS.id);
+  check("sdk: activity() returns the {now, recent} shape", "now" in av && Array.isArray(av.recent));
 
   // theme: the porthole HTML honors ?theme (client-side cosmetic)
   const view = await (await fetch(`http://127.0.0.1:7827/sessions/sdk/view/?token=${TOKEN}`)).text();
@@ -686,6 +707,7 @@ try {
   rpc(1, "initialize", {});
   const init = await waitFor(1);
   check("mcp: initialize returns server info", init?.result?.serverInfo?.name === "lucarne");
+  check("mcp: serverInfo version tracks the package (no drift)", init?.result?.serverInfo?.version === VERSION);
   rpc(2, "tools/list", {});
   const tl = await waitFor(2);
   check("mcp: tools/list advertises lucarne tools", (tl?.result?.tools || []).some((t) => t.name === "lucarne_create"));
@@ -772,6 +794,57 @@ try {
   check("activity: ?stream=1 SSE replays the feed (live channel)", !!sseEv && typeof sseEv.kind === "string" && typeof sseEv.actor === "string");
 } finally {
   await aEngine.close().catch(() => {});
+}
+
+// ── Hardening: clear failures, honest backend contract, version, packaging ───
+// None of these launch a real Chrome (the missing-Chrome case uses a bogus path),
+// so they're fast and deterministic.
+{
+  // --version prints the package version (one source of truth, no drift)
+  const cliV = execFileSync("node", ["dist/cli.js", "--version"], { encoding: "utf8" }).trim();
+  check("cli: --version prints the package version", cliV === VERSION, `${cliV} === ${VERSION}`);
+
+  // CLI surfaces an HTTP error instead of printing the body and exiting 0
+  const hgEngine = new Lucarne({ port: 7837, token: TOKEN, record: false });
+  await hgEngine.listen();
+  let cliErr = { status: 0, stderr: "" };
+  try {
+    execFileSync("node", ["dist/cli.js", "ls"], { encoding: "utf8", env: { ...process.env, LUCARNE_URL: "http://127.0.0.1:7837", LUCARNE_TOKEN: "WRONG" } });
+  } catch (e) { cliErr = { status: e.status, stderr: String(e.stderr || "") }; }
+  check("cli: a 401 is a non-zero exit with a clear message (not silent success)", cliErr.status === 1 && /401/.test(cliErr.stderr));
+
+  // listen() rejects a taken port with a clear message (no raw crash)
+  let portErr = "";
+  try { const dup = new Lucarne({ port: 7837, token: TOKEN, record: false }); await dup.listen(); } catch (e) { portErr = e.message; }
+  check("listen: a taken port rejects with a clear message", /already in use/.test(portErr), portErr);
+  await hgEngine.close().catch(() => {});
+
+  // native: a missing Chrome binary fails fast + clearly (no 25s wait)
+  const ncEngine = new Lucarne({ port: 7838, token: TOKEN, record: false, chromePath: "/no/such/chrome-binary" });
+  await ncEngine.listen();
+  const t0 = Date.now();
+  let chromeErr = "";
+  try { await ncEngine.create({ backend: "native", profile: "nochrome" }); } catch (e) { chromeErr = e.message; }
+  const chromeDt = Date.now() - t0;
+  await ncEngine.close().catch(() => {});
+  check("native: missing Chrome fails fast (<5s) with a clear message", /Chrome not found/.test(chromeErr) && chromeDt < 5000, `${chromeDt}ms`);
+
+  // docker: unsupported options are REJECTED, not silently dropped (throws before docker)
+  const dgEngine = new Lucarne({ port: 7839, token: TOKEN, record: false });
+  await dgEngine.listen();
+  let proxyErr = "", extErr = "";
+  try { await dgEngine.create({ backend: "docker", profile: "dgp", proxy: "http://127.0.0.1:8888" }); } catch (e) { proxyErr = e.message; }
+  try { await dgEngine.create({ backend: "docker", profile: "dge", extensions: ["/tmp/x"] }); } catch (e) { extErr = e.message; }
+  await dgEngine.close().catch(() => {});
+  check("docker: unsupported proxy is rejected, not silently dropped", /does not support `proxy`/.test(proxyErr));
+  check("docker: unsupported extensions are rejected, not silently dropped", /does not support custom `extensions`/.test(extErr));
+
+  // packaging: the published tarball actually ships what the README references
+  const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { encoding: "utf8" }));
+  const packedFiles = packed[0].files.map((f) => f.path);
+  check("pack: ships the Python client referenced in the README", packedFiles.includes("clients/python/lucarne.py"));
+  check("pack: ships the runnable examples", packedFiles.some((f) => f.startsWith("examples/")));
+  check("pack: ships the CLI + MCP binaries", packedFiles.includes("dist/cli.js") && packedFiles.includes("dist/mcp.js"));
 }
 
 // ── Recording: REAL browser frames → ffmpeg → a finalized, playable mp4 ───────

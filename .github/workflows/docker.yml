@@ -1,0 +1,31 @@
+name: docker
+# The docker backend is the other half of "native + docker". Building the ~700 MB
+# image on every push is wasteful, so this lane runs only when docker-relevant code
+# changes, on a weekly schedule, or on demand — but it DOES build + drive a real
+# container, so the docker path is genuinely proven, not assumed.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "src/backends/docker.ts"
+      - "test/docker-smoke.mjs"
+      - ".github/workflows/docker.yml"
+
+jobs:
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build:image
+      - run: node test/docker-smoke.mjs
