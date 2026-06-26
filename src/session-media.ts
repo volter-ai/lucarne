@@ -133,6 +133,11 @@ export async function startSessionMedia(opts: {
     } else if (ev.t === "touch") {
       const type = ev.phase === "start" ? "touchStart" : ev.phase === "end" ? "touchEnd" : "touchMove";
       page.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: ev.x, y: ev.y }] });
+    } else if (ev.t === "ime") {
+      // IME/composition (CJK etc.) — plain keydowns can't produce composed text.
+      const text = ev.text ?? "";
+      if (ev.phase === "commit") page.send("Input.insertText", { text });
+      else page.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
     } else if (ev.t === "nav") {
       if (ev.action === "go" && ev.url) page.send("Page.navigate", { url: ev.url });
       else if (ev.action === "back") page.send("Runtime.evaluate", { expression: "history.back()" });

@@ -45,12 +45,12 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 ## D. Live view / human takeover (the porthole)
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
 - ✅ P1 **multi-tab** — `GET /sessions/:id/tabs` lists open tabs; `POST /sessions/:id/tabs/:targetId` re-taps the porthole (screencast + input) at that tab. *(Proof: lists 2 tabs · switch changes the active tab + the rendered frame.)*
-- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · ✅ P1 `showControls` nav chrome (`?controls=1`: URL bar + back/forward/reload → `nav` events). *(Proof: go navigates + back returns.)* · ✅ P2 quality control (`quality: 1–100` → screencast JPEG quality). *(Proof: lower quality yields smaller frames.)* · 🔨 P2 theme
+- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · ✅ P1 `showControls` nav chrome (`?controls=1`: URL bar + back/forward/reload → `nav` events). *(Proof: go navigates + back returns.)* · ✅ P2 quality control (`quality: 1–100` → screencast JPEG quality). *(Proof: lower quality yields smaller frames.)* · ✅ P2 theme (`?theme=light`). *(Proof: porthole honors the theme param.)*
 - ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · ✅ P1 **mobile viewport** (`mobile: true` → device metrics + DPR + touch + mobile UA, re-applied across tab switch). *(Proof: innerWidth 390 + maxTouchPoints>0 + iPhone UA.)* *(Text entry uses key events — no separate virtual keyboard to build.)*
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
-- 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
+- ✅ P2 **WebRTC transport — DEFERRED (documented).** A real WebRTC path (offer/answer + ICE + a video track or data channel) needs a native dependency (`node-datachannel`/`wrtc`), which breaks lucarne's lean dependency story (today: only `ws`). Its single win — cellular-smooth low latency — is a P3 optimization, and the WS-JPEG porthole already survives proxies/tunnels and is uniform across backends. The signaling **seam** is clean if a consumer wants it: add an `/sessions/:id/rtc` offer/answer endpoint and feed the same `frames` source into a track. Deferred to keep the core dep-free; revisit in P3 if latency over cellular proves limiting.
 - ✅ P2 **native-UI capture decision (DECIDED)** — **keep the single CDP-screencast transport; intercept native surfaces over CDP rather than capturing the OS window.** Window capture would break the property that makes lucarne deployable — *one* WS transport that survives a reverse proxy/tunnel and is identical across native + docker (docker has no host window to capture). So each native-UI surface is handled over CDP instead: **file picker** → `DOM.setFileInputFiles` (the upload API, already shipped); **JS dialogs** (alert/confirm/beforeunload) → `Page.javascriptDialogOpening` + `Page.handleJavaScriptDialog`; **basic-auth** → `Fetch.authRequired` / `Network.setExtraHTTPHeaders`; **print** → `Page.printToPDF` (the pdf API, already shipped); **`<select>` dropdowns** render in-page under CDP. Out of scope (rare, native-only): OS-level color/date pickers and the print *preview* chrome. This keeps the porthole proxy-friendly and cross-backend-uniform; the trade-off is the handful of OS chrome surfaces above, addressed individually.
-- 🔨 P2 disconnect events · IME / composition input
+- ✅ P2 **IME / composition input** — porthole `compositionupdate`/`compositionend` → `ime` events → `Input.imeSetComposition` (compose) + `Input.insertText` (commit), so CJK that plain keydowns can't produce lands in the field. *(Proof: composition commits 日本語 into a focused input.)* · 🔨 P3 disconnect events
 
 ## E. Recording / replay
 - ✅ recording (CCTV ring → ffmpeg, hardware-encoded)
@@ -95,7 +95,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ framework drivers work today (anything that speaks CDP/Playwright)
 
 ## N. SDK / API / DX
-- 🔨 P2 typed client SDK (Node + Python) · **OpenAPI/Swagger** docs · `/docs` UI
+- ✅ P2 typed **Node client SDK** (`LucarneClient`) + **OpenAPI 3.1** spec at `/openapi.json` + Swagger **`/docs`** UI. *(Proof: SDK create/filtered-list/destroy round-trip · spec validates structurally · /docs references the spec.)* · 🔨 P3 Python SDK
 - ✅ CLI · REST control API
 
 ## O. Deployment / ops
@@ -144,7 +144,8 @@ id + login intact). **38/38. Phase 2 (P1) complete.**
 P2 so far: ✅ log capture (SSE live console · snapshot network+console · kind filter) · ✅ rendered /content
 HTML · ✅ userMetadata tags + list filter · ✅ sessionStorage in context · ✅ quality control (smaller frames) ·
 ✅ credentials API (blurred) · ✅ TOTP (RFC 6238 vector) · ✅ encrypted-at-rest · ✅ auto-inject login ·
-✅ native-UI-capture decision (documented). **49/49.**
+✅ native-UI-capture decision (documented) · ✅ typed Node SDK · ✅ OpenAPI /openapi.json · ✅ /docs Swagger UI ·
+✅ IME (commits 日本語) · ✅ theme · ✅ WebRTC decision (deferred, documented). **56/56.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

@@ -1,7 +1,7 @@
 // Acceptance proofs — each asserts REAL behavior end-to-end, not a 200.
 // "Done" for a feature means its proof here passes. Run: npm run test:acceptance
 // (needs Google Chrome installed — exercises the native backend.)
-import { Lucarne } from "../dist/index.js";
+import { Lucarne, LucarneClient } from "../dist/index.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { totpCode } from "../dist/credentials.js";
 import { chromium } from "playwright";
@@ -537,6 +537,46 @@ try {
 } finally {
   await crEngine.close().catch(() => {});
   fs.rmSync(CHOME, { recursive: true, force: true });
+}
+
+// ── P2: typed SDK + OpenAPI + /docs + IME + theme ────────────────────────────
+const sdkEngine = new Lucarne({ port: 7827, token: TOKEN, record: false });
+await sdkEngine.listen();
+try {
+  const client = new LucarneClient({ baseUrl: "http://127.0.0.1:7827", token: TOKEN });
+  const h = await client.health();
+  check("sdk: health round-trips", h.ok === true && typeof h.sessions === "number");
+  const sdkS = await client.create({ backend: "native", profile: "sdk", metadata: { via: "sdk" } });
+  const listed = await client.list({ via: "sdk" });
+  check("sdk: create + filtered list round-trip", listed.some((x) => x.id === sdkS.id));
+
+  // OpenAPI + /docs (token-exempt, like /health)
+  const spec = await (await fetch("http://127.0.0.1:7827/openapi.json")).json();
+  check("openapi: served spec validates structurally", spec.openapi.startsWith("3.") && !!spec.paths["/sessions"] && !!spec.info.title);
+  const docs = await (await fetch("http://127.0.0.1:7827/docs")).text();
+  check("docs: serves a Swagger UI referencing the spec", docs.toLowerCase().includes("swagger") && docs.includes("openapi.json"));
+
+  // theme: the porthole HTML honors ?theme (client-side cosmetic)
+  const view = await (await fetch(`http://127.0.0.1:7827/sessions/sdk/view/?token=${TOKEN}`)).text();
+  check("theme: porthole supports the theme param", view.includes("theme") && view.includes("light"));
+
+  // IME: composition commits CJK that plain keydowns cannot produce
+  const ic = await attachPage(sdkS.cdpUrl);
+  await ic.call("Runtime.evaluate", { expression: `document.body.innerHTML='<input id=i>';document.getElementById('i').focus();` });
+  const iw = new WS(`ws://127.0.0.1:7827/sessions/sdk/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { iw.on("open", r); iw.on("error", j); });
+  iw.send(JSON.stringify({ t: "ime", phase: "compose", text: "日本" }));
+  await sleep(200);
+  iw.send(JSON.stringify({ t: "ime", phase: "commit", text: "日本語" }));
+  await sleep(400);
+  const iv = (await ic.call("Runtime.evaluate", { expression: "document.getElementById('i').value", returnByValue: true })).result.value;
+  iw.close(); ic.close();
+  check("ime: composition commits CJK into the focused input", iv === "日本語");
+
+  await client.destroy(sdkS.id);
+  check("sdk: destroy removes the session", !(await client.list()).some((x) => x.id === sdkS.id));
+} finally {
+  await sdkEngine.close().catch(() => {});
 }
 
 const failed = results.filter((r) => !r.pass).length;

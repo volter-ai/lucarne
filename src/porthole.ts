@@ -1,9 +1,9 @@
 export interface InputEvent {
-  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste" | "touch" | "nav";
+  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste" | "touch" | "nav" | "ime";
   x?: number;
   y?: number;
-  /** phase for a `touch` event (phone gestures) */
-  phase?: "start" | "move" | "end";
+  /** phase for a `touch` event (phone gestures) or `ime` (`compose` | `commit`) */
+  phase?: "start" | "move" | "end" | "compose" | "commit";
   /** nav action for a `nav` event (showControls chrome) */
   action?: "go" | "back" | "forward" | "reload";
   /** target url for a `nav` `go` */
@@ -74,6 +74,9 @@ const tc=t=>{const r=cv.getBoundingClientRect();return{x:Math.round((t.clientX-r
 cv.addEventListener('touchstart',e=>{e.preventDefault();send({t:'touch',phase:'start',...tc(e.changedTouches[0])})},{passive:false});
 cv.addEventListener('touchmove',e=>{e.preventDefault();send({t:'touch',phase:'move',...tc(e.changedTouches[0])})},{passive:false});
 cv.addEventListener('touchend',e=>{e.preventDefault();send({t:'touch',phase:'end',...tc(e.changedTouches[0])})},{passive:false});
+cv.addEventListener('compositionupdate',e=>send({t:'ime',phase:'compose',text:e.data||''}));
+cv.addEventListener('compositionend',e=>send({t:'ime',phase:'commit',text:e.data||''}));
+{const th=new URLSearchParams(location.search).get('theme');if(th==='light'){document.body.style.background='#f4f4f4'}}
 if(new URLSearchParams(location.search).get('controls')==='1'){
   document.documentElement.classList.add('controls');
   document.getElementById('bk').onclick=()=>send({t:'nav',action:'back'});

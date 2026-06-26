@@ -52,6 +52,18 @@ await page.goto("https://example.com");
 // meanwhile, open session.viewUrl to watch + take over
 ```
 
+Or use the typed client against a running daemon:
+
+```ts
+import { LucarneClient } from "lucarne";
+
+const lucarne = new LucarneClient({ baseUrl: "http://127.0.0.1:7800", token: process.env.LUCARNE_TOKEN });
+const session = await lucarne.create({ profile: "alpha", backend: "native" });
+const browser = await chromium.connectOverCDP(session.cdpUrl);   // drive with Playwright
+```
+
+The full API is described by an **OpenAPI 3.1** spec at `/openapi.json`, with a Swagger UI at `/docs`.
+
 Or embed the engine directly, no daemon:
 
 ```ts

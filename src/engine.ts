@@ -7,6 +7,7 @@ import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { blurCredential, deleteCredential, getCredential, listCredentials, putCredential, totpCode, type Credential } from "./credentials.js";
+import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type LogEntry, type SessionMedia } from "./session-media.js";
@@ -453,6 +454,8 @@ export class Lucarne {
     this.server = http.createServer(async (req, res) => {
       try {
         const pathname = new URL(req.url ?? "/", "http://x").pathname;
+        if (pathname === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(openApiSpec)); return; }
+        if (pathname === "/docs") { res.writeHead(200, { "content-type": "text/html" }); res.end(docsHtml()); return; }
         if (pathname === "/health") {
           const h = this.health();
           // ids only to an authed caller; bare liveness needs no token (monitoring)
