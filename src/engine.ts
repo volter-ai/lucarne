@@ -6,6 +6,7 @@ import type { Backend } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { portholeHtml } from "./porthole.js";
+import { profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session } from "./types.js";
 
@@ -66,11 +67,22 @@ export class Lucarne {
     if (existing) return pub(existing);
     const backend = this.backends[opts.backend ?? "docker"];
     if (!backend) throw new Error(`lucarne: unknown backend '${opts.backend}'`);
+    const persist = opts.persist ?? !!opts.profile;
+    const dirs = sessionDirs(id, persist);
+    // Seed an authenticated starting point — only on a profile's FIRST creation,
+    // never overwriting an established profile.
+    if (persist && !profileExists(dirs.profileDir)) {
+      const source = opts.seedFromChrome ? realChromeUserDataDir() : opts.seedFrom;
+      if (source) seedProfile(source, dirs.profileDir);
+    }
     const cdp = this.nextCdp++;
     const cdpUrl = `http://${this.host}:${cdp}`;
-    const handle = await backend.start(id, { cdp }, { host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport });
+    const handle = await backend.start(id, { cdp }, {
+      host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
+      profileDir: dirs.profileDir, recDir: dirs.recDir, persist,
+    });
     const media = await startSessionMedia({
-      cdpUrl, recDir: handle.recDir, viewport: this.viewport,
+      cdpUrl, recDir: dirs.recDir, viewport: this.viewport,
       record: this.record, fps: this.fps, retentionMin: this.retentionMin,
     });
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
@@ -78,7 +90,7 @@ export class Lucarne {
       id, backend: backend.kind, cdpUrl,
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
-      recDir: handle.recDir, media, stop: handle.stop,
+      recDir: dirs.recDir, media, stop: handle.stop,
     };
     this.sessions.set(id, s);
     return pub(s);

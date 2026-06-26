@@ -13,14 +13,14 @@ const exec = promisify(execFile);
 export const dockerBackend: Backend = {
   kind: "docker",
   async start(id, ports, ctx: BackendContext): Promise<BackendHandle> {
+    const { profileDir, recDir, persist } = ctx;
     const name = "lucarne-" + id;
-    const dir = `/tmp/lucarne/${id}`;
-    const recDir = `${dir}/recordings`;
-    await exec("mkdir", ["-p", `${dir}/profile`, recDir]);
+    if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // anonymous = fresh
+    await exec("mkdir", ["-p", profileDir, recDir]);
     await exec("docker", [
       "run", "-d", "--name", name, "--shm-size=1g", "--security-opt", "seccomp=unconfined",
       "-p", `${ctx.host}:${ports.cdp}:9222`,            // only CDP is exposed
-      "-v", `${dir}/profile:/profile`,
+      "-v", `${profileDir}:/profile`,
       "-e", `RES=${ctx.viewport.width}x${ctx.viewport.height}`,
       ctx.image,
     ]).catch((e: Error) => {
@@ -28,8 +28,11 @@ export const dockerBackend: Backend = {
     });
     await waitForCdp(ctx.host, ports.cdp);
     return {
-      recDir,
-      async stop(): Promise<void> { await exec("docker", ["rm", "-f", name]).catch(() => {}); },
+      async stop(): Promise<void> {
+        await exec("docker", ["rm", "-f", name]).catch(() => {});
+        await exec("rm", ["-rf", recDir]).catch(() => {});
+        if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // keep durable profiles
+      },
     };
   },
 };

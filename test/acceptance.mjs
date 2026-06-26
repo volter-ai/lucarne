@@ -4,6 +4,13 @@
 import { Lucarne } from "../dist/index.js";
 import { chromium } from "playwright";
 import WS from "ws";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+// Durable profiles must be isolated + reclaimable across runs.
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-acc-"));
+process.env.LUCARNE_HOME = HOME;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -61,6 +68,45 @@ try {
 } finally {
   if (session) await engine.destroy(session.id).catch(() => {});
   await engine.close().catch(() => {});
+}
+
+// ── P0: persistence ────────────────────────────────────────────────────────
+// Cookies must survive a profile being destroyed and recreated by the same name,
+// and must transfer when a fresh profile is SEEDED from an existing one.
+const COOKIE = { name: "lucarne_acc", value: "kept-" + ID, url: "https://example.com", expires: 2000000000 };
+const readCookie = async (cdpUrl) => {
+  const b = await chromium.connectOverCDP(cdpUrl);
+  const got = (await b.contexts()[0].cookies("https://example.com")).find((c) => c.name === COOKIE.name);
+  await b.close();
+  return got?.value;
+};
+
+const pEngine = new Lucarne({ port: 7812, token: TOKEN, record: false });
+await pEngine.listen();
+try {
+  // seed a durable profile with a persistent cookie, then flush it to disk
+  let s1 = await pEngine.create({ backend: "native", profile: "persist-A" });
+  let b = await chromium.connectOverCDP(s1.cdpUrl);
+  await b.contexts()[0].addCookies([COOKIE]);
+  await b.close();
+  check("persist: cookie set in profile", (await readCookie(s1.cdpUrl)) === COOKIE.value);
+  await pEngine.destroy(s1.id); // graceful flush + Chrome exits; profile dir kept
+
+  // recreate the SAME profile — the cookie must still be there
+  let s2 = await pEngine.create({ backend: "native", profile: "persist-A" });
+  check("persist: cookie survives destroy + recreate (stay logged in)", (await readCookie(s2.cdpUrl)) === COOKIE.value);
+
+  // seed a BRAND-NEW profile from persist-A's user-data-dir — cookie transfers
+  const seedSource = path.join(HOME, "profiles", "persist-A");
+  let s3 = await pEngine.create({ backend: "native", profile: "seed-B", seedFrom: seedSource });
+  check("seed: fresh profile seeded from another carries its cookie", (await readCookie(s3.cdpUrl)) === COOKIE.value);
+
+  // a named profile must NOT re-seed once established (no clobber on reuse)
+  const s3dir = path.join(HOME, "profiles", "seed-B");
+  check("seed: only seeds on first creation (profile dir exists)", fs.existsSync(path.join(s3dir, "Default")));
+} finally {
+  await pEngine.close().catch(() => {});
+  fs.rmSync(HOME, { recursive: true, force: true });
 }
 
 const failed = results.filter((r) => !r.pass).length;

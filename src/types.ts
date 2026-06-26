@@ -20,6 +20,19 @@ export interface CreateSessionOptions {
   profile?: string;
   /** "native" (real local Chrome, real fingerprint) or "docker" (isolated container). */
   backend?: BackendKind;
+  /**
+   * Keep the profile across sessions (cookies, logins, storage). Defaults to
+   * true when `profile` is named, false for an anonymous one-off session.
+   */
+  persist?: boolean;
+  /**
+   * On FIRST creation of this profile, seed it from an existing Chrome
+   * user-data-dir at this path (copies cookies/logins/storage). Ignored once the
+   * profile exists. Mutually informs `seedFromChrome`.
+   */
+  seedFrom?: string;
+  /** On first creation, seed from your real local Chrome profile. */
+  seedFromChrome?: boolean;
 }
 
 export interface EngineOptions {

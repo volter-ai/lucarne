@@ -10,11 +10,15 @@ export interface BackendContext {
   image: string;
   chromePath: string;
   viewport: { width: number; height: number };
+  /** Chrome `--user-data-dir` (engine-owned policy; see `profiles.ts`). */
+  profileDir: string;
+  /** Directory (on the engine host) where this session's recordings land. */
+  recDir: string;
+  /** Preserve `profileDir` on stop (durable named profile). */
+  persist: boolean;
 }
 
 export interface BackendHandle {
-  /** Directory (on the engine host) where this session's recordings land. */
-  recDir: string;
   /** Tear down the browser and reclaim resources. */
   stop(): Promise<void>;
 }

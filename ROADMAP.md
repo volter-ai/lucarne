@@ -26,11 +26,12 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🚫 regions / multi-region (your machine *is* the location) · billing/credits · rate-limits
 
 ## B. Persistence — the P0 crux
-- 🔨 **P0 persistent profiles** — durable named profiles (`~/.lucarne/profiles/<name>`) that keep
-  cookies, localStorage, IndexedDB, sessionStorage, service workers, prefs **and extensions**
-  across sessions. *(Today `native` `rm -rf`s the profile every run = always logged out — the
-  single most important fix.)*
-- 🔨 **P0 seed from your real Chrome profile** — import cookies/logins so a profile starts authenticated
+- ✅ **P0 persistent profiles** — durable named profiles (`~/.lucarne/profiles/<name>`, `LUCARNE_HOME`
+  override) keep cookies, localStorage, IndexedDB, prefs **and extensions** across sessions; durable
+  profiles graceful-shutdown (SIGTERM) to flush to disk, anonymous sessions stay ephemeral.
+  *(Proof: cookie survives destroy + recreate.)*
+- ✅ **P0 seed from your real Chrome profile** — `seedFrom`/`seedFromChrome` copy cookies/logins/storage
+  on a profile's first creation so it starts authenticated. *(Proof: seeded profile carries the source cookie.)*
 - 🔨 P1 profile API — create / get / list / update / delete
 - 🔨 P1 **session-context export/import** — dump cookies + localStorage + sessionStorage + IndexedDB; restore into a new session
 - 🔨 P2 encrypted profiles/credentials at rest
@@ -130,7 +131,9 @@ a proof, green, before it counts.
 
 ### Green today (committed in `test/acceptance.mjs`)
 ✅ drive (connectOverCDP navigates) · ✅ porthole renders a real JPEG frame · ✅ input: caps/shift
-typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command). **4/4.**
+typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command) · ✅ persist: cookie survives
+destroy + recreate · ✅ persist→seed: fresh profile seeded from another carries its cookie · ✅ seed:
+only on first creation. **8/8.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 
