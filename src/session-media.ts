@@ -4,6 +4,7 @@ import { virtualKeyCode } from "./keymap.js";
 import type { FrameSource, InputEvent } from "./porthole.js";
 
 const MOUSE_BUTTON = ["left", "middle", "right"] as const;
+const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 // editing accelerators (Cmd/Ctrl + key) → CDP edit command
 const EDIT_COMMANDS: Record<string, string> = {
@@ -40,6 +41,7 @@ export async function startSessionMedia(opts: {
   record: boolean;
   fps: number;
   retentionMin: number;
+  mobile?: boolean;
 }): Promise<SessionMedia> {
   // The active-tab page conn is MUTABLE: switchTab re-taps a different target so
   // the porthole/screencast + input follow it. `page` is the live reference all
@@ -56,6 +58,13 @@ export async function startSessionMedia(opts: {
   let frameCount = 0, streamedBytes = 0;
   const subs = new Set<(f: Buffer) => void>();
   const wireScreencast = (c: CdpConn): void => {
+    if (opts.mobile) {
+      // Mobile emulation must be re-applied per page (it's session-scoped), so it
+      // lives here — applied to the initial tap AND any tab we switch to.
+      c.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
+      c.send("Emulation.setUserAgentOverride", { userAgent: MOBILE_UA });
+      c.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    }
     c.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
       latest = Buffer.from(p.data, "base64");
       frameCount++; streamedBytes += latest.length;

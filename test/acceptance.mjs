@@ -378,6 +378,21 @@ try {
   await wEngine.close().catch(() => {});
 }
 
+// ── P1: mobile viewport emulation ────────────────────────────────────────────
+const moEngine = new Lucarne({ port: 7821, token: TOKEN, record: false });
+await moEngine.listen();
+try {
+  const mo = await moEngine.create({ backend: "native", profile: "mob", mobile: true });
+  const moc = await attachPage(mo.cdpUrl);
+  moc.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1800);
+  const r = JSON.parse((await moc.call("Runtime.evaluate", { expression: "JSON.stringify({w:innerWidth,tp:navigator.maxTouchPoints,ua:navigator.userAgent.includes('iPhone')})", returnByValue: true })).result.value);
+  moc.close();
+  check("mobile: device viewport + touch + mobile UA applied", r.w === 390 && r.tp > 0 && r.ua === true);
+} finally {
+  await moEngine.close().catch(() => {});
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

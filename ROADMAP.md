@@ -46,7 +46,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
 - ✅ P1 **multi-tab** — `GET /sessions/:id/tabs` lists open tabs; `POST /sessions/:id/tabs/:targetId` re-taps the porthole (screencast + input) at that tab. *(Proof: lists 2 tabs · switch changes the active tab + the rendered frame.)*
 - ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · ✅ P1 `showControls` nav chrome (`?controls=1`: URL bar + back/forward/reload → `nav` events). *(Proof: go navigates + back returns.)* · 🔨 P2 quality control · theme
-- ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · 🔨 P1 mobile viewport / virtual keyboard
+- ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · ✅ P1 **mobile viewport** (`mobile: true` → device metrics + DPR + touch + mobile UA, re-applied across tab switch). *(Proof: innerWidth 390 + maxTouchPoints>0 + iPhone UA.)* *(Text entry uses key events — no separate virtual keyboard to build.)*
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
 - 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
 - 🔨 P2 **native-UI capture decision** — CDP screencast shows the *page*, not native browser UI (file-picker, basic-auth, print, OS dropdowns). Decide: keep CDP-screencast + handle those over CDP, or capture the real window (native backend *has* a real window). Known architectural gap for the native lane.
@@ -140,7 +140,7 @@ P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) �
 into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
 runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile API (list/active-guard/delete) ·
 ✅ per-session stats (frames + bytes) · ✅ showControls nav (go + back) · ✅ files workspace (global +
-per-session round-trip). **34/34.**
+per-session round-trip) · ✅ mobile viewport (390 + touch + iPhone UA). **35/35.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

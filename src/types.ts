@@ -35,6 +35,8 @@ export interface CreateSessionOptions {
   seedFromChrome?: boolean;
   /** Unpacked extension dirs to load (native backend). Your profile's own extensions load anyway. */
   extensions?: string[];
+  /** Emulate a mobile device (viewport, DPR, touch, mobile UA) for the porthole. */
+  mobile?: boolean;
   /** Auto-release this session after this many ms of wall-clock, regardless of use. */
   timeoutMs?: number;
   /**

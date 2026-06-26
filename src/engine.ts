@@ -97,7 +97,7 @@ export class Lucarne {
     });
     const media = await startSessionMedia({
       cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
-      record: this.record, fps: this.fps, retentionMin: this.retentionMin,
+      record: this.record, fps: this.fps, retentionMin: this.retentionMin, mobile: opts.mobile,
     });
     // Load any custom unpacked extensions via CDP (the only path modern Chrome
     // allows); the launch flag was set by the backend.
