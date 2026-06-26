@@ -804,14 +804,18 @@ try {
   const cliV = execFileSync("node", ["dist/cli.js", "--version"], { encoding: "utf8" }).trim();
   check("cli: --version prints the package version", cliV === VERSION, `${cliV} === ${VERSION}`);
 
-  // CLI surfaces an HTTP error instead of printing the body and exiting 0
+  // CLI surfaces an HTTP error instead of printing the body and exiting 0.
+  // Use async spawn (NOT execFileSync) — a synchronous child blocks the event
+  // loop, so the in-process engine couldn't answer the CLI's request.
   const hgEngine = new Lucarne({ port: 7837, token: TOKEN, record: false });
   await hgEngine.listen();
-  let cliErr = { status: 0, stderr: "" };
-  try {
-    execFileSync("node", ["dist/cli.js", "ls"], { encoding: "utf8", env: { ...process.env, LUCARNE_URL: "http://127.0.0.1:7837", LUCARNE_TOKEN: "WRONG" } });
-  } catch (e) { cliErr = { status: e.status, stderr: String(e.stderr || "") }; }
-  check("cli: a 401 is a non-zero exit with a clear message (not silent success)", cliErr.status === 1 && /401/.test(cliErr.stderr));
+  const cli401 = await new Promise((resolve) => {
+    const c = spawn("node", ["dist/cli.js", "ls"], { env: { ...process.env, LUCARNE_URL: "http://127.0.0.1:7837", LUCARNE_TOKEN: "WRONG" } });
+    let err = "";
+    c.stderr.on("data", (d) => { err += d.toString(); });
+    c.on("close", (code) => resolve({ code, err }));
+  });
+  check("cli: a 401 is a non-zero exit with a clear message (not silent success)", cli401.code === 1 && /401/.test(cli401.err));
 
   // listen() rejects a taken port with a clear message (no raw crash)
   let portErr = "";
