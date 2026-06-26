@@ -1,0 +1,21 @@
+<!doctype html>
+<!--
+  Embed a session's porthole in your own page. The viewUrl is single-origin under
+  the daemon, so an <iframe> just works (append ?token=… if the daemon needs one).
+    ?interactable=0  read-only viewer (input dropped server-side)
+    ?controls=1      URL bar + back/forward/reload chrome
+  Serve this next to a running daemon and set SESSION below.
+-->
+<meta charset="utf-8" />
+<title>lucarne porthole embed</title>
+<style>
+  html, body { height: 100%; margin: 0; background: #111; }
+  iframe { width: 100vw; height: 100vh; border: 0; }
+</style>
+<script>
+  const DAEMON = "http://127.0.0.1:7800";
+  const SESSION = "demo"; // a session id you created
+  const TOKEN = ""; // set if the daemon requires one
+  const qs = TOKEN ? `?token=${encodeURIComponent(TOKEN)}&controls=1` : "?controls=1";
+  document.write(`<iframe src="${DAEMON}/sessions/${SESSION}/view/${qs}" allow="clipboard-read; clipboard-write"></iframe>`);
+</script>

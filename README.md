@@ -14,6 +14,8 @@ A browser session in `lucarne` exposes three surfaces at once:
 
 It's the missing middle between *headless automation* (drivable, but you can't watch) and *remote desktop* (watchable, but not cleanly drivable) — a real browser an agent can operate **and** a human can supervise, running where you choose.
 
+**Who it's for:** agent builders who need a browser an agent drives while a human can watch and take over, and anyone automating their *own* logged-in accounts on their own machine and IP (no cloud browser farm, no handing your cookies to a third party).
+
 ```
         ┌──────────────── lucarne engine ────────────────┐
  you ──▶ │  porthole (watch + control) ◀── browser ──▶ CDP │ ◀── Playwright / your agent
@@ -60,11 +62,14 @@ Or use the typed client against a running daemon:
 
 ```ts
 import { LucarneClient } from "lucarne";
+import { chromium } from "playwright";
 
 const lucarne = new LucarneClient({ baseUrl: "http://127.0.0.1:7800", token: process.env.LUCARNE_TOKEN });
 const session = await lucarne.create({ profile: "alpha", backend: "native" });
 const browser = await chromium.connectOverCDP(session.cdpUrl);   // drive with Playwright
 ```
+
+The client covers the full API — `create`/`list`/`get`/`status`/`act`/`login`/`tabs`/`logs`/`content`/`activity`/`screenshot`/`pdf`/`recordings`/`exportContext`/… .
 
 The full API is described by an **OpenAPI 3.1** spec at `/openapi.json`, with a Swagger UI at `/docs`.
 There's also a stdlib-only **Python client** (`clients/python/lucarne.py`) and an **MCP server**
@@ -81,6 +86,27 @@ const engine = new Lucarne();
 const session = await engine.create({ profile: "alpha", backend: "native" });
 console.log(session.cdpUrl, session.viewUrl);
 ```
+
+## Recipes
+
+Concrete jobs, each a runnable example in [`examples/`](./examples):
+
+- **Operate your own logged-in accounts** — a durable `profile` (seed it from your
+  real Chrome once) stays logged in across runs; drive it with Playwright.
+  → [`drive.ts`](./examples/drive.ts), [Profiles](#profiles-stay-logged-in)
+- **Agent computer-use with a human watching** — high-level `act` (click/type/scroll/
+  screenshot) over the same input plane the porthole shows, plus an actor-tagged
+  **activity feed** so the agent knows what the human just did and yields instead of
+  fighting. → [`computer-use.ts`](./examples/computer-use.ts)
+- **Supervised login (secret never leaves the host)** — store a credential encrypted
+  at rest; the daemon injects username/password/**TOTP** server-side, so the agent
+  logs in without ever seeing the secret. → [`supervised-login.ts`](./examples/supervised-login.ts)
+- **Record everything for audit / replay** — sessions record by default; pull the mp4
+  segments or open the built-in player. → [`record-and-replay.ts`](./examples/record-and-replay.ts)
+- **Embed the porthole in your own UI** — single-origin `viewUrl`, drop it in an
+  `<iframe>` (read-only or with URL-bar controls). → [`embed-porthole.html`](./examples/embed-porthole.html)
+- **From Python, or any MCP agent** — stdlib Python client, or the `lucarne-mcp`
+  stdio server. → [`python_drive.py`](./examples/python_drive.py), [`mcp-config.json`](./examples/mcp-config.json)
 
 ## Backends
 
@@ -166,7 +192,9 @@ await engine.close();                           // stop API + tear down all sess
 HTTP control API (what the CLI talks to):
 
 ```
-POST   /sessions                          {profile?, backend?, persist?, seedFrom?, seedFromChrome?, timeoutMs?, inactivityMs?}  -> Session
+POST   /sessions                          CreateSessionOptions -> Session
+         {profile?, backend?, persist?, seedFrom?, seedFromChrome?, headless?, extensions?, mobile?,
+          quality?, proxy?, geo?, activity?, metadata?, timeoutMs?, inactivityMs?}
 GET    /sessions                          -> Session[]
 DELETE /sessions                          -> { released }   (release-all)
 GET    /sessions/:id                      -> Session
@@ -237,7 +265,9 @@ behavior** — a rendered JPEG frame, real-Chrome state, a valid mp4, an RFC TOT
 against real Chrome and is enforced in CI on Linux (`google-chrome-stable` + `ffmpeg`,
 under `xvfb`). The **docker** backend is smoke-tested when Docker is available (building the
 ~700 MB image per CI run is intentionally not gated); the native lane is the primary,
-fully-proven path.
+fully-proven path. A separate `docker` CI lane (`.github/workflows/docker.yml`) builds the
+image and drives a real container (`npm run test:docker`) — on demand, weekly, and whenever
+docker-relevant code changes — so the docker backend is proven too, just not on every push.
 
 ## Why "lucarne"
 
