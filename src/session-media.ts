@@ -21,17 +21,46 @@ export interface LogEntry {
   text?: string;
 }
 
+/** A semantic action in the session — what the human (or agent) did. */
+export interface ActivityEvent {
+  ts: number;
+  actor: "human" | "agent";
+  kind: "nav" | "click" | "type" | "download" | "submit";
+  url?: string;
+  x?: number;
+  y?: number;
+  /** focused field for `type` (name/id/aria) — A2 enriches `click` too. */
+  field?: string;
+  /** typed text for `type`, "‹redacted›" for password/sensitive fields. */
+  value?: string;
+}
+
+/** Where the session is RIGHT NOW + how fresh the human's last action is. */
+export interface ActivityNow {
+  url?: string;
+  title?: string;
+  focusedField?: string;
+  lastHumanActionMsAgo: number | null;
+}
+
 export interface SessionMedia {
   /** The shared CDP tap on the ACTIVE tab — reused by engine features (upload, screenshot…). */
   cdp: CdpConn;
   frames: FrameSource;
-  onInput(ev: InputEvent): void;
+  /** `actor` attributes the event in the activity log: porthole = human, act() = agent. */
+  onInput(ev: InputEvent, actor?: "human" | "agent"): void;
   /** Stream stats (frames + bytes served) for status / "pressure". */
   stats(): { frames: number; streamedBytes: number };
   /** Snapshot of captured logs (network/console/browser), oldest first. */
   logs(): LogEntry[];
   /** Subscribe to live log entries (for the SSE stream). */
   onLog(cb: (e: LogEntry) => void): () => void;
+  /** Semantic activity events (what the human/agent did), oldest first. */
+  activity(): ActivityEvent[];
+  /** Subscribe to live activity events (for the SSE stream). */
+  onActivity(cb: (e: ActivityEvent) => void): () => void;
+  /** Current state: where the session is + how fresh the human's last action is. */
+  activityNow(): Promise<ActivityNow>;
   /** List the session's open tabs. */
   tabs(): Promise<PageTarget[]>;
   /** Point the porthole/screencast + input at a different tab. */
@@ -59,6 +88,7 @@ export async function startSessionMedia(opts: {
   mobile?: boolean;
   quality?: number;
   geo?: { latitude: number; longitude: number; accuracy?: number };
+  activity?: boolean;
 }): Promise<SessionMedia> {
   // The active-tab page conn is MUTABLE: switchTab re-taps a different target so
   // the porthole/screencast + input follow it. `page` is the live reference all
@@ -86,6 +116,50 @@ export async function startSessionMedia(opts: {
     logBuf.push(e);
     if (logBuf.length > LOG_CAP) logBuf.shift();
     for (const cb of logSubs) cb(e);
+  };
+  // ── Activity log: semantic, actor-tagged actions (Initiative II) ──
+  // Opt-in (privacy: captures human input). nav from CDP; click/type from onInput;
+  // typed text coalesced + redacted for secret fields. Wired per page (tab switch).
+  const ACT_CAP = 1000;
+  const actBuf: ActivityEvent[] = [];
+  const actSubs = new Set<(e: ActivityEvent) => void>();
+  let lastHumanMs = 0;
+  let curUrl: string | undefined;
+  const pushAct = (e: ActivityEvent): void => {
+    if (!opts.activity) return;
+    actBuf.push(e);
+    if (actBuf.length > ACT_CAP) actBuf.shift();
+    for (const cb of actSubs) cb(e);
+  };
+  // coalesce consecutive keystrokes into one `type` event, then check the focused
+  // field's secrecy off the hot path and redact.
+  let typeBuf: { actor: "human" | "agent"; text: string } | null = null;
+  let typeTimer: ReturnType<typeof setTimeout> | undefined;
+  const flushType = async (): Promise<void> => {
+    const buf = typeBuf; typeBuf = null;
+    if (!buf || !buf.text) return;
+    let field: string | undefined, secret = false;
+    try {
+      const r = await page.call("Runtime.evaluate", { expression: "(()=>{const e=document.activeElement;if(!e)return '|';return (e.type||e.tagName.toLowerCase())+'|'+(e.name||e.id||e.getAttribute('aria-label')||'')})()", returnByValue: true });
+      const [t, n] = String(r.result?.value ?? "|").split("|");
+      secret = t === "password"; field = n || undefined;
+    } catch { /* page gone */ }
+    pushAct({ ts: Date.now(), actor: buf.actor, kind: "type", field, value: secret ? "‹redacted›" : buf.text });
+  };
+  const appendType = (actor: "human" | "agent", text: string): void => {
+    if (!opts.activity) return;
+    if (!typeBuf || typeBuf.actor !== actor) { void flushType(); typeBuf = { actor, text: "" }; }
+    typeBuf.text += text;
+    clearTimeout(typeTimer); typeTimer = setTimeout(() => void flushType(), 800);
+  };
+  const wireActivity = (c: CdpConn): void => {
+    c.on("Page.frameNavigated", (p: { frame?: { url?: string; parentId?: string } }) => {
+      if (p.frame?.parentId) return; // main frame only
+      void flushType();
+      const url = p.frame?.url ?? "";
+      curUrl = url;
+      pushAct({ ts: Date.now(), actor: Date.now() - lastHumanMs < 1500 ? "human" : "agent", kind: "nav", url });
+    });
   };
   const wireLogs = (c: CdpConn): void => {
     c.send("Network.enable");
@@ -116,6 +190,7 @@ export async function startSessionMedia(opts: {
     c.send("Page.enable");
     c.send("Page.startScreencast", { format: "jpeg", quality: opts.quality ?? 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
     wireLogs(c);
+    wireActivity(c);
   };
   wireScreencast(page);
 
@@ -123,8 +198,14 @@ export async function startSessionMedia(opts: {
     get: () => latest,
     subscribe: (cb) => { subs.add(cb); return () => subs.delete(cb); },
   };
-  const onInput = (ev: InputEvent): void => {
+  const onInput = (ev: InputEvent, actor: "human" | "agent" = "human"): void => {
     const modifiers = ev.mod ?? 0;
+    if (actor === "human") lastHumanMs = Date.now();
+    // activity log: a click (down) and typed text are the human/agent's semantic acts
+    if (ev.t === "down") { void flushType(); pushAct({ ts: Date.now(), actor, kind: "click", x: ev.x, y: ev.y }); }
+    else if (ev.t === "paste" && typeof ev.text === "string") appendType(actor, ev.text);
+    else if (ev.t === "ime" && ev.phase === "commit" && ev.text) appendType(actor, ev.text);
+    else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);
     if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
       page.send("Input.dispatchMouseEvent", {
         type: ev.t === "down" ? "mousePressed" : ev.t === "up" ? "mouseReleased" : "mouseMoved",
@@ -185,6 +266,16 @@ export async function startSessionMedia(opts: {
     stats: () => ({ frames: frameCount, streamedBytes }),
     logs: () => [...logBuf],
     onLog: (cb) => { logSubs.add(cb); return () => logSubs.delete(cb); },
+    activity: () => [...actBuf],
+    onActivity: (cb) => { actSubs.add(cb); return () => actSubs.delete(cb); },
+    async activityNow(): Promise<ActivityNow> {
+      let title: string | undefined, focusedField: string | undefined;
+      try {
+        const r = await page.call("Runtime.evaluate", { expression: "JSON.stringify({t:document.title,f:document.activeElement&&document.activeElement!==document.body?(document.activeElement.name||document.activeElement.id||document.activeElement.getAttribute('aria-label')||document.activeElement.tagName.toLowerCase()):null})", returnByValue: true });
+        const o = JSON.parse(String(r.result?.value ?? "{}")); title = o.t || undefined; focusedField = o.f || undefined;
+      } catch { /* page gone */ }
+      return { url: curUrl, title, focusedField, lastHumanActionMsAgo: lastHumanMs ? Date.now() - lastHumanMs : null };
+    },
     tabs: () => listPages(opts.cdpUrl),
     activeTabId: () => activeId,
     async switchTab(targetId: string): Promise<void> {

@@ -47,6 +47,8 @@ export interface CreateSessionOptions {
   proxy?: string;
   /** Geolocation override (e.g. when you travel); grants the geolocation permission. */
   geo?: { latitude: number; longitude: number; accuracy?: number };
+  /** Capture the semantic activity log (nav/click/type…) so an agent knows what you're doing. */
+  activity?: boolean;
   /** Arbitrary user tags stored on the session (filter `list`/`sessions` by them). */
   metadata?: Record<string, string>;
   /** Auto-release this session after this many ms of wall-clock, regardless of use. */
@@ -96,6 +98,8 @@ export interface EngineOptions {
    * or per session with `create({ headless })`. Use for servers / tests.
    */
   headless?: boolean;
+  /** Capture the semantic activity log by default (`LUCARNE_ACTIVITY=1`). Default off. */
+  activity?: boolean;
   /** Recording frame-rate / segment cadence. Default 4. */
   fps?: number;
   /** Minutes of recording to retain. Default 60. */

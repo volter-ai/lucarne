@@ -10,7 +10,7 @@ import { blurCredential, deleteCredential, getCredential, listCredentials, putCr
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
-import { startSessionMedia, type LogEntry, type SessionMedia } from "./session-media.js";
+import { startSessionMedia, type ActivityEvent, type ActivityNow, type LogEntry, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
 interface Tracked extends Session {
@@ -30,6 +30,19 @@ const DEFAULT_CHROME: Record<string, string> = {
   linux: "google-chrome",
   win32: "C:/Program Files/Google/Chrome/Application/chrome.exe",
 };
+
+/** Render an activity event in a format the agent already reads fluently. */
+function activityLine(e: ActivityEvent, format: "text" | "playwright"): string {
+  if (format === "playwright") {
+    const verb =
+      e.kind === "nav" ? `await page.goto(${JSON.stringify(e.url ?? "")})`
+        : e.kind === "click" ? `await page.mouse.click(${e.x ?? 0}, ${e.y ?? 0})`
+          : e.kind === "type" ? `await page.keyboard.type(${JSON.stringify(e.value ?? "")})`
+            : `// ${e.kind} ${e.url ?? e.field ?? ""}`.trimEnd();
+    return `# ${e.actor}  ${verb}`;
+  }
+  return `${new Date(e.ts).toISOString()}  ${e.actor}  ${e.kind}  ${e.url ?? e.field ?? ""}${e.value ? "  " + e.value : ""}`.trimEnd();
+}
 
 const pub = (s: Session): Session => ({
   id: s.id, backend: s.backend, cdpUrl: s.cdpUrl, viewUrl: s.viewUrl, createdAt: s.createdAt,
@@ -51,6 +64,7 @@ export class Lucarne {
   private readonly viewport: { width: number; height: number };
   private readonly record: boolean;
   private readonly headless: boolean;
+  private readonly activityDefault: boolean;
   private readonly fps: number;
   private readonly retentionMin: number;
   private readonly segmentSeconds: number;
@@ -75,6 +89,7 @@ export class Lucarne {
     this.viewport = opts.viewport ?? { width: 1280, height: 720 };
     this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
     this.headless = opts.headless ?? process.env.LUCARNE_HEADLESS === "1";
+    this.activityDefault = opts.activity ?? process.env.LUCARNE_ACTIVITY === "1";
     this.fps = opts.fps ?? 4;
     this.retentionMin = opts.retentionMin ?? 60;
     this.segmentSeconds = opts.segmentSeconds ?? 60;
@@ -117,6 +132,7 @@ export class Lucarne {
       media = await startSessionMedia({
         cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
         record: this.record, fps: this.fps, retentionMin: this.retentionMin, segmentSeconds: this.segmentSeconds, mobile: opts.mobile, quality: opts.quality, geo: opts.geo,
+        activity: opts.activity ?? this.activityDefault,
       });
     } catch (e) {
       this.releaseSlot();
@@ -398,13 +414,13 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     const m = s.media;
     switch (a.action) {
       case "click":
-        m.onInput({ t: "down", x: a.x, y: a.y, button: a.button ?? 0, buttons: 1, clickCount: a.clickCount ?? 1 });
-        m.onInput({ t: "up", x: a.x, y: a.y, button: a.button ?? 0, buttons: 0, clickCount: a.clickCount ?? 1 });
+        m.onInput({ t: "down", x: a.x, y: a.y, button: a.button ?? 0, buttons: 1, clickCount: a.clickCount ?? 1 }, "agent");
+        m.onInput({ t: "up", x: a.x, y: a.y, button: a.button ?? 0, buttons: 0, clickCount: a.clickCount ?? 1 }, "agent");
         break;
-      case "move": m.onInput({ t: "move", x: a.x, y: a.y, buttons: 0 }); break;
-      case "type": m.onInput({ t: "paste", text: a.text ?? "" }); break;
-      case "key": m.onInput({ t: "keydown", key: a.key, code: a.code, mod: a.mod }); m.onInput({ t: "keyup", key: a.key, code: a.code, mod: a.mod }); break;
-      case "scroll": m.onInput({ t: "wheel", x: a.x ?? 0, y: a.y ?? 0, dx: a.dx ?? 0, dy: a.dy ?? 0 }); break;
+      case "move": m.onInput({ t: "move", x: a.x, y: a.y, buttons: 0 }, "agent"); break;
+      case "type": m.onInput({ t: "paste", text: a.text ?? "" }, "agent"); break;
+      case "key": m.onInput({ t: "keydown", key: a.key, code: a.code, mod: a.mod }, "agent"); m.onInput({ t: "keyup", key: a.key, code: a.code, mod: a.mod }, "agent"); break;
+      case "scroll": m.onInput({ t: "wheel", x: a.x ?? 0, y: a.y ?? 0, dx: a.dx ?? 0, dy: a.dy ?? 0 }, "agent"); break;
       case "screenshot": return { ok: true, screenshot: (await this.screenshot(id)).toString("base64") };
       default: throw new Error(`unknown action: ${a.action}`);
     }
@@ -417,6 +433,20 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     if (!s) throw new Error("no such session");
     const r = await s.media.cdp.call("Runtime.evaluate", { expression: "document.documentElement.outerHTML", returnByValue: true });
     return String(r.result?.value ?? "");
+  }
+
+  /** Recent semantic activity events (what the human/agent did), oldest first. */
+  sessionActivity(id: string, limit?: number): ActivityEvent[] {
+    const s = this.sessions.get(id);
+    if (!s) return [];
+    const a = s.media.activity();
+    return limit && limit > 0 ? a.slice(-limit) : a;
+  }
+
+  /** Where the session is right now + human-action freshness (the "don't fight" signal). */
+  async activityNow(id: string): Promise<ActivityNow | undefined> {
+    const s = this.sessions.get(id);
+    return s ? s.media.activityNow() : undefined;
   }
 
   /** Liveness + session count, for monitoring. */
@@ -655,6 +685,29 @@ v.addEventListener('ended',()=>{i++;play()});play();});
             kind: u.searchParams.get("kind") ?? undefined,
             limit: u.searchParams.get("limit") ? Number(u.searchParams.get("limit")) : undefined,
           }));
+        }
+        const actM = pathname.match(/^\/sessions\/([^/]+)\/activity$/);
+        if (actM) {
+          const [, id] = actM;
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          const u = new URL(req.url ?? "/", "http://x");
+          if (u.searchParams.get("stream") === "1") {
+            res.writeHead(200, { "cache-control": "no-cache", "content-type": "text/event-stream" });
+            const write = (e: ActivityEvent): void => { res.write(`data: ${JSON.stringify(e)}\n\n`); };
+            for (const e of this.sessionActivity(id!)) write(e);
+            const unsub = this.sessions.get(id!)!.media.onActivity(write);
+            req.on("close", unsub);
+            return;
+          }
+          const limit = u.searchParams.get("limit") ? Number(u.searchParams.get("limit")) : undefined;
+          const recent = this.sessionActivity(id!, limit);
+          const fmt = u.searchParams.get("format");
+          if (fmt === "text" || fmt === "playwright") {
+            res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+            res.end(recent.map((e) => activityLine(e, fmt)).join("\n") + (recent.length ? "\n" : ""));
+            return;
+          }
+          return send(res, 200, { now: await this.activityNow(id!), recent });
         }
         const st = pathname.match(/^\/sessions\/([^/]+)\/(status|touch)$/);
         if (st) {

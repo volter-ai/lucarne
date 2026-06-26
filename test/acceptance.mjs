@@ -709,6 +709,37 @@ try {
   check("python-sdk: client module loads with all methods", false, String(e.message));
 }
 
+// ── Initiative II / A1: activity log (agent-ergonomic) ───────────────────────
+const aEngine = new Lucarne({ port: 7836, token: TOKEN, record: false });
+await aEngine.listen();
+try {
+  const as = await aEngine.create({ backend: "native", profile: "act", activity: true });
+  const ac = await attachPage(as.cdpUrl);
+  await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<input id=p type=password name=pw>';document.getElementById('p').focus()" });
+  const aw = new WS(`ws://127.0.0.1:7836/sessions/act/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { aw.on("open", r); aw.on("error", j); });
+  // human types a "password" through the porthole
+  for (const k of ["s", "e", "c", "r", "e", "t"]) { aw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); aw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
+  await sleep(1100);                                          // coalesce + flush → redact
+  aw.send(JSON.stringify({ t: "nav", action: "go", url: "https://example.com" }));  // human nav
+  await sleep(1800);
+  await sleep(1800);                                          // let human-action freshness lapse
+  ac.send("Page.navigate", { url: "data:text/html,<title>agentpage</title>AGENT" }); // agent nav (CDP)
+  await sleep(1200);
+  aw.close(); ac.close();
+  const acts = aEngine.sessionActivity("act");
+  const typeEv = acts.find((a) => a.kind === "type");
+  const humanNav = acts.find((a) => a.kind === "nav" && a.actor === "human");
+  const agentNav = acts.find((a) => a.kind === "nav" && a.actor === "agent");
+  const now = await aEngine.activityNow("act");
+  const pw = await (await fetch(`http://127.0.0.1:7836/sessions/act/activity?format=playwright&token=${TOKEN}`)).text();
+  check("activity: human typing into a password field is captured + REDACTED", !!typeEv && typeEv.actor === "human" && typeEv.value === "‹redacted›");
+  check("activity: nav attributed human (porthole) vs agent (CDP driver)", !!humanNav && (humanNav.url || "").includes("example.com") && !!agentNav && (agentNav.url || "").startsWith("data:"));
+  check("activity: now reports current url + the Playwright-verb view renders", !!now?.url && pw.includes("await page.goto") && pw.includes("# human") && pw.includes("# agent"));
+} finally {
+  await aEngine.close().catch(() => {});
+}
+
 // ── Recording: REAL browser frames → ffmpeg → a finalized, playable mp4 ───────
 // Grab a real screencast JPEG from a live session, feed it to the recorder, then
 // close it gracefully (ffmpeg finalizes the segment on stdin-EOF) and ffprobe the

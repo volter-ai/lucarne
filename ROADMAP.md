@@ -195,9 +195,11 @@ selector/text; focused field for typing). Actor: porthole = `human`, CDP-driver 
 (`?format=breadcrumb|text|playwright`) · `?stream=1` SSE · surfaced through the SDK + MCP.
 
 Phasing — each lands with a committed acceptance proof (the discipline applies):
-- ⬜ **A1 — MVP feed.** nav/download/tab/submit/click/type, actor-tagged, breadcrumb-JSON + Playwright-verb
-  text, `{now, recent}` + SSE, redaction. *(Proof: drive a session, assert the feed shows a `nav`, a
-  `type` with a password value REDACTED, correct `human`/`agent` tags, and `now.url`.)*
+- ✅ **A1 — MVP feed** (`create({ activity: true })` / `LUCARNE_ACTIVITY=1`). nav (CDP) + click/type
+  (porthole onInput), **actor-tagged** (`human` = porthole, `agent` = act/CDP-driver); typed text coalesced
+  + **redacted** for password/sensitive fields; `GET /sessions/:id/activity` → `{ now, recent }`
+  (`?format=text|playwright`, `?stream=1` SSE). *(Proof: human typing into a password field → `type`
+  REDACTED + `human`; porthole nav = `human` vs CDP nav = `agent`; `now.url` + Playwright-verb view render.)*
 - ⬜ **A2 — DOM enrichment.** click → `{selector,text,role}` via `getNodeForLocation`; typing → focused
   field name. *(Proof: a porthole click on a labeled button logs its text + selector.)*
 - ⬜ **A3 — presence-to-yield.** `now.lastHumanActionMsAgo` + `focusedField`. *(Proof: after a human input,

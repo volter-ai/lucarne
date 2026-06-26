@@ -179,6 +179,7 @@ POST   /sessions/:id/tabs/:targetId       -> { ok }   (point porthole at that ta
 GET    /sessions/:id/logs[?kind=&limit=]  -> LogEntry[]   (network/console/browser)
 GET    /sessions/:id/logs?stream=1        -> text/event-stream   (live SSE)
 GET    /sessions/:id/content              -> text/html   (rendered outerHTML)
+GET    /sessions/:id/activity[?format=&stream=1]  -> { now, recent }  (agent-readable: what the human/agent did)
 GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadata)
 PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
 GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
