@@ -44,11 +44,15 @@ export interface CreateSessionOptions {
   inactivityMs?: number;
 }
 
-/** Rich, live view of a session (uptime / idle / dims) for status + monitoring. */
+/** Rich, live view of a session (uptime / idle / dims / stream stats) for status + monitoring. */
 export interface SessionStatus extends Session {
   uptimeMs: number;
   idleMs: number;
   viewport: { width: number; height: number };
+  /** screencast frames served so far (porthole "pressure" signal). */
+  frames: number;
+  /** bytes of JPEG frame data served so far. */
+  streamedBytes: number;
   timeoutMs?: number;
   inactivityMs?: number;
 }

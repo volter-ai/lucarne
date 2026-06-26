@@ -45,7 +45,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 ## D. Live view / human takeover (the porthole)
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
 - ✅ P1 **multi-tab** — `GET /sessions/:id/tabs` lists open tabs; `POST /sessions/:id/tabs/:targetId` re-taps the porthole (screencast + input) at that tab. *(Proof: lists 2 tabs · switch changes the active tab + the rendered frame.)*
-- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · 🔨 P1 `showControls` nav chrome (URL bar + back/forward) · quality control · theme
+- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · ✅ P1 `showControls` nav chrome (`?controls=1`: URL bar + back/forward/reload → `nav` events). *(Proof: go navigates + back returns.)* · 🔨 P2 quality control · theme
 - ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · 🔨 P1 mobile viewport / virtual keyboard
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
 - 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
@@ -58,7 +58,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## F. Observability / logs
 - 🔨 P2 **network log capture** (CDP `Network.*`) · **console log capture** · CDP event log — per session, API + SSE stream
-- ✅ P1 **health endpoint** — `GET /health` (liveness + session count; ids only to an authed caller). *(Proof: count == live sessions.)* · 🔨 P1 per-session stats / "pressure"
+- ✅ P1 **health endpoint** — `GET /health` (liveness + session count; ids only to an authed caller). *(Proof: count == live sessions.)* · ✅ P1 per-session stats (frames + streamedBytes in `status`, the "pressure" signal). *(Proof: status reports frames + bytes.)*
 - 🔨 P3 log export · OpenTelemetry
 
 ## G. File handling
@@ -138,7 +138,8 @@ name + sha256 · ✅ download: porthole-triggered download captured + bytes matc
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
 ✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
 into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
-runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile API (list/active-guard/delete). **29/29.**
+runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile API (list/active-guard/delete) ·
+✅ per-session stats (frames + bytes) · ✅ showControls nav (go + back). **31/31.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

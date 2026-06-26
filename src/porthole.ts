@@ -1,9 +1,13 @@
 export interface InputEvent {
-  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste" | "touch";
+  t: "down" | "up" | "move" | "wheel" | "keydown" | "keyup" | "paste" | "touch" | "nav";
   x?: number;
   y?: number;
   /** phase for a `touch` event (phone gestures) */
   phase?: "start" | "move" | "end";
+  /** nav action for a `nav` event (showControls chrome) */
+  action?: "go" | "back" | "forward" | "reload";
+  /** target url for a `nav` `go` */
+  url?: string;
   /** clipboard text for `paste` (clipboard sync into the focused field) */
   text?: string;
   /** which button changed (0 left / 1 middle / 2 right) */
@@ -36,7 +40,12 @@ export interface FrameSource {
  */
 export function portholeHtml(viewport: { width: number; height: number }): string {
   return `<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
-<style>html,body{margin:0;height:100%;background:#111}canvas{display:block;width:100vw;height:100vh;object-fit:contain;touch-action:none;outline:none}</style>
+<style>html,body{margin:0;height:100%;background:#111}canvas{display:block;width:100vw;height:100vh;object-fit:contain;touch-action:none;outline:none}
+#bar{display:none;align-items:center;gap:6px;height:36px;padding:0 8px;background:#222;font:13px system-ui}
+#bar button{background:#333;color:#ddd;border:0;border-radius:4px;height:24px;width:28px;cursor:pointer}
+#bar input{flex:1;height:24px;border:0;border-radius:4px;padding:0 8px;background:#111;color:#ddd}
+.controls #bar{display:flex}.controls #c{height:calc(100vh - 36px)}</style>
+<div id=bar><button id=bk title=Back>◀</button><button id=fw title=Forward>▶</button><button id=rl title=Reload>⟳</button><input id=ub placeholder="url… (Enter)"></div>
 <canvas id=c tabindex=0 width=${viewport.width} height=${viewport.height}></canvas><script>
 const VW=${viewport.width},VH=${viewport.height};
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
@@ -65,5 +74,12 @@ const tc=t=>{const r=cv.getBoundingClientRect();return{x:Math.round((t.clientX-r
 cv.addEventListener('touchstart',e=>{e.preventDefault();send({t:'touch',phase:'start',...tc(e.changedTouches[0])})},{passive:false});
 cv.addEventListener('touchmove',e=>{e.preventDefault();send({t:'touch',phase:'move',...tc(e.changedTouches[0])})},{passive:false});
 cv.addEventListener('touchend',e=>{e.preventDefault();send({t:'touch',phase:'end',...tc(e.changedTouches[0])})},{passive:false});
+if(new URLSearchParams(location.search).get('controls')==='1'){
+  document.documentElement.classList.add('controls');
+  document.getElementById('bk').onclick=()=>send({t:'nav',action:'back'});
+  document.getElementById('fw').onclick=()=>send({t:'nav',action:'forward'});
+  document.getElementById('rl').onclick=()=>send({t:'nav',action:'reload'});
+  document.getElementById('ub').addEventListener('keydown',e=>{if(e.key==='Enter'){let u=e.target.value.trim();if(u&&!/:\\/\\//.test(u))u='https://'+u;if(u)send({t:'nav',action:'go',url:u})}});
+}
 </script>`;
 }

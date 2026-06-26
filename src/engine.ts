@@ -223,11 +223,13 @@ export class Lucarne {
     const s = this.sessions.get(id);
     if (!s) return undefined;
     const now = Date.now();
+    const { frames, streamedBytes } = s.media.stats();
     return {
       ...pub(s),
       uptimeMs: now - s.createdAtMs,
       idleMs: now - s.lastActivityMs,
       viewport: this.viewport,
+      frames, streamedBytes,
       ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
       ...(s.inactivityMs !== undefined ? { inactivityMs: s.inactivityMs } : {}),
     };

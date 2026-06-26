@@ -15,6 +15,8 @@ export interface SessionMedia {
   cdp: CdpConn;
   frames: FrameSource;
   onInput(ev: InputEvent): void;
+  /** Stream stats (frames + bytes served) for status / "pressure". */
+  stats(): { frames: number; streamedBytes: number };
   /** List the session's open tabs. */
   tabs(): Promise<PageTarget[]>;
   /** Point the porthole/screencast + input at a different tab. */
@@ -51,10 +53,12 @@ export async function startSessionMedia(opts: {
   const browserConn = await attachBrowser(opts.cdpUrl);
   browserConn.call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: opts.downloadDir, eventsEnabled: true }).catch(() => {});
   let latest: Buffer | null = null;
+  let frameCount = 0, streamedBytes = 0;
   const subs = new Set<(f: Buffer) => void>();
   const wireScreencast = (c: CdpConn): void => {
     c.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
       latest = Buffer.from(p.data, "base64");
+      frameCount++; streamedBytes += latest.length;
       for (const cb of subs) cb(latest);
       c.send("Page.screencastFrameAck", { sessionId: p.sessionId });
     });
@@ -83,6 +87,11 @@ export async function startSessionMedia(opts: {
     } else if (ev.t === "touch") {
       const type = ev.phase === "start" ? "touchStart" : ev.phase === "end" ? "touchEnd" : "touchMove";
       page.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: ev.x, y: ev.y }] });
+    } else if (ev.t === "nav") {
+      if (ev.action === "go" && ev.url) page.send("Page.navigate", { url: ev.url });
+      else if (ev.action === "back") page.send("Runtime.evaluate", { expression: "history.back()" });
+      else if (ev.action === "forward") page.send("Runtime.evaluate", { expression: "history.forward()" });
+      else if (ev.action === "reload") page.send("Page.reload", {});
     } else if (ev.t === "paste" && typeof ev.text === "string") {
       // Clipboard sync: deliver text the operator pasted into the porthole as if
       // pasted into the focused field (CDP inserts it like a real paste).
@@ -116,6 +125,7 @@ export async function startSessionMedia(opts: {
     cdp: page,
     frames,
     onInput,
+    stats: () => ({ frames: frameCount, streamedBytes }),
     tabs: () => listPages(opts.cdpUrl),
     activeTabId: () => activeId,
     async switchTab(targetId: string): Promise<void> {

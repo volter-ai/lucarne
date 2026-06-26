@@ -326,6 +326,31 @@ try {
   await fEngine.close().catch(() => {});
 }
 
+// ── P1: per-session stats + showControls nav ─────────────────────────────────
+const nEngine = new Lucarne({ port: 7819, token: TOKEN, record: false });
+await nEngine.listen();
+try {
+  const ns = await nEngine.create({ backend: "native", profile: "nav" });
+  const nc = await attachPage(ns.cdpUrl);
+  const nw = new WS(`ws://127.0.0.1:7819/sessions/nav/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { nw.on("open", r); nw.on("error", j); });
+  await sleep(1100);                                            // let screencast frames flow
+  const st = nEngine.status(ns.id);
+  check("stats: status reports frames + streamed bytes", st.frames > 0 && st.streamedBytes > 0);
+
+  const href = async () => (await nc.call("Runtime.evaluate", { expression: "location.href", returnByValue: true })).result.value;
+  nw.send(JSON.stringify({ t: "nav", action: "go", url: "https://example.com" }));
+  await sleep(1500); const u1 = await href();
+  nw.send(JSON.stringify({ t: "nav", action: "go", url: "data:text/html,<title>P2</title>HELLO" }));
+  await sleep(1100); const u2 = await href();
+  nw.send(JSON.stringify({ t: "nav", action: "back" }));
+  await sleep(1300); const u3 = await href();
+  nw.close(); nc.close();
+  check("nav: go navigates + back returns to the previous page", u1.includes("example.com") && u2.startsWith("data:") && u3.includes("example.com"));
+} finally {
+  await nEngine.close().catch(() => {});
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);
