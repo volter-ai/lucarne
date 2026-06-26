@@ -39,6 +39,11 @@ export const nativeBackend: Backend = {
       "--disable-backgrounding-occluded-windows",       // keep rendering while hidden
       "--disable-renderer-backgrounding",
       "--disable-background-timer-throttling",
+      // On Linux without a desktop keyring (headless servers / CI), Chrome can't
+      // re-derive its cookie-encryption key across restarts, so persisted cookies
+      // don't survive — use the basic store (stable key) there. macOS keeps the
+      // OS keychain (so seed-from-real-Chrome decrypts).
+      ...(process.platform === "linux" ? ["--password-store=basic"] : []),
       // Modern Chrome blocks --load-extension; extensions load at runtime via CDP
       // Extensions.loadUnpacked, which needs this launch flag.
       ...(ctx.extensions?.length
