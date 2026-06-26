@@ -3,6 +3,7 @@
 // (needs Google Chrome installed — exercises the native backend.)
 import { Lucarne, LucarneClient } from "../dist/index.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
+import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
 import { chromium } from "playwright";
 import WS from "ws";
