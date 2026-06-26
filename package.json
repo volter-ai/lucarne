@@ -1,6 +1,6 @@
 {
   "name": "lucarne",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
   "type": "module",
   "license": "MIT",
