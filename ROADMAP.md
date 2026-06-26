@@ -208,10 +208,17 @@ Phasing — each lands with a committed acceptance proof (the discipline applies
   field + a fresh timestamp.)*
 
 Carry-over native polish (not activity-log, but the "runs without disturbing you" promise):
-- ✅ **Headless** option (`0.9.1`) — no window, no focus steal; the test suite runs headless.
-- ⬜ **Headful no-focus-steal** — investigate a macOS no-activate launch so an *off-screen headful*
-  session doesn't grab focus either. *(Verify: launch a headful session; frontmost app unchanged —
-  may be a documented/manual check if no portable automated assert exists.)*
+- ✅ **Headless** option (`0.9.1`) — no window, no focus steal; the test suite runs headless. This is
+  the supported answer for "operate without disturbing me": the **porthole streams the live view
+  regardless of headless/headful**, so you still watch and take over from anywhere — headless only
+  forgoes a local on-screen window and a sliver of fingerprint surface (`--headless=new` is close).
+- ✅ **Headful no-focus-steal — resolved as an accepted limitation (decision, not a TODO).** On macOS,
+  launching the Chrome binary directly activates the app; the only clean no-activate path is `open -g`,
+  which forfeits lucarne's CDP/PID lifecycle (the `open` child exits immediately, so kill/`waitExit`
+  would fall back to fragile `pgrep -f` on the user-data-dir) and **cannot be proof-tested** (CI is
+  Linux) — so we will not ship it under the proof discipline. Use **headless** when you don't want the
+  focus grab; headful (the authentic lane) intentionally owns a real, frontmost window. Revisit only if
+  a portable, testable no-activate launch appears.
 
 ## The thesis
 > Steel/Browserbase/Browserless = *ephemeral, managed, anonymized* browsers at scale — **spoof to evade.**
