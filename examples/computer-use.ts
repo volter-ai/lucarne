@@ -5,7 +5,9 @@ import { LucarneClient } from "lucarne";
 
 const lucarne = new LucarneClient({ baseUrl: process.env.LUCARNE_URL, token: process.env.LUCARNE_TOKEN });
 
-const s = await lucarne.create({ profile: "demo-cu", backend: "native" });
+// activity:true turns on the actor-tagged feed (what human vs agent did); the
+// `now` snapshot works regardless, but `recent[]` is only populated when it's on.
+const s = await lucarne.create({ profile: "demo-cu", backend: "native", activity: true });
 console.log("watch live:", s.viewUrl);
 
 // click, type, scroll, and grab a screenshot — all over the same input plane the

@@ -27,10 +27,17 @@ It's the missing middle between *headless automation* (drivable, but you can't w
 ## Install
 
 ```sh
-npm install lucarne        # library + `lucarne` CLI
+npm install lucarne                 # the engine + `lucarne` CLI
+npm install playwright              # only if you'll DRIVE sessions over CDP (most people will)
 ```
 
-Requires **Node ≥ 22**. The `native` backend needs Google Chrome installed; the `docker` backend needs Docker.
+Requires **Node ≥ 22**. Prerequisites by what you use:
+
+- **`native` backend** → Google Chrome installed (or point `LUCARNE_CHROME` / `chromePath` at a Chromium binary).
+- **`docker` backend** → Docker (`lucarne build-image` once).
+- **recording** (on by default) → **`ffmpeg`** on the engine host. No ffmpeg ⇒ no recordings (everything else still works).
+
+Driving is **vanilla Playwright** against the session's `cdpUrl`, so `playwright` is a peer you install yourself — `npm install lucarne` alone does not pull it in.
 
 ## Quickstart
 
@@ -75,7 +82,7 @@ The full API is described by an **OpenAPI 3.1** spec at `/openapi.json`, with a 
 There's also a stdlib-only **Python client** (`clients/python/lucarne.py`) and an **MCP server**
 (`lucarne-mcp`, stdio) that exposes lucarne as agent tools — point any MCP client at it with
 `LUCARNE_URL` / `LUCARNE_TOKEN`. Per-session knobs include `mobile`, `quality`, `proxy`, `geo`,
-`metadata`, `timeoutMs`/`inactivityMs`, and engine-level `maxConcurrent` + `cors`.
+`metadata`, `maxLifetimeMs`/`inactivityMs`, and engine-level `maxConcurrent` + `cors`.
 
 Or embed the engine directly, no daemon:
 
@@ -108,6 +115,55 @@ Concrete jobs, each a runnable example in [`examples/`](./examples):
 - **From Python, or any MCP agent** — stdlib Python client, or the `lucarne-mcp`
   stdio server. → [`python_drive.py`](./examples/python_drive.py), [`mcp-config.json`](./examples/mcp-config.json)
 
+## Use it from Python
+
+The daemon is a Node CLI, but you only ever talk to it over **HTTP + CDP**, so the
+language you drive from is your choice. There's a **stdlib-only** Python client —
+**no PyPI package**; it's a single file you vendor:
+
+```sh
+npm install -g lucarne && lucarne serve          # the daemon (Node ≥ 22), once
+curl -O https://raw.githubusercontent.com/volter-ai/lucarne/main/clients/python/lucarne.py
+pip install playwright                            # to drive the cdpUrl from Python
+```
+```python
+from lucarne import LucarneClient                 # the vendored file
+from playwright.sync_api import sync_playwright
+
+luc = LucarneClient("http://127.0.0.1:7800")
+s = luc.create(profile="demo", backend="native")
+with sync_playwright() as p:
+    page = p.chromium.connect_over_cdp(s["cdpUrl"]).contexts[0].pages[0]
+    page.goto("https://example.com")
+```
+
+The Python client covers `health/create/list/get/destroy/act/content`; for the rest of
+the surface, call the HTTP API directly (see [API](#api) / `/openapi.json`). Full example:
+[`python_drive.py`](./examples/python_drive.py).
+
+## MCP server
+
+`lucarne-mcp` is a stdio MCP server that exposes lucarne as agent tools — give your
+AI assistant (Claude Desktop, etc.) a browser. **Start a daemon first** (`lucarne serve`);
+the MCP server is a thin bridge to it over `LUCARNE_URL`, so sessions outlive the agent.
+`native` sessions need Chrome installed.
+
+```json
+{
+  "mcpServers": {
+    "lucarne": {
+      "command": "npx",
+      "args": ["-y", "lucarne-mcp"],
+      "env": { "LUCARNE_URL": "http://127.0.0.1:7800", "LUCARNE_TOKEN": "" }
+    }
+  }
+}
+```
+
+Tools: **`lucarne_create`**, **`lucarne_list`**, **`lucarne_destroy`**, **`lucarne_act`**
+(click/move/type/key/scroll/screenshot), **`lucarne_content`** (rendered HTML).
+`LUCARNE_TOKEN: ""` = no auth (fine on loopback); set it if you started `serve` with a token.
+
 ## Backends
 
 **A backend is only an isolation strategy.** Drive, watch (porthole), and record are
@@ -131,9 +187,9 @@ VNC/GStreamer stack.
 
 The porthole has **full input fidelity** — modifiers, virtual key codes, editing shortcuts
 (select-all / copy / cut / paste / undo via CDP `commands`), **clipboard paste** (text pasted
-in the porthole lands in the focused field), drag, double/triple-click, right-click, and
-scroll, and **touch** (phone gestures → `Input.dispatchTouchEvent`). Not yet handled: **IME**
-(CJK composition) — the known tail.
+in the porthole lands in the focused field), drag, double/triple-click, right-click,
+scroll, **touch** (phone gestures → `Input.dispatchTouchEvent`), and **IME** composition
+(CJK input commits through `Input.imeSetComposition` + `insertText`).
 
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 
@@ -194,7 +250,7 @@ HTTP control API (what the CLI talks to):
 ```
 POST   /sessions                          CreateSessionOptions -> Session
          {profile?, backend?, persist?, seedFrom?, seedFromChrome?, headless?, extensions?, mobile?,
-          quality?, proxy?, geo?, activity?, metadata?, timeoutMs?, inactivityMs?}
+          quality?, proxy?, geo?, activity?, metadata?, maxLifetimeMs?, inactivityMs?}
 GET    /sessions                          -> Session[]
 DELETE /sessions                          -> { released }   (release-all)
 GET    /sessions/:id                      -> Session
@@ -212,7 +268,7 @@ GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadat
 PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
 GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
 POST   /sessions/:id/login                {credential, userSelector?, passSelector?, totpSelector?, submitSelector?}
-POST   /sessions/:id/act                  {action:"click|move|type|key|scroll|screenshot", ...}  (computer-use)
+POST   /sessions/:id/act                  {action:"click|move|type|key|scroll|screenshot", x?,y?,...}  (computer-use; coordinate-based — for selector-driving use Playwright over cdpUrl)
 GET    /sessions/:id/replay               -> text/html   (recording player)
 PUT/GET/DELETE /extensions/:name/:file    -> upload/manage extensions; create({extensions:["name"]})
 GET    /openapi.json  ·  GET /docs        -> OpenAPI 3.1 spec + Swagger UI
@@ -246,17 +302,38 @@ minutes (default 60) of one-minute segments.
 
 `lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
 
-- **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host.
-- **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** the porthole (HTTP + the WebSocket). Set this whenever you bind to a non-loopback host.
+- **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host. (The `docker` backend publishes its container CDP to `127.0.0.1` only — never the LAN.)
+- **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** the porthole (HTTP + the WebSocket). Use a long random value, e.g. `export LUCARNE_TOKEN=$(openssl rand -hex 32)`. **Required** whenever you bind off loopback.
 - **All portholes are served under the daemon** at `/sessions/:id/view` — one origin, token-gated, relative URLs — so the whole engine sits behind a single reverse proxy / tunnel cleanly, for every backend. Append `?interactable=0` for a read-only viewer (input dropped server-side), or `?controls=1` for a URL bar + back/forward/reload chrome.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
-`lucarne` ships an *optional* token, but deliberately does **not** ship tunneling or a fleet UI — those belong to whatever consumes it.
+### Exposing it (remote / from your phone)
+
+The recommended posture is **loopback + a reverse proxy**, not binding to `0.0.0.0`:
+
+```sh
+export LUCARNE_TOKEN=$(openssl rand -hex 32)
+lucarne serve                                  # 127.0.0.1:7800
+```
+
+Then front it with TLS + a tunnel and open only the token-gated `viewUrl` remotely
+(the porthole is one origin over a WebSocket, so any reverse proxy / tunnel works):
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:7800   # or: tailscale serve / caddy / ssh -R
+# phone → https://<your-host>/sessions/<id>/view/?token=<LUCARNE_TOKEN>&controls=1
+```
+
+`serve` does take `--host 0.0.0.0 --port <n>` if you must bind directly — but then a
+token is mandatory and you own the TLS. Never tunnel a `cdpUrl`; only the `viewUrl`.
+`lucarne` ships an *optional* token but deliberately does **not** bundle tunneling or a
+fleet UI — those belong to whatever consumes it.
 
 ## Status & testing
 
-Pre-1.0 (`0.x`): the API is settling and **minor versions may make breaking changes**
-— pin a version and read [`CHANGELOG.md`](./CHANGELOG.md) before upgrading.
+**1.0 — the API is stable** and follows [SemVer](https://semver.org/): no breaking
+changes to the documented surface without a major bump. New capabilities land in minor
+releases; read [`CHANGELOG.md`](./CHANGELOG.md) before upgrading.
 
 Every feature lands with a committed, re-runnable acceptance proof that asserts **real
 behavior** — a rendered JPEG frame, real-Chrome state, a valid mp4, an RFC TOTP vector —

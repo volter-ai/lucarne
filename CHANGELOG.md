@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.0.0]
+
+First stable release. The API now follows SemVer — no breaking changes to the
+documented surface without a major bump. This release froze the contract after a
+public-surface audit + a 7-persona onboarding test; the changes below are the
+freeze fixes.
+
+### Changed (breaking)
+- **`CreateSessionOptions.timeoutMs` → `maxLifetimeMs`** (and the matching
+  `SessionStatus` field). It's the absolute max-lifetime cap; the old name read as an
+  idle timeout next to `inactivityMs`. (`inactivityMs` is unchanged.)
+- **`ActivityNow.focusedField` is now `string | undefined`** (was typed `string | null`)
+  — the public type now matches what the engine actually serves.
+
+### Fixed
+- `ActivityEvent` / `ActivityNow` / `LogEntry` had drifting duplicate definitions; they
+  now have **one home** (`types.ts`) so the exported type can't diverge from the wire.
+- The typed SDK's `logs()` returns `LogEntry[]` (was `unknown[]`); `health()` includes
+  the optional `ids`; added `client.upload()` and `client.deleteProfile()`.
+- Exported `BlurredCredential` and `LogEntry` (a host implementing `CredentialProvider`
+  can now name its return type). OpenAPI documents `DELETE /profiles/{name}` and the
+  `/files/{name}` PUT/DELETE verbs.
+
+### Docs
+- README: dedicated **Python** and **MCP** sections (were buried one-liners), an explicit
+  **`npm install playwright`** note, **ffmpeg** promoted to a prerequisite, an
+  **"exposing it / from your phone"** reverse-proxy + tunnel recipe, and the `act`
+  computer-use verb clarified as coordinate-based. IME is documented as supported.
+
 ## [0.12.0]
 
 ### Changed
