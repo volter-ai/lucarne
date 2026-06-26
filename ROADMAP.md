@@ -164,9 +164,58 @@ full chain (console→bridge→lucarne) renders a live green pixel + click/type 
 **P2** — logs: captured log contains the known request URL + console line · replay: ≥N frames for N seconds recorded · credentials/TOTP: auto-fills a fixture login, generates a valid TOTP · SDK/OpenAPI: SDK round-trips create/list/destroy, spec validates.
 **P3** — MCP: client calls create/list/drive/destroy with asserted results · termfleet-native: the in-UI proof (provider green + window renders live pixel + click/type lands) — committed, not ad hoc.
 
+## Initiative II — Activity log: agent-ergonomic observation of the human (beyond parity)
+
+**NOT in the Browserbase/Steel/Browserless surface — this is the differentiator.** A lucarne session is
+shared by TWO actors (you + an agent). The activity log lets the agent know what *you* are doing, live,
+so it **collaborates instead of fighting** — picks up where you left off, doesn't navigate away while
+you're mid-form, doesn't redo what you just did.
+
+**Design principle — ergonomic for an AI = shapes it already read in training.** Don't make the agent
+learn a bespoke schema; hand it formats it's already fluent in.
+- **Familiar envelopes:** Sentry-**breadcrumb** JSON + a plain **log-line** view (zero-shot legible);
+  the network slice as **HAR**.
+- **The agent's own verbs:** log the human's actions in the same vocabulary the agent *drives* with
+  (Playwright/`act`: `goto` / `click(selector)` / `fill(selector,value)`), so it reads your trail with
+  zero translation and can *append* to it. Symmetry = collaboration; nobody else's telemetry does this.
+- **Three altitudes** (token cost ∝ need): `now` (current url/title/focusedField/`lastHumanActionMsAgo`) ·
+  `recent` (last ~20 semantic breadcrumbs) · full ring + SSE.
+- **Presence-to-yield:** `now` freshness + focused field is the signal the agent derives "don't touch
+  what the human is on" from — prevents fighting with no prompt cleverness.
+- **Semantic · coalesced · redacted · opt-in:** `create({ activity: true })`; mask password/sensitive
+  values; one `scroll` not 50; clicks are "Login", not coords.
+- **lucarne stays dep-free:** emit a trail the consuming agent's own model can summarize; no embedded LLM.
+
+**Source (mostly CDP, not raw input):** `nav` ← `Page.frameNavigated` · `download` ←
+`Browser.downloadWillBegin` · `tab` ← `Target.*` · `submit`/`dialog` ← injected listener/CDP · human
+`click`/`type` ← porthole `onInput`, enriched **off the hot path** (`DOM.getNodeForLocation` →
+selector/text; focused field for typing). Actor: porthole = `human`, CDP-driver = `agent`.
+
+**API (reuses the log-capture seam):** `GET /sessions/:id/activity` → `{ now, recent }`
+(`?format=breadcrumb|text|playwright`) · `?stream=1` SSE · surfaced through the SDK + MCP.
+
+Phasing — each lands with a committed acceptance proof (the discipline applies):
+- ⬜ **A1 — MVP feed.** nav/download/tab/submit/click/type, actor-tagged, breadcrumb-JSON + Playwright-verb
+  text, `{now, recent}` + SSE, redaction. *(Proof: drive a session, assert the feed shows a `nav`, a
+  `type` with a password value REDACTED, correct `human`/`agent` tags, and `now.url`.)*
+- ⬜ **A2 — DOM enrichment.** click → `{selector,text,role}` via `getNodeForLocation`; typing → focused
+  field name. *(Proof: a porthole click on a labeled button logs its text + selector.)*
+- ⬜ **A3 — presence-to-yield.** `now.lastHumanActionMsAgo` + `focusedField`. *(Proof: after a human input,
+  `now` reports the focused field + a fresh timestamp.)*
+
+Carry-over native polish (not activity-log, but the "runs without disturbing you" promise):
+- ✅ **Headless** option (`0.9.1`) — no window, no focus steal; the test suite runs headless.
+- ⬜ **Headful no-focus-steal** — investigate a macOS no-activate launch so an *off-screen headful*
+  session doesn't grab focus either. *(Verify: launch a headful session; frontmost app unchanged —
+  may be a documented/manual check if no portable automated assert exists.)*
+
 ## The thesis
 > Steel/Browserbase/Browserless = *ephemeral, managed, anonymized* browsers at scale — **spoof to evade.**
 > **lucarne = your durable, authenticated, real browser identities — *be genuinely you* — an agent
 > operates them and you watch/take-over from anywhere.**
 > Same operational toolkit, the half of the market nobody else serves. This roadmap closes every
 > operational gap and *only* that half; the spoofing/cloud surface is deliberately, permanently out.
+>
+> **Initiative II goes past parity:** because lucarne assumes you and the agent share *one real
+> browser*, it can do what no anonymized-cloud tool can — tell the agent what *you're* doing, live, so
+> you collaborate instead of fight. That shared human↔agent session is the moat.
