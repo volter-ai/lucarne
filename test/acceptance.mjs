@@ -240,7 +240,7 @@ try {
   check("inactivity: idle session auto-reaped", reaped);
 
   // max-duration: dies on schedule regardless of activity (touch every tick, still reaped)
-  const lt = await lEngine.create({ backend: "native", profile: "life2", timeoutMs: 700 });
+  const lt = await lEngine.create({ backend: "native", profile: "life2", maxLifetimeMs: 700 });
   let tReaped = false;
   for (let i = 0; i < 20 && !tReaped; i++) { await sleep(150); lEngine.touch(lt.id); tReaped = !lEngine.get(lt.id); }
   check("timeout: max-duration reaps even an active session", tReaped);
@@ -557,7 +557,7 @@ await sdkEngine.listen();
 try {
   const client = new LucarneClient({ baseUrl: "http://127.0.0.1:7827", token: TOKEN });
   const h = await client.health();
-  check("sdk: health round-trips", h.ok === true && typeof h.sessions === "number");
+  check("sdk: health round-trips (authed → includes ids[])", h.ok === true && typeof h.sessions === "number" && Array.isArray(h.ids));
   const sdkS = await client.create({ backend: "native", profile: "sdk", metadata: { via: "sdk" } });
   const listed = await client.list({ via: "sdk" });
   check("sdk: create + filtered list round-trip", listed.some((x) => x.id === sdkS.id));
@@ -588,6 +588,10 @@ try {
   check("sdk: exportContext() returns cookies + origin", Array.isArray(xc.cookies) && typeof xc.origin === "string");
   const av = await client.activity(sdkS.id);
   check("sdk: activity() returns the {now, recent} shape", "now" in av && Array.isArray(av.recent));
+  const lgs = await client.logs(sdkS.id);
+  check("sdk: logs() returns a typed LogEntry[]", Array.isArray(lgs) && lgs.every((e) => typeof e.kind === "string"));
+  const dp = await client.deleteProfile("definitely-not-a-real-profile-xyz");
+  check("sdk: deleteProfile() returns {ok}", typeof dp.ok === "boolean");
 
   // theme: the porthole HTML honors ?theme (client-side cosmetic)
   const view = await (await fetch(`http://127.0.0.1:7827/sessions/sdk/view/?token=${TOKEN}`)).text();

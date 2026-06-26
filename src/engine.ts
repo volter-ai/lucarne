@@ -24,7 +24,7 @@ interface Tracked extends Session {
   media: SessionMedia;
   createdAtMs: number;
   lastActivityMs: number;
-  timeoutMs?: number;
+  maxLifetimeMs?: number;
   inactivityMs?: number;
   stop(): Promise<void>;
 }
@@ -178,7 +178,7 @@ export class Lucarne {
       createdAt: new Date().toISOString(),
       recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, stop: handle.stop,
       createdAtMs: Date.now(), lastActivityMs: Date.now(),
-      timeoutMs: opts.timeoutMs, inactivityMs: opts.inactivityMs,
+      maxLifetimeMs: opts.maxLifetimeMs, inactivityMs: opts.inactivityMs,
       metadata: opts.metadata,
     };
     this.sessions.set(id, s);
@@ -438,7 +438,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
       idleMs: now - s.lastActivityMs,
       viewport: this.viewport,
       frames, streamedBytes,
-      ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
+      ...(s.maxLifetimeMs !== undefined ? { maxLifetimeMs: s.maxLifetimeMs } : {}),
       ...(s.inactivityMs !== undefined ? { inactivityMs: s.inactivityMs } : {}),
     };
   }
@@ -458,7 +458,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
   private reap(): void {
     const now = Date.now();
     for (const s of [...this.sessions.values()]) {
-      const overDuration = s.timeoutMs !== undefined && now - s.createdAtMs >= s.timeoutMs;
+      const overDuration = s.maxLifetimeMs !== undefined && now - s.createdAtMs >= s.maxLifetimeMs;
       const overIdle = s.inactivityMs !== undefined && now - s.lastActivityMs >= s.inactivityMs;
       if (overDuration || overIdle) void this.destroy(s.id);
     }

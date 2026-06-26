@@ -2,6 +2,11 @@ import { attachBrowser, attachPage, listPages, type CdpConn, type PageTarget } f
 import { startRecorder, type Recorder } from "./recorder.js";
 import { virtualKeyCode } from "./keymap.js";
 import type { FrameSource, InputEvent } from "./porthole.js";
+// ActivityEvent / ActivityNow / LogEntry have ONE home — types.ts (the frozen
+// public contract). Imported for local use + re-exported so existing
+// `./session-media.js` importers keep resolving.
+import type { ActivityEvent, ActivityNow, LogEntry } from "./types.js";
+export type { ActivityEvent, ActivityNow, LogEntry } from "./types.js";
 
 const MOUSE_BUTTON = ["left", "middle", "right"] as const;
 const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -10,42 +15,6 @@ const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleW
 const EDIT_COMMANDS: Record<string, string> = {
   KeyA: "selectAll", KeyC: "copy", KeyV: "paste", KeyX: "cut", KeyZ: "undo", KeyY: "redo", RedoZ: "redo",
 };
-
-/** A captured network / console / browser-log entry. */
-export interface LogEntry {
-  kind: "network" | "console" | "log";
-  ts: number;
-  level?: string;
-  method?: string;
-  url?: string;
-  text?: string;
-}
-
-/** A semantic action in the session — what the human (or agent) did. */
-export interface ActivityEvent {
-  ts: number;
-  actor: "human" | "agent";
-  kind: "nav" | "click" | "type" | "download" | "submit";
-  url?: string;
-  x?: number;
-  y?: number;
-  /** focused field for `type` (name/id/aria). */
-  field?: string;
-  /** typed text for `type`, "‹redacted›" for password/sensitive fields. */
-  value?: string;
-  /** the clicked element (A2): a CSS-ish selector, its visible text, and role. */
-  selector?: string;
-  text?: string;
-  role?: string;
-}
-
-/** Where the session is RIGHT NOW + how fresh the human's last action is. */
-export interface ActivityNow {
-  url?: string;
-  title?: string;
-  focusedField?: string;
-  lastHumanActionMsAgo: number | null;
-}
 
 export interface SessionMedia {
   /** The shared CDP tap on the ACTIVE tab — reused by engine features (upload, screenshot…). */

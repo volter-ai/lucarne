@@ -46,6 +46,7 @@ export const openApiSpec = {
     "/sessions/{id}/replay": { get: { summary: "Recording replay player (HTML)", responses: { "200": { description: "text/html" } } } },
     "/sessions/{id}/view": { get: { summary: "Porthole (watch + control); ?interactable=0 read-only, ?controls=1 URL bar", responses: { "200": { description: "text/html" } } } },
     "/profiles": { get: { summary: "List durable profiles", responses: { "200": { description: "[{name,active}]" } } } },
+    "/profiles/{name}": { delete: { summary: "Delete a durable profile (refused while live)", responses: { "200": { description: "{ok,reason?}" } } } },
     "/extensions/{name}": {
       get: { summary: "List/serve a managed extension's files", responses: { "200": { description: "string[] | bytes" } } },
       delete: { summary: "Delete a managed extension", responses: { "200": { description: "{ok}" } } },
@@ -57,7 +58,11 @@ export const openApiSpec = {
       delete: { summary: "Delete a credential", responses: { "200": { description: "{ok}" } } },
     },
     "/credentials/{name}/totp": { get: { summary: "Current RFC 6238 TOTP code", responses: { "200": { description: "{code}" } } } },
-    "/files/{name}": { get: { summary: "Global workspace file", responses: { "200": { description: "bytes" } } } },
+    "/files/{name}": {
+      get: { summary: "Read a global workspace file", responses: { "200": { description: "bytes" } } },
+      put: { summary: "Write a global workspace file", responses: { "200": { description: "{ok}" } } },
+      delete: { summary: "Delete a global workspace file", responses: { "200": { description: "{ok}" } } },
+    },
   },
 } as const;
 

@@ -1,4 +1,4 @@
-import type { ActAction, ActivityEvent, ActivityNow, CreateSessionOptions, Session, SessionContext, SessionStatus } from "./types.js";
+import type { ActAction, ActivityEvent, ActivityNow, CreateSessionOptions, LogEntry, Session, SessionContext, SessionStatus } from "./types.js";
 
 /**
  * Typed Node client for the lucarne HTTP API. Thin wrapper over `fetch` — the
@@ -39,7 +39,7 @@ export class LucarneClient {
     return new Uint8Array(await res.arrayBuffer());
   }
 
-  health(): Promise<{ ok: boolean; sessions: number }> { return this.req("GET", "/health") as Promise<{ ok: boolean; sessions: number }>; }
+  health(): Promise<{ ok: boolean; sessions: number; ids?: string[] }> { return this.req("GET", "/health") as Promise<{ ok: boolean; sessions: number; ids?: string[] }>; }
   create(opts: CreateSessionOptions = {}): Promise<Session> { return this.req("POST", "/sessions", opts) as Promise<Session>; }
   list(filter?: Record<string, string>): Promise<Session[]> {
     const q = filter ? "?" + Object.entries(filter).map(([k, v]) => `meta.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&") : "";
@@ -51,9 +51,9 @@ export class LucarneClient {
   releaseAll(): Promise<{ released: number }> { return this.req("DELETE", "/sessions") as Promise<{ released: number }>; }
   tabs(id: string): Promise<{ active?: string; tabs: { id: string; url: string; title: string }[] }> { return this.req("GET", `/sessions/${id}/tabs`) as Promise<{ active?: string; tabs: { id: string; url: string; title: string }[] }>; }
   switchTab(id: string, targetId: string): Promise<{ ok: boolean }> { return this.req("POST", `/sessions/${id}/tabs/${targetId}`) as Promise<{ ok: boolean }>; }
-  logs(id: string, opts: { kind?: string; limit?: number } = {}): Promise<unknown[]> {
+  logs(id: string, opts: { kind?: string; limit?: number } = {}): Promise<LogEntry[]> {
     const q = new URLSearchParams(); if (opts.kind) q.set("kind", opts.kind); if (opts.limit) q.set("limit", String(opts.limit));
-    return this.req("GET", `/sessions/${id}/logs${q.toString() ? "?" + q : ""}`) as Promise<unknown[]>;
+    return this.req("GET", `/sessions/${id}/logs${q.toString() ? "?" + q : ""}`) as Promise<LogEntry[]>;
   }
   content(id: string): Promise<string> { return this.req("GET", `/sessions/${id}/content`) as Promise<string>; }
   act(id: string, action: ActAction): Promise<{ ok: true; screenshot?: string }> {
@@ -63,6 +63,8 @@ export class LucarneClient {
     return this.req("POST", `/sessions/${id}/login`, opts) as Promise<{ filled: string[] }>;
   }
   profiles(): Promise<{ name: string; active: boolean }[]> { return this.req("GET", "/profiles") as Promise<{ name: string; active: boolean }[]>; }
+  deleteProfile(name: string): Promise<{ ok: boolean; reason?: string }> { return this.req("DELETE", `/profiles/${encodeURIComponent(name)}`) as Promise<{ ok: boolean; reason?: string }>; }
+  upload(id: string, opts: { path: string; selector?: string }): Promise<{ ok: boolean }> { return this.req("POST", `/sessions/${id}/upload`, opts) as Promise<{ ok: boolean }>; }
   touch(id: string): Promise<{ ok: boolean }> { return this.req("POST", `/sessions/${id}/touch`) as Promise<{ ok: boolean }>; }
   activity(id: string, opts: { limit?: number } = {}): Promise<{ now: ActivityNow | undefined; recent: ActivityEvent[] }> {
     const q = opts.limit ? `?limit=${opts.limit}` : "";

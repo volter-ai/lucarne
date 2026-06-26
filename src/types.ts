@@ -69,8 +69,8 @@ export interface CreateSessionOptions {
   activity?: boolean;
   /** Arbitrary user tags stored on the session (filter `list`/`sessions` by them). */
   metadata?: Record<string, string>;
-  /** Auto-release this session after this many ms of wall-clock, regardless of use. */
-  timeoutMs?: number;
+  /** Auto-release this session after this many ms of wall-clock lifetime, regardless of use. */
+  maxLifetimeMs?: number;
   /**
    * Auto-release after this many ms with no porthole interaction or `touch`.
    * Off by default (a CDP-driven session with no porthole input is not "idle").
@@ -87,7 +87,7 @@ export interface SessionStatus extends Session {
   frames: number;
   /** bytes of JPEG frame data served so far. */
   streamedBytes: number;
-  timeoutMs?: number;
+  maxLifetimeMs?: number;
   inactivityMs?: number;
 }
 
@@ -110,8 +110,20 @@ export interface ActivityEvent {
 export interface ActivityNow {
   url?: string;
   title?: string;
-  focusedField: string | null;
+  /** The focused field's name/id/aria (absent when nothing is focused). */
+  focusedField?: string;
+  /** ms since the human's last porthole action, or null if they never acted. */
   lastHumanActionMsAgo: number | null;
+}
+
+/** A captured network / console / browser-log entry. */
+export interface LogEntry {
+  kind: "network" | "console" | "log";
+  ts: number;
+  level?: string;
+  method?: string;
+  url?: string;
+  text?: string;
 }
 
 /** Exportable auth/state of a session (cookies + the current origin's storage). */
@@ -151,6 +163,8 @@ export interface EngineOptions {
   activity?: boolean;
   /** Recording frame-rate / segment cadence. Default 4. */
   fps?: number;
+  // NOTE: these two carry their unit in the NAME by design (`Min`/`Seconds`) — a
+  // human-scale recording knob reads better as `60` minutes than `3_600_000` ms.
   /** Minutes of recording to retain. Default 60. */
   retentionMin?: number;
   /** Seconds per recording segment. Default 60. */
