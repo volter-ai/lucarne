@@ -90,3 +90,26 @@ export function blurCredential(name: string): BlurredCredential | undefined {
 export function deleteCredential(name: string): boolean {
   const all = readAll(); const had = name in all; delete all[name]; writeAll(all); return had;
 }
+
+/**
+ * Pluggable credential backend. lucarne ships the encrypted-file store as the
+ * default, but a host can supply its own (a vault, 1Password, a KMS) — the engine
+ * only ever calls this interface, so the secret store is not baked into the engine.
+ * `get` returns secrets (for server-side login injection); never serve it over HTTP.
+ */
+export interface CredentialProvider {
+  put(name: string, cred: Credential): void;
+  get(name: string): Credential | undefined;
+  list(): BlurredCredential[];
+  blur(name: string): BlurredCredential | undefined;
+  delete(name: string): boolean;
+}
+
+/** The default provider: the AES-256-GCM encrypted-at-rest file store above. */
+export class FileCredentialStore implements CredentialProvider {
+  put(name: string, cred: Credential): void { putCredential(name, cred); }
+  get(name: string): Credential | undefined { return getCredential(name); }
+  list(): BlurredCredential[] { return listCredentials(); }
+  blur(name: string): BlurredCredential | undefined { return blurCredential(name); }
+  delete(name: string): boolean { return deleteCredential(name); }
+}

@@ -2,6 +2,7 @@
 // "Done" for a feature means its proof here passes. Run: npm run test:acceptance
 // (needs Google Chrome installed — exercises the native backend.)
 import { Lucarne, LucarneClient, VERSION } from "../dist/index.js";
+import { nativeBackend } from "../dist/backends/native.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -692,6 +693,24 @@ try {
   await corsEngine.close().catch(() => {});
 }
 
+// ── Backend registration seam: add a backend WITHOUT editing the engine ──────
+// Register a custom kind (delegating to native) and prove a session mints + drives.
+const cbEngine = new Lucarne({ port: 7843, token: TOKEN, record: false, backends: [] });
+cbEngine.registerBackend({ kind: "custom", start: (id, ports, ctx) => nativeBackend.start(id, ports, ctx) });
+await cbEngine.listen();
+try {
+  const cs = await cbEngine.create({ backend: "custom", profile: "cust" });
+  check("backend seam: a registered custom backend reports its kind", cs.backend === "custom");
+  const cb = await chromium.connectOverCDP(cs.cdpUrl);
+  const cp = cb.contexts()[0].pages()[0] ?? (await cb.contexts()[0].newPage());
+  await cp.goto("https://example.com", { waitUntil: "domcontentloaded" });
+  const ok = (await cp.title()) === "Example Domain";
+  await cb.close();
+  check("backend seam: a registered custom backend mints + drives a real session", ok);
+} finally {
+  await cbEngine.close().catch(() => {});
+}
+
 // ── P3: MCP server (stdio JSON-RPC drives real sessions) ─────────────────────
 const mcpEngine = new Lucarne({ port: 7832, token: TOKEN, record: false });
 await mcpEngine.listen();
@@ -842,6 +861,29 @@ try {
   await dgEngine.close().catch(() => {});
   check("docker: unsupported proxy is rejected, not silently dropped", /does not support `proxy`/.test(proxyErr));
   check("docker: unsupported extensions are rejected, not silently dropped", /does not support custom `extensions`/.test(extErr));
+
+  // backend-registration seam: with no backends registered, an unknown backend is rejected
+  const bareEngine = new Lucarne({ port: 7841, token: TOKEN, record: false, backends: [] });
+  await bareEngine.listen();
+  let unkBackend = "";
+  try { await bareEngine.create({ backend: "native", profile: "x" }); } catch (e) { unkBackend = e.message; }
+  await bareEngine.close().catch(() => {});
+  check("backend seam: an unregistered backend is rejected", /unknown backend/.test(unkBackend));
+
+  // pluggable credential provider: the engine uses the injected store, not the file default
+  const mem = new Map();
+  const customStore = {
+    put: (n, c) => mem.set(n, c),
+    get: (n) => mem.get(n),
+    list: () => [...mem.keys()].map((name) => ({ name, hasPassword: !!mem.get(name).password, hasTotp: !!mem.get(name).totp })),
+    blur: (n) => (mem.has(n) ? { name: n, hasPassword: !!mem.get(n).password, hasTotp: !!mem.get(n).totp } : undefined),
+    delete: (n) => mem.delete(n),
+  };
+  const credEngine = new Lucarne({ port: 7842, token: TOKEN, record: false, credentials: customStore });
+  await credEngine.listen();
+  await fetch("http://127.0.0.1:7842/credentials/k", { method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ password: "pw" }) });
+  await credEngine.close().catch(() => {});
+  check("credentials seam: engine routes through the injected provider (BYO store)", mem.has("k") && mem.get("k").password === "pw");
 
   // packaging: the published tarball actually ships what the README references
   const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { encoding: "utf8" }));

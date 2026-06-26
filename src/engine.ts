@@ -6,12 +6,16 @@ import type { Backend } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
-import { blurCredential, deleteCredential, getCredential, listCredentials, putCredential, totpCode, type Credential } from "./credentials.js";
+import { FileCredentialStore, totpCode, type CredentialProvider } from "./credentials.js";
+import { serveWorkspace, type Send } from "./http.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
-import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
+import { deleteProfileDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
+import { CredentialsService } from "./services/credentials-service.js";
+import { ExtensionsService } from "./services/extensions-service.js";
+import { WorkspaceService } from "./services/workspace-service.js";
 import { startSessionMedia, type ActivityEvent, type ActivityNow, type LogEntry, type SessionMedia } from "./session-media.js";
-import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
+import type { ActAction, CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
 interface Tracked extends Session {
   recDir: string;
@@ -72,7 +76,12 @@ export class Lucarne {
   private readonly segmentSeconds: number;
   private nextCdp: number;
   private readonly sessions = new Map<string, Tracked>();
-  private readonly backends: Record<string, Backend> = { docker: dockerBackend, native: nativeBackend };
+  private readonly backends: Record<string, Backend> = {};
+  private readonly credentials: CredentialProvider;
+  private readonly credentialsService: CredentialsService;
+  // Global (NOT session-scoped) subsystems, kept out of the engine's core so they
+  // stay peelable; the router delegates to each in turn.
+  private readonly globalServices: { handle(req: http.IncomingMessage, res: http.ServerResponse, send: Send, pathname: string): Promise<boolean> | boolean }[];
   private readonly wss = new WebSocketServer({ noServer: true });
   private server: http.Server | undefined;
   private reaper: ReturnType<typeof setInterval> | undefined;
@@ -99,10 +108,21 @@ export class Lucarne {
     this.registryFile = opts.registryFile ?? registryFilePath();
     this.maxConcurrent = opts.maxConcurrent ?? Infinity;
     this.cors = opts.cors ?? false;
+    this.credentials = opts.credentials ?? new FileCredentialStore();
+    this.credentialsService = new CredentialsService(this.credentials);
+    this.globalServices = [this.credentialsService, new WorkspaceService(), new ExtensionsService()];
+    // A backend is registered, not hard-coded — add one without editing the engine.
+    for (const b of opts.backends ?? [dockerBackend, nativeBackend]) this.registerBackend(b);
     // The lifecycle reaper runs whether or not the HTTP API is listening (embedded
     // use too); unref'd so it never keeps the process alive on its own.
     this.reaper = setInterval(() => this.reap(), opts.reapIntervalMs ?? 500);
     this.reaper.unref?.();
+  }
+
+  /** Register an isolation backend (the seam for adding a kind without editing the engine). */
+  registerBackend(backend: Backend): this {
+    this.backends[backend.kind] = backend;
+    return this;
   }
 
   async create(opts: CreateSessionOptions = {}): Promise<Session> {
@@ -250,50 +270,10 @@ export class Lucarne {
     return fs.existsSync(fp) ? fp : null;
   }
 
-  // ── Files workspace (per-session scratch dir or the global durable dir) ──
-  /** The directory backing a files scope: a session id, or `null` for global. */
-  private filesDirFor(id: string | null): string | null {
-    if (id === null) return globalFilesDir();
+  /** The per-session scratch workspace dir for a live session (or null). */
+  private sessionFilesDir(id: string): string | null {
     const s = this.sessions.get(id);
     return s ? s.filesDir : null;
-  }
-  putWorkspaceFile(dir: string, name: string, data: Buffer): void {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, path.basename(name)), data);
-  }
-  listWorkspaceFiles(dir: string): string[] {
-    try { return fs.readdirSync(dir).filter((f) => !f.startsWith(".")).sort(); } catch { return []; }
-  }
-  workspaceFilePath(dir: string, name: string): string | null {
-    const fp = path.join(dir, path.basename(name));
-    return fs.existsSync(fp) ? fp : null;
-  }
-
-  /** REST handler shared by the session and global files workspaces. */
-  private async serveFiles(
-    req: http.IncomingMessage, res: http.ServerResponse,
-    send: (res: http.ServerResponse, code: number, body: unknown) => void,
-    dir: string, name: string,
-  ): Promise<void> {
-    if (req.method === "GET" && !name) return send(res, 200, this.listWorkspaceFiles(dir));
-    if (req.method === "GET" && name) {
-      const fp = this.workspaceFilePath(dir, name);
-      if (!fp) return send(res, 404, { error: "no such file" });
-      res.writeHead(200, { "content-type": "application/octet-stream" });
-      fs.createReadStream(fp).pipe(res);
-      return;
-    }
-    if (req.method === "PUT" && name) {
-      const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
-      this.putWorkspaceFile(dir, name, Buffer.concat(chunks));
-      return send(res, 200, { ok: true });
-    }
-    if (req.method === "DELETE" && name) {
-      const fp = this.workspaceFilePath(dir, name);
-      if (fp) fs.rmSync(fp, { force: true });
-      return send(res, 200, { ok: !!fp });
-    }
-    return send(res, 405, { error: "method not allowed" });
   }
 
   /** PNG screenshot of the session's current page (CDP `Page.captureScreenshot`). */
@@ -348,12 +328,6 @@ export class Lucarne {
     return l;
   }
 
-  /** Current TOTP code for a stored credential (or null if it has no TOTP secret). */
-  credentialTotp(name: string): string | null {
-    const c = getCredential(name);
-    return c?.totp ? totpCode(c.totp) : null;
-  }
-
   /**
    * Auto-fill a login form from a stored credential — the secret stays
    * server-side (the caller never sees the password/TOTP). Fills by selector and
@@ -362,7 +336,7 @@ export class Lucarne {
   async loginWithCredential(id: string, opts: { credential: string; userSelector?: string; passSelector?: string; totpSelector?: string; submitSelector?: string }): Promise<{ filled: string[] }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
-    const cred = getCredential(opts.credential);
+    const cred = this.credentials.get(opts.credential);
     if (!cred) throw new Error("no such credential");
     const cdp = s.media.cdp;
     const filled: string[] = [];
@@ -378,18 +352,6 @@ export class Lucarne {
     if (opts.totpSelector && cred.totp && await fill(opts.totpSelector, totpCode(cred.totp))) filled.push("totp");
     if (opts.submitSelector) await cdp.call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(opts.submitSelector)})?.click()` });
     return { filled };
-  }
-
-  /** Names of uploaded/managed extensions. */
-  listManagedExtensions(): string[] {
-    try { return fs.readdirSync(managedExtensionsDir(), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort(); }
-    catch { return []; }
-  }
-  deleteManagedExtension(name: string): boolean {
-    const dir = path.join(managedExtensionsDir(), path.basename(name));
-    if (!fs.existsSync(dir)) return false;
-    fs.rmSync(dir, { recursive: true, force: true });
-    return true;
   }
 
   /** A self-contained HTML player that streams the session's recording segments. */
@@ -410,7 +372,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
    * porthole input plane (click/move/type/key/scroll) or a screenshot. Same
    * transport the human porthole uses, so an agent and a watcher stay in sync.
    */
-  async act(id: string, a: { action: string; x?: number; y?: number; button?: number; text?: string; key?: string; code?: string; mod?: number; dx?: number; dy?: number; clickCount?: number }): Promise<{ ok: true; screenshot?: string }> {
+  async act(id: string, a: ActAction): Promise<{ ok: true; screenshot?: string }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
     const m = s.media;
@@ -562,7 +524,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
   }
 
   listen(): Promise<void> {
-    const send = (res: http.ServerResponse, code: number, body: unknown): void => {
+    const send: Send = (res, code, body) => {
       res.writeHead(code, { "content-type": "application/json" });
       res.end(JSON.stringify(body, null, 2));
     };
@@ -583,34 +545,9 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           return send(res, 200, this.tokenOk(req.url ?? "/", req.headers.authorization) ? h : { ok: h.ok, sessions: h.sessions });
         }
         if (!this.tokenOk(req.url ?? "/", req.headers.authorization)) return send(res, 401, { error: "unauthorized" });
-        const cred = pathname.match(/^\/credentials\/?([^/]*)\/?(totp)?$/);
-        if (cred) {
-          const name = cred[1] ? decodeURIComponent(cred[1]) : "";
-          if (req.method === "GET" && !name) return send(res, 200, listCredentials());
-          if (req.method === "GET" && name && cred[2] === "totp") {
-            const code = this.credentialTotp(name);
-            return code ? send(res, 200, { code }) : send(res, 404, { error: "no totp for credential" });
-          }
-          if (req.method === "GET" && name) { const b = blurCredential(name); return b ? send(res, 200, b) : send(res, 404, { error: "no such credential" }); }
-          if (req.method === "PUT" && name) {
-            let body = ""; for await (const c of req) body += c;
-            putCredential(name, body ? (JSON.parse(body) as Credential) : {});
-            return send(res, 200, { ok: true });
-          }
-          if (req.method === "DELETE" && name) return send(res, 200, { ok: deleteCredential(name) });
-          return send(res, 405, { error: "method not allowed" });
-        }
-        const gf = pathname.match(/^\/files\/?(.*)$/);
-        if (gf) { await this.serveFiles(req, res, send, globalFilesDir(), decodeURIComponent(gf[1]!)); return; }
-        const ext = pathname.match(/^\/extensions\/?([^/]*)\/?(.*)$/);
-        if (ext) {
-          const name = ext[1] ? decodeURIComponent(ext[1]) : "";
-          const file = ext[2] ? decodeURIComponent(ext[2]) : "";
-          if (req.method === "GET" && !name) return send(res, 200, this.listManagedExtensions());
-          if (req.method === "DELETE" && name && !file) return send(res, 200, { ok: this.deleteManagedExtension(name) });
-          if (name && file) { await this.serveFiles(req, res, send, path.join(managedExtensionsDir(), path.basename(name)), file); return; }
-          return send(res, 405, { error: "method not allowed" });
-        }
+        // Global (non-session) subsystems own their own routes — credentials,
+        // the /files workspace, managed /extensions. Each returns true if it answered.
+        for (const svc of this.globalServices) { if (await svc.handle(req, res, send, pathname)) return; }
         const prof = pathname.match(/^\/profiles\/?(.*)$/);
         if (prof) {
           const name = prof[1];
@@ -732,9 +669,9 @@ v.addEventListener('ended',()=>{i++;play()});play();});
         }
         const sf = pathname.match(/^\/sessions\/([^/]+)\/files\/?(.*)$/);
         if (sf) {
-          const dir = this.filesDirFor(sf[1]!);
+          const dir = this.sessionFilesDir(sf[1]!);
           if (!dir) return send(res, 404, { error: "no such session" });
-          await this.serveFiles(req, res, send, dir, decodeURIComponent(sf[2]!));
+          await serveWorkspace(req, res, send, dir, decodeURIComponent(sf[2]!));
           return;
         }
         const login = pathname.match(/^\/sessions\/([^/]+)\/login$/);

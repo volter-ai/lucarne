@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.12.0]
+
+### Changed
+- **1.0-readiness refactor (architecture).** The global, non-session subsystems —
+  credentials, the `/files` workspace, and managed `/extensions` — moved out of the
+  engine into their own `RouteService` modules (`src/services/*`, `src/http.ts`), so
+  the engine is session-centric and those subsystems are peelable. **Behavior is
+  unchanged** (the existing HTTP proofs cover it); the removed engine methods
+  (`credentialTotp`, `listManagedExtensions`, `deleteManagedExtension`, the workspace
+  helpers) were internal.
+
+### Added
+- **Pluggable credential store** — `EngineOptions.credentials` accepts any
+  `CredentialProvider`; the encrypted-file store ships as the default
+  `FileCredentialStore` (both now exported). Bring your own vault/KMS without the
+  secret store being baked into the engine.
+- **Backend-registration seam** — `engine.registerBackend(backend)` /
+  `EngineOptions.backends`; add an isolation backend without editing the engine.
+- Exported the shared `ActAction` type (one shape across the engine, SDK, and MCP —
+  was duplicated and could drift).
+
+### Removed
+- The dead `EngineOptions.viewPortBase` (vestigial since the porthole went
+  single-origin in 0.3).
+
 ## [0.11.0]
 
 ### Added

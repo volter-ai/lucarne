@@ -1,5 +1,23 @@
+import type { Backend } from "./backends/types.js";
+import type { CredentialProvider } from "./credentials.js";
+
 /** Which engine spawns the browser behind a session. */
 export type BackendKind = "docker" | "native";
+
+/** A single computer-use action (one shared shape across the engine, SDK, and MCP). */
+export interface ActAction {
+  action: "click" | "move" | "type" | "key" | "scroll" | "screenshot";
+  x?: number;
+  y?: number;
+  button?: number;
+  text?: string;
+  key?: string;
+  code?: string;
+  mod?: number;
+  dx?: number;
+  dy?: number;
+  clickCount?: number;
+}
 
 /**
  * A browser session. The three surfaces:
@@ -150,6 +168,8 @@ export interface EngineOptions {
    * Default `LUCARNE_HOME/sessions.json`. `listen()` restores them on startup.
    */
   registryFile?: string;
-  /** First porthole (view) port to allocate. Default 8100. */
-  viewPortBase?: number;
+  /** Override the credential store. Default: the encrypted-file `FileCredentialStore`. */
+  credentials?: CredentialProvider;
+  /** Isolation backends to register. Default: docker + native. */
+  backends?: Backend[];
 }
