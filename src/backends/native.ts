@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import type { Backend, BackendContext, BackendHandle } from "./types.js";
 import { waitForCdp } from "./types.js";
 import { attachPage } from "../cdp.js";
-import { startViewServer, type FrameSource, type InputEvent } from "../porthole.js";
+import { createViewHandler, type FrameSource, type InputEvent } from "../porthole.js";
 import { startRecorder } from "../recorder.js";
 
 const exec = promisify(execFile);
@@ -70,15 +70,13 @@ export const nativeBackend: Backend = {
       }
     };
 
-    const view = startViewServer({ host: ctx.host, port: ports.view, viewport: ctx.viewport, token: ctx.token, frames, onInput });
+    const viewHandler = createViewHandler({ viewport: ctx.viewport, token: ctx.token, frames, onInput });
     const recorder = ctx.record ? startRecorder({ recDir, fps: ctx.fps, retentionMin: ctx.retentionMin, frames }) : null;
 
-    const tokenQs = ctx.token ? `?token=${encodeURIComponent(ctx.token)}` : "";
     return {
-      viewUrl: `http://${ctx.host}:${ports.view}/${tokenQs}`,
+      viewHandler,   // engine mounts it at /sessions/:id/view and computes viewUrl
       recDir,
       async stop(): Promise<void> {
-        try { view.close(); } catch { /* ignore */ }
         try { recorder?.close(); } catch { /* ignore */ }
         try { conn.close(); } catch { /* ignore */ }
         try { chrome.kill("SIGKILL"); } catch { /* ignore */ }

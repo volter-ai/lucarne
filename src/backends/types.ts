@@ -1,4 +1,5 @@
 import type { BackendKind } from "../types.js";
+import type { ViewHandler } from "../porthole.js";
 
 export interface BackendContext {
   host: string;
@@ -16,8 +17,13 @@ export interface BackendContext {
 }
 
 export interface BackendHandle {
-  /** Absolute URL of the porthole (view + control). */
-  viewUrl: string;
+  /**
+   * A porthole mounted under the daemon (native): the engine serves it at
+   * `/sessions/:id/view` and computes `viewUrl`. Takes precedence over `viewUrl`.
+   */
+  viewHandler?: ViewHandler;
+  /** Absolute porthole URL when the backend serves it itself (docker → container port). */
+  viewUrl?: string;
   /** Directory where this session's recording segments land. */
   recDir: string;
   /** Tear down the browser + its porthole/recorder and reclaim resources. */

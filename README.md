@@ -119,6 +119,7 @@ minutes (default 60) of one-minute segments.
 
 - **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host.
 - **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** native portholes. Set this whenever you bind to a non-loopback host.
+- **Native portholes are served under the daemon** at `/sessions/:id/view` — one origin, token-gated, so the whole engine sits behind a single reverse proxy / tunnel cleanly (the porthole uses relative URLs, so it nests under any proxy path).
 - **The docker (noVNC) porthole is served by the container**, so it is **not** token-gated by lucarne — keep it on loopback, or front it with your own proxy.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 

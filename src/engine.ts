@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Backend } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
+import type { ViewHandler } from "./porthole.js";
 import type { CreateSessionOptions, EngineOptions, Session } from "./types.js";
 
 interface Tracked extends Session {
@@ -39,6 +40,7 @@ export class Lucarne {
   private nextCdp: number;
   private nextView: number;
   private readonly sessions = new Map<string, Tracked>();
+  private readonly viewHandlers = new Map<string, ViewHandler>();
   private readonly backends: Record<string, Backend> = { docker: dockerBackend, native: nativeBackend };
   private server: http.Server | undefined;
 
@@ -67,10 +69,19 @@ export class Lucarne {
       host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
       token: this.token, record: this.record, fps: this.fps, retentionMin: this.retentionMin,
     });
+    let viewUrl: string;
+    if (handle.viewHandler) {
+      // native: mounted under the daemon so the whole thing is one proxy-embeddable origin
+      this.viewHandlers.set(id, handle.viewHandler);
+      const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
+      viewUrl = `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`;
+    } else {
+      viewUrl = handle.viewUrl ?? "";
+    }
     const s: Tracked = {
       id, backend: backend.kind,
       cdpUrl: `http://${this.host}:${ports.cdp}`,
-      viewUrl: handle.viewUrl,
+      viewUrl,
       createdAt: new Date().toISOString(),
       recDir: handle.recDir,
       stop: handle.stop,
@@ -96,6 +107,7 @@ export class Lucarne {
     if (!s) return false;
     await s.stop().catch(() => {});
     this.sessions.delete(id);
+    this.viewHandlers.delete(id);
     return true;
   }
 
@@ -116,6 +128,20 @@ export class Lucarne {
       try {
         if (!this.authed(req)) return send(res, 401, { error: "unauthorized" });
         const pathname = new URL(req.url ?? "/", "http://x").pathname;
+        const viewM = pathname.match(/^\/sessions\/([^/]+)\/view(?:\/(.*))?$/);
+        if (viewM) {
+          const [, id, sub] = viewM;
+          const h = this.viewHandlers.get(id!);
+          if (!h) return send(res, 404, { error: "no porthole for session" });
+          if (sub === undefined) {
+            const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
+            res.writeHead(302, { location: `/sessions/${id}/view/${qs}` });
+            res.end();
+            return;
+          }
+          await h.handle(req, res, sub);
+          return;
+        }
         const rec = pathname.match(/^\/sessions\/([^/]+)\/recordings\/?(.*)$/);
         if (rec) {
           const [, id, file] = rec;
