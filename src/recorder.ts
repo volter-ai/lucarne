@@ -35,6 +35,9 @@ export function startRecorder(opts: {
   const ff: ChildProcess = spawn("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
     "-f", "image2pipe", "-framerate", String(opts.fps), "-i", "-",
+    // force EVEN dimensions: the screencast's content viewport can be odd-height
+    // (e.g. 1280x633), which yuv420p/libx264 reject ("incorrect width or height")
+    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
     ...enc, "-pix_fmt", "yuv420p",
     "-f", "segment", "-segment_time", String(opts.segmentSeconds ?? 60), "-reset_timestamps", "1",
     `${opts.recDir}/seg_%05d.mp4`,
