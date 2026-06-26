@@ -1,0 +1,34 @@
+{
+  "name": "lucarne",
+  "version": "0.1.0",
+  "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aaron Volter",
+  "homepage": "https://github.com/volter-ai/lucarne#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/volter-ai/lucarne.git" },
+  "bugs": { "url": "https://github.com/volter-ai/lucarne/issues" },
+  "keywords": [
+    "browser", "playwright", "cdp", "chrome-devtools-protocol", "automation",
+    "remote-browser", "screencast", "headful", "chrome", "agent", "browser-automation"
+  ],
+  "engines": { "node": ">=22" },
+  "bin": { "lucarne": "dist/cli.js" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist", "docker", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build",
+    "build:image": "docker build -t lucarne-browser:latest docker"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "playwright": "^1.49.0",
+    "typescript": "^5.7.0"
+  }
+}
