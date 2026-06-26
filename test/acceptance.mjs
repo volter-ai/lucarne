@@ -223,6 +223,37 @@ try {
   await lEngine.close().catch(() => {});
 }
 
+// ── P1: session-context export/import + release-all ──────────────────────────
+const cEngine = new Lucarne({ port: 7815, token: TOKEN, record: false });
+await cEngine.listen();
+try {
+  const A = await cEngine.create({ backend: "native", profile: "ctxA" });
+  const ca = await attachPage(A.cdpUrl);
+  ca.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1200);
+  await ca.call("Runtime.evaluate", { expression: `document.cookie='ctx_c=val-${ID};path=/';localStorage.setItem('ctx_l','ls-${ID}');` });
+  const exported = await cEngine.exportContext(A.id);
+  const hasC = exported.cookies.some((c) => c.name === "ctx_c" && c.value === `val-${ID}`);
+  check("context: export captures cookies + localStorage", hasC && exported.localStorage.ctx_l === `ls-${ID}` && exported.origin === "https://example.com");
+
+  // restore into a DIFFERENT session — no profile sharing, pure runtime transfer
+  const B = await cEngine.create({ backend: "native", profile: "ctxB" });
+  const cb = await attachPage(B.cdpUrl);
+  cb.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1200);
+  await cEngine.importContext(B.id, exported);
+  const bCookies = (await cb.call("Network.getAllCookies")).cookies;
+  const bLs = (await cb.call("Runtime.evaluate", { expression: "localStorage.getItem('ctx_l')", returnByValue: true })).result.value;
+  ca.close(); cb.close();
+  check("context: import restores cookies + localStorage into another session", bCookies.some((c) => c.name === "ctx_c" && c.value === `val-${ID}`) && bLs === `ls-${ID}`);
+
+  // release-all
+  const released = await cEngine.releaseAll();
+  check("release-all: destroys every live session", released === 2 && cEngine.list().length === 0);
+} finally {
+  await cEngine.close().catch(() => {});
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

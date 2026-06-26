@@ -219,6 +219,42 @@ export class Lucarne {
     return true;
   }
 
+  /** Destroy every live session; returns how many were released. */
+  async releaseAll(): Promise<number> {
+    const ids = [...this.sessions.keys()];
+    await Promise.all(ids.map((id) => this.destroy(id)));
+    return ids.length;
+  }
+
+  /**
+   * Dump the session's auth/state context — cookies (all) plus the current page
+   * origin's localStorage — for restoring into another session WITHOUT a restart.
+   * (Profiles persist on disk; this is the live, cross-session transfer path.)
+   */
+  async exportContext(id: string): Promise<{ cookies: unknown[]; localStorage: Record<string, string>; origin: string }> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const { cookies } = await s.media.cdp.call("Network.getAllCookies");
+    const r = await s.media.cdp.call("Runtime.evaluate", {
+      expression: "JSON.stringify({o:location.origin,ls:Object.assign({},localStorage)})",
+      returnByValue: true,
+    });
+    const { o, ls } = JSON.parse(r.result.value as string);
+    return { cookies, localStorage: ls, origin: o };
+  }
+
+  /** Restore a context (from `exportContext`): set cookies + the current origin's localStorage. */
+  async importContext(id: string, ctx: { cookies?: unknown[]; localStorage?: Record<string, string> }): Promise<void> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    if (ctx.cookies?.length) await s.media.cdp.call("Network.setCookies", { cookies: ctx.cookies });
+    if (ctx.localStorage) {
+      await s.media.cdp.call("Runtime.evaluate", {
+        expression: `(()=>{const d=${JSON.stringify(ctx.localStorage)};for(const k in d)localStorage.setItem(k,d[k]);return true})()`,
+      });
+    }
+  }
+
   private tokenOk(url: string, headerAuth?: string): boolean {
     if (!this.token) return true;
     if (new URL(url, "http://x").searchParams.get("token") === this.token) return true;
@@ -264,6 +300,18 @@ export class Lucarne {
           if (kind === "status") { const s = this.status(id!); return s ? send(res, 200, s) : send(res, 404, { error: "no such session" }); }
           if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
           return send(res, 200, { ok: this.touch(id!) });
+        }
+        const ctx = pathname.match(/^\/sessions\/([^/]+)\/context$/);
+        if (ctx) {
+          const [, id] = ctx;
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          if (req.method === "GET") return send(res, 200, await this.exportContext(id!));
+          if (req.method === "POST") {
+            let body = ""; for await (const c of req) body += c;
+            await this.importContext(id!, body ? JSON.parse(body) : {});
+            return send(res, 200, { ok: true });
+          }
+          return send(res, 405, { error: "method not allowed" });
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {
@@ -315,6 +363,7 @@ export class Lucarne {
         }
         if (req.method === "GET" && !id) return send(res, 200, this.list());
         if (req.method === "GET" && id) { const s = this.get(id); return s ? send(res, 200, s) : send(res, 404, { error: "no such session" }); }
+        if (req.method === "DELETE" && !id) return send(res, 200, { released: await this.releaseAll() });
         if (req.method === "DELETE" && id) return send(res, 200, { ok: await this.destroy(id) });
         return send(res, 405, { error: "method not allowed" });
       } catch (e) { return send(res, 500, { error: String((e as Error).message ?? e) }); }

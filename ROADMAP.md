@@ -18,7 +18,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## A. Session lifecycle & management
 - ✅ create / get / list / destroy session, token auth
-- ✅ P1 explicit **`status`** + rich session object (uptime, idle, dims, limits); `GET /sessions/:id/status`. *(Proof: status returns uptime + dims.)* · 🔨 P1 `release-all`
+- ✅ P1 explicit **`status`** + rich session object (uptime, idle, dims, limits); `GET /sessions/:id/status`. *(Proof: status returns uptime + dims.)* · ✅ P1 `release-all` (`DELETE /sessions`). *(Proof: destroys every live session.)*
 - ✅ P1 **`timeout`** (max duration) and **`inactivityTimeout`** (idle auto-release; `touch` / porthole input resets it). *(Proof: idle session reaped · touch keeps alive · timeout reaps even an active session.)*
 - ✅ P1 **session outlives the driver** — sessions are engine-owned processes; a porthole/CDP client disconnect never ends them, reconnect by id. 🔨 P1 survive *daemon* restart (persisted registry — see "survive restart")
 - 🔨 P2 `userMetadata` tags + list-query filter
@@ -33,7 +33,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ **P0 seed from your real Chrome profile** — `seedFrom`/`seedFromChrome` copy cookies/logins/storage
   on a profile's first creation so it starts authenticated. *(Proof: seeded profile carries the source cookie.)*
 - 🔨 P1 profile API — create / get / list / update / delete
-- 🔨 P1 **session-context export/import** — dump cookies + localStorage + sessionStorage + IndexedDB; restore into a new session
+- ✅ P1 **session-context export/import** — `GET/POST /sessions/:id/context` dumps cookies + the current origin's localStorage and restores them into another live session (runtime transfer, no profile sharing). *(Proof: cookies + localStorage round-trip into a different session.)* · 🔨 P2 also sessionStorage + IndexedDB
 - 🔨 P2 encrypted profiles/credentials at rest
 - 🚫 stored *spoofed* fingerprints (native = real fingerprint)
 
@@ -136,7 +136,8 @@ destroy + recreate · ✅ persist→seed: fresh profile seeded from another carr
 only on first creation · ✅ clipboard: paste lands in focused input · ✅ upload: file input reports
 name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **Phase 1 (P0) complete.**
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
-✅ max-duration timeout · ✅ view-only (input dropped server-side). **19/19.**
+✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
+into another session) · ✅ release-all. **22/22.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

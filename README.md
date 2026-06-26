@@ -134,9 +134,12 @@ HTTP control API (what the CLI talks to):
 ```
 POST   /sessions                          {profile?, backend?, persist?, seedFrom?, seedFromChrome?, timeoutMs?, inactivityMs?}  -> Session
 GET    /sessions                          -> Session[]
+DELETE /sessions                          -> { released }   (release-all)
 GET    /sessions/:id                      -> Session
 GET    /sessions/:id/status               -> SessionStatus   (uptime, idle, dims, limits)
 POST   /sessions/:id/touch                -> { ok }   (reset the inactivity clock)
+GET    /sessions/:id/context              -> { cookies, localStorage, origin }   (export)
+POST   /sessions/:id/context              {cookies?, localStorage?}  -> { ok }   (import)
 DELETE /sessions/:id                      -> { ok }
 POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject a host file into <input type=file>)
 GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)
