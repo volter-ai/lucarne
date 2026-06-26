@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Lucarne } from "./engine.js";
+import { ensureTunnelToken, startTunnel, type TunnelPreset } from "./tunnel.js";
 import { VERSION } from "./version.js";
 
 const API = process.env.LUCARNE_URL ?? "http://127.0.0.1:7800";
@@ -12,6 +13,8 @@ const HELP = `lucarne — self-hostable browser sessions you can drive, watch, a
 
 Usage:
   lucarne serve [--port 7800] [--host 127.0.0.1]   start the engine daemon
+                [--tunnel ngrok|cloudflared]        expose it via a tunnel you have
+                [--tunnel-cmd "<command>"]          …or any tunnel (tailscale, ssh -R, a relay)
   lucarne create [-b docker|native] [-p name]      mint a session -> {cdpUrl, viewUrl}
   lucarne ls                                        list sessions
   lucarne rm <id>                                   destroy a session
@@ -57,6 +60,8 @@ async function main(): Promise<void> {
     options: {
       port: { type: "string" },
       host: { type: "string" },
+      tunnel: { type: "string" },
+      "tunnel-cmd": { type: "string" },
       backend: { type: "string", short: "b" },
       profile: { type: "string", short: "p" },
       help: { type: "boolean", short: "h" },
@@ -69,15 +74,34 @@ async function main(): Promise<void> {
 
   switch (cmd) {
     case "serve": {
+      const tunnelCmd = values["tunnel-cmd"];
+      const tunneling = !!(values.tunnel || tunnelCmd);
+      // A tunneled daemon is reachable off-loopback, so it MUST be token-gated —
+      // auto-provision one if none was set.
+      let token = process.env.LUCARNE_TOKEN;
+      let generated = false;
+      if (tunneling) { const t = ensureTunnelToken(token); token = t.token; generated = t.generated; }
       const engine = new Lucarne({
         port: values.port ? Number(values.port) : undefined,
         host: values.host,
+        token,
       });
       await engine.listen();
       process.stdout.write(`lucarne engine on http://${engine.host}:${engine.port}\n`);
+      if (generated) process.stdout.write(`lucarne token (auto-provisioned for the tunnel): ${token}\n`);
       const restored = await engine.restore();
       if (restored.length) process.stdout.write(`lucarne restored ${restored.length} durable session(s): ${restored.join(", ")}\n`);
-      const shutdown = async (): Promise<void> => { await engine.close(); process.exit(0); };
+      let tunnel: { url: string; stop(): void } | undefined;
+      if (tunneling) {
+        try {
+          tunnel = await startTunnel({ preset: values.tunnel as TunnelPreset | undefined, cmd: tunnelCmd, host: engine.host, port: engine.port });
+          process.stdout.write(`lucarne tunnel: ${tunnel.url}  (token-gated)\n`);
+          process.stdout.write(`  phone view: ${tunnel.url}/sessions/<id>/view/?token=${token}&controls=1\n`);
+        } catch (e) {
+          process.stderr.write((e as Error).message + "\n");
+        }
+      }
+      const shutdown = async (): Promise<void> => { tunnel?.stop(); await engine.close(); process.exit(0); };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
       return;

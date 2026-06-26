@@ -313,25 +313,28 @@ minutes (default 60) of one-minute segments.
 
 ### Exposing it (remote / from your phone)
 
-The recommended posture is **loopback + a reverse proxy**, not binding to `0.0.0.0`:
+`lucarne serve --tunnel` exposes the daemon through a tunnel **you already have
+installed** — it shells out to the binary, prints the public token-gated `viewUrl`, and
+**auto-provisions a token** (a tunneled daemon is never left unauthenticated):
 
 ```sh
-export LUCARNE_TOKEN=$(openssl rand -hex 32)
-lucarne serve                                  # 127.0.0.1:7800
+lucarne serve --tunnel ngrok           # or: --tunnel cloudflared
+# → lucarne tunnel: https://ab12.ngrok-free.app  (token-gated)
+#   phone view:    https://ab12.ngrok-free.app/sessions/<id>/view/?token=…&controls=1
 ```
 
-Then front it with TLS + a tunnel and open only the token-gated `viewUrl` remotely
-(the porthole is one origin over a WebSocket, so any reverse proxy / tunnel works):
+Any other tunnel works via `--tunnel-cmd` — the command just has to print its public
+`https://…` URL (tailscale, `ssh -R`, a corporate/relay client). lucarne sets
+`LUCARNE_LOCAL_URL`/`LUCARNE_PORT` in its environment:
 
 ```sh
-cloudflared tunnel --url http://127.0.0.1:7800   # or: tailscale serve / caddy / ssh -R
-# phone → https://<your-host>/sessions/<id>/view/?token=<LUCARNE_TOKEN>&controls=1
+lucarne serve --tunnel-cmd "ssh -R 80:localhost:7800 my.relay.example"
 ```
 
-`serve` does take `--host 0.0.0.0 --port <n>` if you must bind directly — but then a
-token is mandatory and you own the TLS. Never tunnel a `cdpUrl`; only the `viewUrl`.
-`lucarne` ships an *optional* token but deliberately does **not** bundle tunneling or a
-fleet UI — those belong to whatever consumes it.
+lucarne **shells out to a tunnel you installed and bundles none** — no extra dependency,
+no vendor lock-in (so a private relay is just a `--tunnel-cmd`). Prefer this loopback +
+tunnel posture over binding directly; if you must, `serve --host 0.0.0.0 --port <n>` needs
+a token and your own TLS. **Never tunnel a `cdpUrl` — only the `viewUrl`.**
 
 ### Run it as a service (systemd)
 

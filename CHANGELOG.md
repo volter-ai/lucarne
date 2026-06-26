@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.2.0]
+
+### Added
+- **`lucarne serve --tunnel ngrok|cloudflared`** (and `--tunnel-cmd "<command>"` for any
+  other tunnel — tailscale, `ssh -R`, a private relay) — exposes the daemon for remote /
+  phone access by **shelling out to a tunnel you already have installed**. lucarne bundles
+  no tunnel and adds no dependency (stays vendor-neutral: a custom relay is just a
+  `--tunnel-cmd`). It parses the tunnel's public URL, prints the token-gated `viewUrl`, and
+  **auto-provisions a token** so a tunneled daemon is never unauthenticated. New
+  `src/tunnel.ts` (`startTunnel`/`pickPublicUrl`/`tunnelSpawnSpec`/`ensureTunnelToken`),
+  proven deterministically with a stub `--tunnel-cmd` (no ngrok/network needed in CI).
+
 ## [1.1.0]
 
 ### Added

@@ -3,6 +3,7 @@
 // (needs Google Chrome installed — exercises the native backend.)
 import { Lucarne, LucarneClient, VERSION } from "../dist/index.js";
 import { nativeBackend } from "../dist/backends/native.js";
+import { pickPublicUrl, tunnelSpawnSpec, ensureTunnelToken, startTunnel } from "../dist/tunnel.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -908,6 +909,27 @@ try {
   check("pack: ships the Python client referenced in the README", packedFiles.includes("clients/python/lucarne.py"));
   check("pack: ships the runnable examples", packedFiles.some((f) => f.startsWith("examples/")));
   check("pack: ships the CLI + MCP binaries", packedFiles.includes("dist/cli.js") && packedFiles.includes("dist/mcp.js"));
+}
+
+// ── Tunnel seam: expose via a tunnel you already have (no network needed here) ──
+// Proven deterministically with a stub --tunnel-cmd (a node one-liner that prints a
+// fake public URL), so ngrok/cloudflared aren't required in CI.
+{
+  check("tunnel: pickPublicUrl extracts the public https URL, skips the loopback inspector",
+    pickPublicUrl("addr=http://127.0.0.1:4040 url=https://ab12.ngrok-free.app") === "https://ab12.ngrok-free.app");
+  const ng = tunnelSpawnSpec({ preset: "ngrok", host: "127.0.0.1", port: 7800 });
+  check("tunnel: ngrok preset builds the right command", ng.file === "ngrok" && ng.args.join(" ") === "http 127.0.0.1:7800 --log stdout");
+  const cf = tunnelSpawnSpec({ preset: "cloudflared", host: "127.0.0.1", port: 7800 });
+  check("tunnel: cloudflared preset builds the right command", cf.file === "cloudflared" && cf.args.join(" ") === "tunnel --url http://127.0.0.1:7800");
+  const tk = ensureTunnelToken(undefined);
+  check("tunnel: forces a token when none is set (never expose unauthenticated)", tk.generated && /^[0-9a-f]{48}$/.test(tk.token));
+  check("tunnel: keeps an existing token", ensureTunnelToken("abc").generated === false);
+  const h = await startTunnel({ cmd: `node -e "console.log('https://stub.test/xyz'); setInterval(()=>{},1e9)"`, host: "127.0.0.1", port: 7800, timeoutMs: 8000 });
+  check("tunnel: startTunnel spawns a --tunnel-cmd and resolves its public URL", h.url === "https://stub.test/xyz");
+  h.stop();
+  let terr = "";
+  try { await startTunnel({ cmd: "definitely-not-a-real-binary-xyz", host: "127.0.0.1", port: 7800, timeoutMs: 5000 }); } catch (e) { terr = e.message; }
+  check("tunnel: a bad tunnel command fails with a clear error", /tunnel (binary not found|exited|failed)/.test(terr));
 }
 
 // ── Recording: REAL browser frames → ffmpeg → a finalized, playable mp4 ───────
