@@ -704,46 +704,44 @@ try {
   check("python-sdk: client module loads with all methods", false, String(e.message));
 }
 
-// ── Recording: a record:true session produces a playable mp4 segment ─────────
-const recEngine = new Lucarne({ port: 7833, token: TOKEN, record: true, fps: 6, segmentSeconds: 2 });
+// ── Recording: REAL browser frames → ffmpeg → a finalized, playable mp4 ───────
+// Grab a real screencast JPEG from a live session, feed it to the recorder, then
+// close it gracefully (ffmpeg finalizes the segment on stdin-EOF) and ffprobe the
+// result. This proves the record pipeline (frames → encoder → playable mp4)
+// deterministically — no dependence on the segment muxer's cut timing.
+const recEngine = new Lucarne({ port: 7833, token: TOKEN, record: false });
 await recEngine.listen();
 try {
   const rs = await recEngine.create({ backend: "native", profile: "rec" });
   const rc = await attachPage(rs.cdpUrl);
-  // CDP screencast only emits frames on VISUAL CHANGE, so a static page goes idle
-  // and records nothing. Drive a continuous animation (the realistic case) so the
-  // recorder gets a steady frame stream.
-  await rc.call("Runtime.evaluate", { expression: "document.title='rec';document.body.innerHTML='<div id=a style=\"font:80px monospace;padding:40px\">0</div>';setInterval(()=>{const e=document.getElementById('a');e.textContent=String(performance.now()|0);e.style.background='rgb('+((performance.now()/7|0)%255)+',40,80)';},80);" });
-  // Find the first FINALIZED segment that actually has video — on a slow display
-  // the first 2s segment can close before the first frame arrives (a 48B empty
-  // mp4), so skip empties and ffprobe for a real duration.
-  const probe = (buf) => {
-    if (buf.length < 1200) return 0; // empty/warm-up or still-writing
-    const tmpMp4 = path.join(os.tmpdir(), `lucarne-rec-${ID}.mp4`);
-    fs.writeFileSync(tmpMp4, buf);
-    let dur = 0;
-    try { dur = parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", tmpMp4], { encoding: "utf8" }).trim()); } catch { /* ffprobe missing */ }
-    fs.rmSync(tmpMp4, { force: true });
-    return dur || 0;
-  };
-  let good = null;
-  for (let i = 0; i < 64 && !good; i++) {
-    await sleep(250);
-    for (const seg of recEngine.recordings(rs.id)) {
-      const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7833/sessions/rec/recordings/${seg}?token=${TOKEN}`)).arrayBuffer());
-      const dur = probe(buf);
-      if (dur > 0) { good = { seg, bytes: buf.length, dur }; break; }
+  await rc.call("Runtime.evaluate", { expression: "document.body.innerHTML='<h1 style=\"font:80px monospace\">REC</h1>'" });
+  const frame = await new Promise((res) => {
+    const w = new WS(`ws://127.0.0.1:7833/sessions/rec/view/ws?token=${TOKEN}`);
+    const t = setTimeout(() => { try { w.close(); } catch {} res(null); }, 5000);
+    w.on("message", (d) => { if (Buffer.isBuffer(d) && d.length > 1000) { clearTimeout(t); w.close(); res(d); } });
+    w.on("error", () => res(null));
+  });
+  rc.close();
+
+  const recDir = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-rectest-"));
+  let dur = 0, segName = null, segBytes = 0;
+  if (frame) {
+    const rec = startRecorder({ recDir, fps: 6, retentionMin: 60, segmentSeconds: 2, frames: { get: () => frame, subscribe: () => () => {} } });
+    if (rec) {
+      await sleep(2500);            // ffmpeg encodes ~15 frames of the real JPEG
+      rec.close();                  // graceful: ffmpeg flushes + finalizes the segment
+      await sleep(3500);            // let it write the moov + exit
+    }
+    for (const f of fs.readdirSync(recDir)) {
+      if (!f.startsWith("seg_") || !f.endsWith(".mp4")) continue;
+      const fp = path.join(recDir, f);
+      if (fs.statSync(fp).size < 1000) continue;
+      try { const d = parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", fp], { encoding: "utf8" }).trim()); if (d > 0) { dur = d; segName = f; segBytes = fs.statSync(fp).size; break; } } catch { /* */ }
     }
   }
-  rc.close();
-  let detail = good ? `${good.seg} ${good.bytes}B ${good.dur}s` : "no playable segment";
-  if (!good) {
-    const sizes = [];
-    for (const seg of recEngine.recordings(rs.id).slice(0, 5)) { try { sizes.push((await (await fetch(`http://127.0.0.1:7833/sessions/rec/recordings/${seg}?token=${TOKEN}`)).arrayBuffer()).byteLength); } catch { /* */ } }
-    detail += ` | segs=[${sizes}]`;
-    try { detail += " | ffmpeg: " + fs.readFileSync(path.join(os.tmpdir(), "lucarne", "rec-rec", "ffmpeg.log"), "utf8").trim().split("\n").slice(-2).join(" / "); } catch { detail += " (no ffmpeg.log)"; }
-  }
-  check("recording: a record:true session produces a playable mp4 segment", !!good, detail);
+  fs.rmSync(recDir, { recursive: true, force: true });
+  await recEngine.destroy(rs.id);
+  check("recording: real frames produce a finalized, playable mp4", dur > 0 && !!segName, segName ? `${segName} ${segBytes}B ${dur}s` : (frame ? "no playable segment" : "no frame"));
 } finally {
   await recEngine.close().catch(() => {});
 }

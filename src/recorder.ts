@@ -34,20 +34,12 @@ export function startRecorder(opts: {
 
   const ff: ChildProcess = spawn("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
-    // wallclock input PTS so the segment muxer cuts on real time — piped JPEGs
-    // carry no timestamps, and some ffmpeg builds then never advance PTS, leaving
-    // one un-cut, un-finalized segment (no readable duration).
-    "-use_wallclock_as_timestamps", "1",
     "-f", "image2pipe", "-framerate", String(opts.fps), "-i", "-",
     // force EVEN dimensions: the screencast's content viewport can be odd-height
     // (e.g. 1280x633), which yuv420p/libx264 reject ("incorrect width or height")
     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
     ...enc, "-pix_fmt", "yuv420p",
     "-f", "segment", "-segment_time", String(opts.segmentSeconds ?? 60), "-reset_timestamps", "1",
-    // fragmented mp4 per segment: each is a VALID, playable file *while being
-    // written* (incremental moov), so a segment doesn't need to be cut/finalized
-    // to be played or probed — robust across ffmpeg builds.
-    "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
     `${opts.recDir}/seg_%05d.mp4`,
   ], { stdio: ["pipe", "ignore", "pipe"] });
   ff.on("error", () => { /* surfaced via the version check above */ });
@@ -77,8 +69,13 @@ export function startRecorder(opts: {
     close(): void {
       clearInterval(tick);
       clearInterval(prune);
+      // End stdin so ffmpeg flushes + FINALIZES the current segment (writes its
+      // moov) and exits cleanly — a hard SIGKILL would truncate it (no moov →
+      // unplayable). SIGKILL only as a backstop if it doesn't exit.
       try { ff.stdin?.end(); } catch { /* ignore */ }
-      try { ff.kill("SIGKILL"); } catch { /* ignore */ }
+      const backstop = setTimeout(() => { try { ff.kill("SIGKILL"); } catch { /* ignore */ } }, 3000);
+      backstop.unref?.();
+      ff.once("exit", () => clearTimeout(backstop));
     },
   };
 }
