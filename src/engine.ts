@@ -9,7 +9,7 @@ import { attachBrowser } from "./cdp.js";
 import { blurCredential, deleteCredential, getCredential, listCredentials, putCredential, totpCode, type Credential } from "./credentials.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
-import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
+import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type LogEntry, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
@@ -108,7 +108,11 @@ export class Lucarne {
     // allows); the launch flag was set by the backend.
     if (opts.extensions?.length) {
       const bconn = await attachBrowser(cdpUrl);
-      for (const ext of opts.extensions) await bconn.call("Extensions.loadUnpacked", { path: ext }).catch(() => {});
+      // a bare name resolves to a managed extension; an absolute path loads as-is
+      for (const ext of opts.extensions) {
+        const dir = path.isAbsolute(ext) ? ext : path.join(managedExtensionsDir(), ext);
+        await bconn.call("Extensions.loadUnpacked", { path: dir }).catch(() => {});
+      }
       bconn.close();
     }
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
@@ -340,6 +344,31 @@ export class Lucarne {
     return { filled };
   }
 
+  /** Names of uploaded/managed extensions. */
+  listManagedExtensions(): string[] {
+    try { return fs.readdirSync(managedExtensionsDir(), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort(); }
+    catch { return []; }
+  }
+  deleteManagedExtension(name: string): boolean {
+    const dir = path.join(managedExtensionsDir(), path.basename(name));
+    if (!fs.existsSync(dir)) return false;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return true;
+  }
+
+  /** A self-contained HTML player that streams the session's recording segments. */
+  replayHtml(id: string): string {
+    const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
+    return `<!doctype html><meta charset=utf-8><title>replay ${id}</title>
+<style>html,body{margin:0;background:#111}video{width:100vw;height:100vh;object-fit:contain}</style>
+<video id=v controls autoplay muted></video><script>
+const base='/sessions/${id}/recordings';const qs=${JSON.stringify(qs)};
+fetch(base+qs).then(r=>r.json()).then(segs=>{let i=0;const v=document.getElementById('v');
+const play=()=>{if(!segs.length)return;v.src=base+'/'+segs[i%segs.length]+qs;v.play().catch(()=>{})};
+v.addEventListener('ended',()=>{i++;play()});play();});
+</script>`;
+  }
+
   /** The active page's rendered HTML (`document.documentElement.outerHTML`). */
   async content(id: string): Promise<string> {
     const s = this.sessions.get(id);
@@ -481,6 +510,15 @@ export class Lucarne {
         }
         const gf = pathname.match(/^\/files\/?(.*)$/);
         if (gf) { await this.serveFiles(req, res, send, globalFilesDir(), decodeURIComponent(gf[1]!)); return; }
+        const ext = pathname.match(/^\/extensions\/?([^/]*)\/?(.*)$/);
+        if (ext) {
+          const name = ext[1] ? decodeURIComponent(ext[1]) : "";
+          const file = ext[2] ? decodeURIComponent(ext[2]) : "";
+          if (req.method === "GET" && !name) return send(res, 200, this.listManagedExtensions());
+          if (req.method === "DELETE" && name && !file) return send(res, 200, { ok: this.deleteManagedExtension(name) });
+          if (name && file) { await this.serveFiles(req, res, send, path.join(managedExtensionsDir(), path.basename(name)), file); return; }
+          return send(res, 405, { error: "method not allowed" });
+        }
         const prof = pathname.match(/^\/profiles\/?(.*)$/);
         if (prof) {
           const name = prof[1];
@@ -496,6 +534,14 @@ export class Lucarne {
           if (sub === "" || sub === "/") { res.writeHead(200, { "content-type": "text/html" }); res.end(portholeHtml(this.viewport)); return; }
           // /ws is handled by the upgrade listener; any other subpath is 404
           res.writeHead(404); res.end(); return;
+        }
+        const rep = pathname.match(/^\/sessions\/([^/]+)\/replay$/);
+        if (rep) {
+          const [, id] = rep;
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          res.writeHead(200, { "content-type": "text/html" });
+          res.end(this.replayHtml(id!));
+          return;
         }
         const cont = pathname.match(/^\/sessions\/([^/]+)\/content$/);
         if (cont) {

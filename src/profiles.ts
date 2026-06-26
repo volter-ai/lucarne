@@ -29,6 +29,11 @@ export function globalFilesDir(): string {
   return path.join(lucarneHome(), "files");
 }
 
+/** Where uploaded/managed extensions live (one subdir per extension name). */
+export function managedExtensionsDir(): string {
+  return path.join(lucarneHome(), "extensions");
+}
+
 /** The lucarne home root (durable state lives here). */
 export function lucarneHome(): string {
   return process.env.LUCARNE_HOME ?? path.join(os.homedir(), ".lucarne");

@@ -170,6 +170,9 @@ GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadat
 PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
 GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
 POST   /sessions/:id/login                {credential, userSelector?, passSelector?, totpSelector?, submitSelector?}
+GET    /sessions/:id/replay               -> text/html   (recording player)
+PUT/GET/DELETE /extensions/:name/:file    -> upload/manage extensions; create({extensions:["name"]})
+GET    /openapi.json  ·  GET /docs        -> OpenAPI 3.1 spec + Swagger UI
 ```
 
 Credentials are encrypted at rest (AES-256-GCM under a machine-local key) and the secret

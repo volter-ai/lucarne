@@ -579,6 +579,33 @@ try {
   await sdkEngine.close().catch(() => {});
 }
 
+// ── P2: extension upload/manage API + replay viewer ──────────────────────────
+const EHOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-extmgr-"));
+process.env.LUCARNE_HOME = EHOME;
+const exEngine = new Lucarne({ port: 7828, token: TOKEN, record: false });
+await exEngine.listen();
+const EF = (p, opts = {}) => fetch(`http://127.0.0.1:7828${p}`, { ...opts, headers: { authorization: `Bearer ${TOKEN}`, ...(opts.headers || {}) } });
+try {
+  const manifest = JSON.stringify({ manifest_version: 3, name: "up", version: "1.0", content_scripts: [{ matches: ["http://*/*", "https://*/*"], js: ["content.js"], run_at: "document_idle" }] });
+  await EF("/extensions/up/manifest.json", { method: "PUT", body: manifest });
+  await EF("/extensions/up/content.js", { method: "PUT", body: `document.documentElement.setAttribute('data-up','ok-${ID}');` });
+  const list = await (await EF("/extensions")).json();
+  check("extensions(manage): uploaded extension is listed", list.includes("up"));
+
+  const es = await exEngine.create({ backend: "native", profile: "upx", extensions: ["up"] });
+  const ec = await attachPage(es.cdpUrl);
+  ec.send("Page.navigate", { url: "https://example.com" });
+  await sleep(2000);
+  const attr = (await ec.call("Runtime.evaluate", { expression: "document.documentElement.getAttribute('data-up')", returnByValue: true })).result.value;
+  const replay = await (await EF(`/sessions/${es.id}/replay`)).text();
+  ec.close();
+  check("extensions(manage): managed extension loads by name + content script runs", attr === `ok-${ID}`);
+  check("replay: serves an HTML player over the recording segments", replay.includes("<video") && replay.includes("/recordings"));
+} finally {
+  await exEngine.close().catch(() => {});
+  fs.rmSync(EHOME, { recursive: true, force: true });
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

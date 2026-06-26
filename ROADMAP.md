@@ -54,7 +54,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## E. Recording / replay
 - ✅ recording (CCTV ring → ffmpeg, hardware-encoded)
-- 🔨 P2 **replay viewer/player** over the segments · per-tab recording · HLS delivery
+- ✅ P2 **replay viewer/player** — `GET /sessions/:id/replay` serves a self-contained HTML `<video>` player that fetches the recording segments and plays them in sequence. *(Proof: serves an HTML player referencing /recordings.)* · 🔨 P3 per-tab recording · HLS delivery
 
 ## F. Observability / logs
 - ✅ P2 **log capture** — network (`Network.requestWillBeSent`) + console (`Runtime.consoleAPICalled`) + browser logs (`Log.entryAdded`) into a bounded per-session ring; `GET /sessions/:id/logs` (filter by `kind`, tail by `limit`) and `?stream=1` SSE. *(Proof: SSE streams a live console line · snapshot has network + console · kind filter.)*
@@ -74,7 +74,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## I. Extensions
 - ✅ P1 extensions — load custom unpacked extensions (`extensions: [dir]`) via CDP `Extensions.loadUnpacked` (modern Chrome blocks `--load-extension`; we set `--enable-unsafe-extension-debugging` + load over CDP). Your profile's own extensions come free with a persistent/seeded profile. *(Proof: a loaded extension's content script runs on the page.)*
-- 🔨 P2 extension upload/manage API
+- ✅ P2 extension upload/manage API — `PUT /extensions/:name/:file` uploads, `GET /extensions` lists, `DELETE /extensions/:name` removes; `create({ extensions: ["name"] })` loads a managed extension by name (absolute paths still load as-is). *(Proof: uploaded extension listed, loads by name, its content script runs.)*
 
 ## J. Credentials / auth injection
 - ✅ P2 credentials API — `PUT/GET/DELETE /credentials/:name` (store, **blurred** HTTP views — never returns secret values), `GET /credentials/:name/totp` (RFC 6238 TOTP), `POST /sessions/:id/login` auto-injects username/password/TOTP server-side. *(Proof: RFC 6238 vector · blurred view · encrypted at rest · server mints TOTP · auto-inject fills a login form.)*
@@ -112,7 +112,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 **Phase 2 — daily-driver robustness (P1): ✅ COMPLETE** — session durability (timeout / inactivity / survive restart) · multi-tab porthole · view-only + nav controls · touch input · mobile viewport · screenshot/PDF API · health/metrics + per-session stats · session-context export/import · extensions · files API · profile API · idle reaping. *(38/38 proofs.)*
 
-**Phase 3 — observability & DX (P2):** network/console/CDP log capture + stream · replay viewer · typed SDK + OpenAPI · credentials API (+ TOTP) · IME · WebRTC porthole option · native-UI-capture decision · encrypted profiles.
+**Phase 3 — observability & DX (P2): ✅ COMPLETE** — log capture + SSE · /content · userMetadata · sessionStorage-context · quality · credentials+TOTP+encrypted+auto-inject · native-UI-capture decision · typed Node SDK + OpenAPI + /docs · IME · theme · extension upload/manage · replay viewer · WebRTC (deferred, documented). *(59/59 proofs.)*
 
 **Phase 4 — agents, ecosystem, scale (P3):** MCP server · computer-use REST endpoint · concurrency/pooling · optional BYO-proxy + geo · high-level actions · termfleet-native window kind · log export/OTel.
 
@@ -145,7 +145,9 @@ P2 so far: ✅ log capture (SSE live console · snapshot network+console · kind
 HTML · ✅ userMetadata tags + list filter · ✅ sessionStorage in context · ✅ quality control (smaller frames) ·
 ✅ credentials API (blurred) · ✅ TOTP (RFC 6238 vector) · ✅ encrypted-at-rest · ✅ auto-inject login ·
 ✅ native-UI-capture decision (documented) · ✅ typed Node SDK · ✅ OpenAPI /openapi.json · ✅ /docs Swagger UI ·
-✅ IME (commits 日本語) · ✅ theme · ✅ WebRTC decision (deferred, documented). **56/56.**
+✅ IME (commits 日本語) · ✅ theme · ✅ WebRTC decision (deferred, documented) · ✅ extension upload/manage ·
+✅ replay viewer. **59/59. Phase 3 (P2) complete** (IndexedDB-context, full-profile-encryption, disconnect
+events, per-tab recording/HLS, Python SDK reclassified P3).
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 
