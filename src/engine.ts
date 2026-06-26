@@ -144,6 +144,27 @@ export class Lucarne {
     return fs.existsSync(fp) ? fp : null;
   }
 
+  /** PNG screenshot of the session's current page (CDP `Page.captureScreenshot`). */
+  async screenshot(id: string): Promise<Buffer> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const r = await s.media.cdp.call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+    return Buffer.from(r.data, "base64");
+  }
+
+  /** PDF render of the session's current page (CDP `Page.printToPDF`). */
+  async pdf(id: string): Promise<Buffer> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const r = await s.media.cdp.call("Page.printToPDF", { printBackground: true });
+    return Buffer.from(r.data, "base64");
+  }
+
+  /** Liveness + session count, for monitoring. */
+  health(): { ok: boolean; sessions: number; ids: string[] } {
+    return { ok: true, sessions: this.sessions.size, ids: [...this.sessions.keys()] };
+  }
+
   async destroy(id: string): Promise<boolean> {
     const s = this.sessions.get(id);
     if (!s) return false;
@@ -167,8 +188,13 @@ export class Lucarne {
     };
     this.server = http.createServer(async (req, res) => {
       try {
-        if (!this.tokenOk(req.url ?? "/", req.headers.authorization)) return send(res, 401, { error: "unauthorized" });
         const pathname = new URL(req.url ?? "/", "http://x").pathname;
+        if (pathname === "/health") {
+          const h = this.health();
+          // ids only to an authed caller; bare liveness needs no token (monitoring)
+          return send(res, 200, this.tokenOk(req.url ?? "/", req.headers.authorization) ? h : { ok: h.ok, sessions: h.sessions });
+        }
+        if (!this.tokenOk(req.url ?? "/", req.headers.authorization)) return send(res, 401, { error: "unauthorized" });
         const viewM = pathname.match(/^\/sessions\/([^/]+)\/view(?:\/(.*))?$/);
         if (viewM) {
           const [, id, sub] = viewM;
@@ -177,6 +203,16 @@ export class Lucarne {
           if (sub === "" || sub === "/") { res.writeHead(200, { "content-type": "text/html" }); res.end(portholeHtml(this.viewport)); return; }
           // /ws is handled by the upgrade listener; any other subpath is 404
           res.writeHead(404); res.end(); return;
+        }
+        const shot = pathname.match(/^\/sessions\/([^/]+)\/(screenshot|pdf)$/);
+        if (shot) {
+          const [, id, kind] = shot;
+          if (req.method !== "GET") return send(res, 405, { error: "method not allowed" });
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          const buf = kind === "pdf" ? await this.pdf(id!) : await this.screenshot(id!);
+          res.writeHead(200, { "content-type": kind === "pdf" ? "application/pdf" : "image/png" });
+          res.end(buf);
+          return;
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {

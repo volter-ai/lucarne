@@ -58,7 +58,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## F. Observability / logs
 - 🔨 P2 **network log capture** (CDP `Network.*`) · **console log capture** · CDP event log — per session, API + SSE stream
-- 🔨 P1 **health / metrics endpoint** (liveness, per-session stats, "pressure")
+- ✅ P1 **health endpoint** — `GET /health` (liveness + session count; ids only to an authed caller). *(Proof: count == live sessions.)* · 🔨 P1 per-session stats / "pressure"
 - 🔨 P3 log export · OpenTelemetry
 
 ## G. File handling
@@ -67,7 +67,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🔨 P1 session + global files/workspace API
 
 ## H. Capture / output
-- 🔨 P1 **screenshot API** + **PDF API** (CDP `Page.captureScreenshot` / `printToPDF` — trivial)
+- ✅ P1 **screenshot API** + **PDF API** (CDP `Page.captureScreenshot` / `printToPDF`); `GET /sessions/:id/{screenshot,pdf}`. *(Proof: valid PNG at viewport width · valid PDF ≥1 page.)*
 - 🔨 P2 rendered-`/content` HTML
 - 🔨 P3 `/scrape` (elements) · markdown/readability · `/export` bundle — *optional* (raw CDP/Playwright already covers driving)
 - 🚫 `/search` · `/map` · `/crawl` · `/smart-scrape` — the *scraping platform* surface, the other lane
@@ -134,7 +134,8 @@ a proof, green, before it counts.
 typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command) · ✅ persist: cookie survives
 destroy + recreate · ✅ persist→seed: fresh profile seeded from another carries its cookie · ✅ seed:
 only on first creation · ✅ clipboard: paste lands in focused input · ✅ upload: file input reports
-name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **11/11. Phase 1 (P0) complete.**
+name + sha256 · ✅ download: porthole-triggered download captured + bytes match. **Phase 1 (P0) complete.**
+P1 so far: ✅ screenshot (valid PNG) · ✅ pdf (valid PDF ≥1 page) · ✅ health (count == live). **14/14.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

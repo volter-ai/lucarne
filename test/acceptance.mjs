@@ -162,8 +162,26 @@ try {
     const fp = dEngine.downloadPath(dl.id, "report.txt");
     if (fp) dlGot = fs.readFileSync(fp, "utf8");
   }
-  dw.close(); setup.close();
+  dw.close();
   check("download: porthole-triggered download captured + bytes match", dlGot === dlContent && dEngine.downloads(dl.id).includes("report.txt"));
+
+  // ── P1: capture (screenshot + PDF) ────────────────────────────────────────
+  const png = await dEngine.screenshot(dl.id);
+  const isPng = png.length > 1000 && png[0] === 0x89 && png[1] === 0x50 && png[2] === 0x4e && png[3] === 0x47;
+  // PNG IHDR width/height are big-endian u32 at byte offsets 16 and 20
+  // height is the content viewport (headful Chrome's tab/toolbar eats some of the window)
+  const pngW = png.readUInt32BE(16), pngH = png.readUInt32BE(20);
+  check("screenshot: valid PNG at viewport width", isPng && pngW === 1280 && pngH >= 560 && pngH <= 720, `${pngW}x${pngH}, ${png.length}B`);
+  const pdf = await dEngine.pdf(dl.id);
+  const pdfMagic = pdf.subarray(0, 5).toString("latin1");
+  const pages = (pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length;
+  check("pdf: valid PDF with >=1 page", pdfMagic === "%PDF-" && pages >= 1, `${pdfMagic} pages=${pages}`);
+
+  // ── P1: health endpoint ───────────────────────────────────────────────────
+  const h = dEngine.health();
+  check("health: session count == live sessions", h.ok && h.sessions === dEngine.list().length && h.sessions === 1);
+
+  setup.close();
 } finally {
   await dEngine.close().catch(() => {});
 }

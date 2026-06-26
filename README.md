@@ -140,8 +140,11 @@ POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject 
 GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)
 GET    /sessions/:id/downloads/:file      -> application/octet-stream
 DELETE /sessions/:id/downloads/:file      -> { ok }
+GET    /sessions/:id/screenshot           -> image/png   (current page)
+GET    /sessions/:id/pdf                   -> application/pdf
 GET    /sessions/:id/recordings           -> string[]   (segment filenames, oldest first)
 GET    /sessions/:id/recordings/:file     -> video/mp4
+GET    /health                            -> { ok, sessions }   (no token needed; ids only when authed)
 ```
 
 `Session = { id, backend, cdpUrl, viewUrl, createdAt }`. Recording is on by default
