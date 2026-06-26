@@ -59,6 +59,10 @@ export class Lucarne {
   private server: http.Server | undefined;
   private reaper: ReturnType<typeof setInterval> | undefined;
   private readonly registryFile: string;
+  private readonly maxConcurrent: number;
+  private readonly cors: boolean;
+  private slotsUsed = 0;
+  private readonly slotWaiters: (() => void)[] = [];
 
   constructor(opts: EngineOptions = {}) {
     this.host = opts.host ?? "127.0.0.1";
@@ -72,6 +76,8 @@ export class Lucarne {
     this.retentionMin = opts.retentionMin ?? 60;
     this.nextCdp = opts.cdpPortBase ?? 9300;
     this.registryFile = opts.registryFile ?? registryFilePath();
+    this.maxConcurrent = opts.maxConcurrent ?? Infinity;
+    this.cors = opts.cors ?? false;
     // The lifecycle reaper runs whether or not the HTTP API is listening (embedded
     // use too); unref'd so it never keeps the process alive on its own.
     this.reaper = setInterval(() => this.reap(), opts.reapIntervalMs ?? 500);
@@ -96,14 +102,21 @@ export class Lucarne {
     fs.mkdirSync(dirs.filesDir, { recursive: true });
     const cdp = this.nextCdp++;
     const cdpUrl = `http://${this.host}:${cdp}`;
-    const handle = await backend.start(id, { cdp }, {
-      host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
-      profileDir: dirs.profileDir, recDir: dirs.recDir, persist, extensions: opts.extensions,
-    });
-    const media = await startSessionMedia({
-      cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
-      record: this.record, fps: this.fps, retentionMin: this.retentionMin, mobile: opts.mobile, quality: opts.quality,
-    });
+    await this.acquireSlot();
+    let handle, media;
+    try {
+      handle = await backend.start(id, { cdp }, {
+        host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
+        profileDir: dirs.profileDir, recDir: dirs.recDir, persist, extensions: opts.extensions, proxy: opts.proxy,
+      });
+      media = await startSessionMedia({
+        cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
+        record: this.record, fps: this.fps, retentionMin: this.retentionMin, mobile: opts.mobile, quality: opts.quality, geo: opts.geo,
+      });
+    } catch (e) {
+      this.releaseSlot();
+      throw e;
+    }
     // Load any custom unpacked extensions via CDP (the only path modern Chrome
     // allows); the launch flag was set by the backend.
     if (opts.extensions?.length) {
@@ -369,6 +382,30 @@ v.addEventListener('ended',()=>{i++;play()});play();});
 </script>`;
   }
 
+  /**
+   * Computer-use verb for non-CDP agents: a single high-level action over the
+   * porthole input plane (click/move/type/key/scroll) or a screenshot. Same
+   * transport the human porthole uses, so an agent and a watcher stay in sync.
+   */
+  async act(id: string, a: { action: string; x?: number; y?: number; button?: number; text?: string; key?: string; code?: string; mod?: number; dx?: number; dy?: number; clickCount?: number }): Promise<{ ok: true; screenshot?: string }> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const m = s.media;
+    switch (a.action) {
+      case "click":
+        m.onInput({ t: "down", x: a.x, y: a.y, button: a.button ?? 0, buttons: 1, clickCount: a.clickCount ?? 1 });
+        m.onInput({ t: "up", x: a.x, y: a.y, button: a.button ?? 0, buttons: 0, clickCount: a.clickCount ?? 1 });
+        break;
+      case "move": m.onInput({ t: "move", x: a.x, y: a.y, buttons: 0 }); break;
+      case "type": m.onInput({ t: "paste", text: a.text ?? "" }); break;
+      case "key": m.onInput({ t: "keydown", key: a.key, code: a.code, mod: a.mod }); m.onInput({ t: "keyup", key: a.key, code: a.code, mod: a.mod }); break;
+      case "scroll": m.onInput({ t: "wheel", x: a.x ?? 0, y: a.y ?? 0, dx: a.dx ?? 0, dy: a.dy ?? 0 }); break;
+      case "screenshot": return { ok: true, screenshot: (await this.screenshot(id)).toString("base64") };
+      default: throw new Error(`unknown action: ${a.action}`);
+    }
+    return { ok: true };
+  }
+
   /** The active page's rendered HTML (`document.documentElement.outerHTML`). */
   async content(id: string): Promise<string> {
     const s = this.sessions.get(id);
@@ -407,6 +444,17 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     };
   }
 
+  // ── Concurrency: a slot per live session; creates past the cap queue ──
+  private acquireSlot(): Promise<void> {
+    if (this.slotsUsed < this.maxConcurrent) { this.slotsUsed++; return Promise.resolve(); }
+    return new Promise((resolve) => this.slotWaiters.push(() => { this.slotsUsed++; resolve(); }));
+  }
+  private releaseSlot(): void {
+    this.slotsUsed = Math.max(0, this.slotsUsed - 1);
+    const next = this.slotWaiters.shift();
+    if (next) next();
+  }
+
   /** Destroy any session that hit its max-duration or inactivity limit. */
   private reap(): void {
     const now = Date.now();
@@ -430,6 +478,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
     try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
     this.sessions.delete(id);
+    this.releaseSlot();
     if (forget) this.forgetSpec(id);
     return true;
   }
@@ -482,6 +531,12 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     };
     this.server = http.createServer(async (req, res) => {
       try {
+        if (this.cors) {
+          res.setHeader("access-control-allow-origin", "*");
+          res.setHeader("access-control-allow-headers", "authorization,content-type");
+          res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
+          if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+        }
         const pathname = new URL(req.url ?? "/", "http://x").pathname;
         if (pathname === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(openApiSpec)); return; }
         if (pathname === "/docs") { res.writeHead(200, { "content-type": "text/html" }); res.end(docsHtml()); return; }
@@ -542,6 +597,14 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           res.writeHead(200, { "content-type": "text/html" });
           res.end(this.replayHtml(id!));
           return;
+        }
+        const act = pathname.match(/^\/sessions\/([^/]+)\/act$/);
+        if (act) {
+          const [, id] = act;
+          if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          let body = ""; for await (const c of req) body += c;
+          return send(res, 200, await this.act(id!, body ? JSON.parse(body) : {}));
         }
         const cont = pathname.match(/^\/sessions\/([^/]+)\/content$/);
         if (cont) {

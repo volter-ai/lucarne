@@ -46,6 +46,9 @@ export class LucarneClient {
     return this.req("GET", `/sessions/${id}/logs${q.toString() ? "?" + q : ""}`) as Promise<unknown[]>;
   }
   content(id: string): Promise<string> { return this.req("GET", `/sessions/${id}/content`) as Promise<string>; }
+  act(id: string, action: { action: string; x?: number; y?: number; text?: string; key?: string; dx?: number; dy?: number }): Promise<{ ok: true; screenshot?: string }> {
+    return this.req("POST", `/sessions/${id}/act`, action) as Promise<{ ok: true; screenshot?: string }>;
+  }
   login(id: string, opts: { credential: string; userSelector?: string; passSelector?: string; totpSelector?: string; submitSelector?: string }): Promise<{ filled: string[] }> {
     return this.req("POST", `/sessions/${id}/login`, opts) as Promise<{ filled: string[] }>;
   }

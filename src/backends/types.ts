@@ -18,6 +18,8 @@ export interface BackendContext {
   persist: boolean;
   /** Unpacked extension dirs to load (native backend honours these). */
   extensions?: string[];
+  /** BYO passthrough proxy (native backend `--proxy-server`). */
+  proxy?: string;
 }
 
 export interface BackendHandle {

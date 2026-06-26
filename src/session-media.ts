@@ -57,6 +57,7 @@ export async function startSessionMedia(opts: {
   retentionMin: number;
   mobile?: boolean;
   quality?: number;
+  geo?: { latitude: number; longitude: number; accuracy?: number };
 }): Promise<SessionMedia> {
   // The active-tab page conn is MUTABLE: switchTab re-taps a different target so
   // the porthole/screencast + input follow it. `page` is the live reference all
@@ -69,6 +70,9 @@ export async function startSessionMedia(opts: {
   // session, so a download from any other page/driver would escape it.
   const browserConn = await attachBrowser(opts.cdpUrl);
   browserConn.call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: opts.downloadDir, eventsEnabled: true }).catch(() => {});
+  // Geolocation override needs the permission granted browser-wide + the override
+  // re-applied per page (it's page-session-scoped, like mobile emulation).
+  if (opts.geo) browserConn.call("Browser.grantPermissions", { permissions: ["geolocation"] }).catch(() => {});
   let latest: Buffer | null = null;
   let frameCount = 0, streamedBytes = 0;
   const subs = new Set<(f: Buffer) => void>();
@@ -101,6 +105,7 @@ export async function startSessionMedia(opts: {
       c.send("Emulation.setUserAgentOverride", { userAgent: MOBILE_UA });
       c.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     }
+    if (opts.geo) c.send("Emulation.setGeolocationOverride", { latitude: opts.geo.latitude, longitude: opts.geo.longitude, accuracy: opts.geo.accuracy ?? 50 });
     c.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
       latest = Buffer.from(p.data, "base64");
       frameCount++; streamedBytes += latest.length;

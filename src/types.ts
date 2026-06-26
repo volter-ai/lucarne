@@ -41,6 +41,10 @@ export interface CreateSessionOptions {
   mobile?: boolean;
   /** Porthole/recording JPEG quality 1–100 (default 60). Lower = smaller frames. */
   quality?: number;
+  /** BYO passthrough proxy for this session, e.g. "http://127.0.0.1:8888" (native backend). */
+  proxy?: string;
+  /** Geolocation override (e.g. when you travel); grants the geolocation permission. */
+  geo?: { latitude: number; longitude: number; accuracy?: number };
   /** Arbitrary user tags stored on the session (filter `list`/`sessions` by them). */
   metadata?: Record<string, string>;
   /** Auto-release this session after this many ms of wall-clock, regardless of use. */
@@ -92,6 +96,10 @@ export interface EngineOptions {
   cdpPortBase?: number;
   /** How often the lifecycle reaper checks timeout/inactivity. Default 500ms. */
   reapIntervalMs?: number;
+  /** Max concurrent live sessions; further creates queue until a slot frees. Default unlimited. */
+  maxConcurrent?: number;
+  /** Send permissive CORS headers (for browser clients on another origin). Default false. */
+  cors?: boolean;
   /**
    * Where durable session specs are persisted so they survive a daemon restart.
    * Default `LUCARNE_HOME/sessions.json`. `listen()` restores them on startup.

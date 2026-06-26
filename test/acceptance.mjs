@@ -7,6 +7,7 @@ import { totpCode } from "../dist/credentials.js";
 import { chromium } from "playwright";
 import WS from "ws";
 import http from "node:http";
+import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -604,6 +605,98 @@ try {
 } finally {
   await exEngine.close().catch(() => {});
   fs.rmSync(EHOME, { recursive: true, force: true });
+}
+
+// ── P3: computer-use /act + geolocation override ─────────────────────────────
+const agEngine = new Lucarne({ port: 7829, token: TOKEN, record: false });
+await agEngine.listen();
+const AF = (p, opts = {}) => fetch(`http://127.0.0.1:7829${p}`, { ...opts, headers: { authorization: `Bearer ${TOKEN}`, ...(opts.headers || {}) } });
+try {
+  const ag = await agEngine.create({ backend: "native", profile: "act", geo: { latitude: 48.8566, longitude: 2.3522 } });
+  const acc = await attachPage(ag.cdpUrl);
+  acc.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1700);
+  const geo = (await acc.call("Runtime.evaluate", { expression: `new Promise(res=>navigator.geolocation.getCurrentPosition(p=>res(p.coords.latitude+','+p.coords.longitude),()=>res('ERR')))`, awaitPromise: true, returnByValue: true })).result.value;
+  check("geo: override reports the set coordinates", geo === "48.8566,2.3522");
+
+  await acc.call("Runtime.evaluate", { expression: `document.body.innerHTML='<input id=i style="position:fixed;top:8px;left:8px;width:300px;height:40px"><button id=b style="position:fixed;top:60px;left:8px;width:120px;height:40px" onclick="window.__clk=1">go</button>';document.getElementById('i').focus();` });
+  await AF("/sessions/act/act", { method: "POST", body: JSON.stringify({ action: "type", text: "hello-act" }) });
+  await sleep(150);
+  const iv = (await acc.call("Runtime.evaluate", { expression: "document.getElementById('i').value", returnByValue: true })).result.value;
+  check("act: type lands in the focused input", iv === "hello-act");
+  await AF("/sessions/act/act", { method: "POST", body: JSON.stringify({ action: "click", x: 68, y: 80 }) });
+  await sleep(150);
+  const clk = (await acc.call("Runtime.evaluate", { expression: "window.__clk||0", returnByValue: true })).result.value;
+  check("act: click dispatches at coordinates", clk === 1);
+  const shot = await (await AF("/sessions/act/act", { method: "POST", body: JSON.stringify({ action: "screenshot" }) })).json();
+  check("act: screenshot returns a PNG (base64)", typeof shot.screenshot === "string" && shot.screenshot.startsWith("iVBORw0KGgo"));
+  acc.close();
+} finally {
+  await agEngine.close().catch(() => {});
+}
+
+// ── P3: concurrency cap + queue ──────────────────────────────────────────────
+const ccEngine = new Lucarne({ port: 7830, token: TOKEN, record: false, maxConcurrent: 1 });
+await ccEngine.listen();
+try {
+  const a = await ccEngine.create({ backend: "native", profile: "ccA" });
+  let bDone = false;
+  const bP = ccEngine.create({ backend: "native", profile: "ccB" }).then((r) => { bDone = true; return r; });
+  await sleep(1500);
+  check("concurrency: create past the cap queues", bDone === false && ccEngine.list().length === 1);
+  await ccEngine.destroy(a.id);
+  const b = await bP;
+  check("concurrency: queued create runs once a slot frees", bDone === true && ccEngine.list().some((s) => s.id === b.id));
+} finally {
+  await ccEngine.close().catch(() => {});
+}
+
+// ── P3: CORS config ──────────────────────────────────────────────────────────
+const corsEngine = new Lucarne({ port: 7831, token: TOKEN, record: false, cors: true });
+await corsEngine.listen();
+try {
+  const res = await fetch("http://127.0.0.1:7831/health", { method: "OPTIONS" });
+  check("cors: preflight returns permissive CORS headers", res.status === 204 && res.headers.get("access-control-allow-origin") === "*" && (res.headers.get("access-control-allow-methods") || "").includes("POST"));
+} finally {
+  await corsEngine.close().catch(() => {});
+}
+
+// ── P3: MCP server (stdio JSON-RPC drives real sessions) ─────────────────────
+const mcpEngine = new Lucarne({ port: 7832, token: TOKEN, record: false });
+await mcpEngine.listen();
+let mcp;
+try {
+  mcp = spawn("node", ["dist/mcp.js"], { env: { ...process.env, LUCARNE_URL: "http://127.0.0.1:7832", LUCARNE_TOKEN: TOKEN } });
+  const responses = [];
+  let buf = "";
+  mcp.stdout.on("data", (d) => { buf += d.toString(); let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (line.trim()) try { responses.push(JSON.parse(line)); } catch { /* partial */ } } });
+  const rpc = (id, method, params) => mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  const waitFor = async (id, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { const r = responses.find((x) => x.id === id); if (r) return r; await sleep(100); } return null; };
+
+  rpc(1, "initialize", {});
+  const init = await waitFor(1);
+  check("mcp: initialize returns server info", init?.result?.serverInfo?.name === "lucarne");
+  rpc(2, "tools/list", {});
+  const tl = await waitFor(2);
+  check("mcp: tools/list advertises lucarne tools", (tl?.result?.tools || []).some((t) => t.name === "lucarne_create"));
+  rpc(3, "tools/call", { name: "lucarne_create", arguments: { backend: "native", profile: "mcp" } });
+  const created = await waitFor(3, 30000);
+  const sid = created && JSON.parse(created.result.content[0].text).id;
+  check("mcp: tools/call creates a real session", sid === "mcp" && mcpEngine.list().some((s) => s.id === "mcp"));
+  rpc(4, "tools/call", { name: "lucarne_destroy", arguments: { id: "mcp" } });
+  await waitFor(4);
+  check("mcp: tools/call destroys the session", !mcpEngine.list().some((s) => s.id === "mcp"));
+} finally {
+  if (mcp) mcp.kill();
+  await mcpEngine.close().catch(() => {});
+}
+
+// ── P3: Python SDK (structural — stdlib client loads with all methods) ───────
+try {
+  const out = execFileSync("python3", ["-c", "import sys; sys.path.insert(0,'clients/python'); import lucarne; c=lucarne.LucarneClient(); print(all(hasattr(c,m) for m in ('health','create','list','get','destroy','act','content')))"], { encoding: "utf8" });
+  check("python-sdk: client module loads with all methods", out.trim() === "True");
+} catch (e) {
+  check("python-sdk: client module loads with all methods", false, String(e.message));
 }
 
 const failed = results.filter((r) => !r.pass).length;

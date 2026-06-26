@@ -63,6 +63,10 @@ const browser = await chromium.connectOverCDP(session.cdpUrl);   // drive with P
 ```
 
 The full API is described by an **OpenAPI 3.1** spec at `/openapi.json`, with a Swagger UI at `/docs`.
+There's also a stdlib-only **Python client** (`clients/python/lucarne.py`) and an **MCP server**
+(`lucarne-mcp`, stdio) that exposes lucarne as agent tools — point any MCP client at it with
+`LUCARNE_URL` / `LUCARNE_TOKEN`. Per-session knobs include `mobile`, `quality`, `proxy`, `geo`,
+`metadata`, `timeoutMs`/`inactivityMs`, and engine-level `maxConcurrent` + `cors`.
 
 Or embed the engine directly, no daemon:
 
@@ -170,6 +174,7 @@ GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadat
 PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
 GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
 POST   /sessions/:id/login                {credential, userSelector?, passSelector?, totpSelector?, submitSelector?}
+POST   /sessions/:id/act                  {action:"click|move|type|key|scroll|screenshot", ...}  (computer-use)
 GET    /sessions/:id/replay               -> text/html   (recording player)
 PUT/GET/DELETE /extensions/:name/:file    -> upload/manage extensions; create({extensions:["name"]})
 GET    /openapi.json  ·  GET /docs        -> OpenAPI 3.1 spec + Swagger UI

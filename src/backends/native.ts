@@ -44,6 +44,7 @@ export const nativeBackend: Backend = {
       ...(ctx.extensions?.length
         ? ["--enable-unsafe-extension-debugging", "--disable-features=DisableLoadExtensionCommandLineSwitch"]
         : []),
+      ...(ctx.proxy ? [`--proxy-server=${ctx.proxy}`] : []),
       "about:blank",
     ], { stdio: "ignore" });
     chrome.on("error", () => { /* surfaced via waitForCdp timeout */ });
