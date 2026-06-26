@@ -34,6 +34,10 @@ export function startRecorder(opts: {
 
   const ff: ChildProcess = spawn("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
+    // wallclock input PTS so the segment muxer cuts on real time — piped JPEGs
+    // carry no timestamps, and some ffmpeg builds then never advance PTS, leaving
+    // one un-cut, un-finalized segment (no readable duration).
+    "-use_wallclock_as_timestamps", "1",
     "-f", "image2pipe", "-framerate", String(opts.fps), "-i", "-",
     // force EVEN dimensions: the screencast's content viewport can be odd-height
     // (e.g. 1280x633), which yuv420p/libx264 reject ("incorrect width or height")
