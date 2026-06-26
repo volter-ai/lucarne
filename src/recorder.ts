@@ -44,6 +44,10 @@ export function startRecorder(opts: {
     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
     ...enc, "-pix_fmt", "yuv420p",
     "-f", "segment", "-segment_time", String(opts.segmentSeconds ?? 60), "-reset_timestamps", "1",
+    // fragmented mp4 per segment: each is a VALID, playable file *while being
+    // written* (incremental moov), so a segment doesn't need to be cut/finalized
+    // to be played or probed — robust across ffmpeg builds.
+    "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
     `${opts.recDir}/seg_%05d.mp4`,
   ], { stdio: ["pipe", "ignore", "pipe"] });
   ff.on("error", () => { /* surfaced via the version check above */ });
