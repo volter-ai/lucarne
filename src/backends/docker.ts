@@ -14,6 +14,10 @@ export const dockerBackend: Backend = {
   kind: "docker",
   async start(id, ports, ctx: BackendContext): Promise<BackendHandle> {
     const { profileDir, recDir, persist } = ctx;
+    // Be honest, not silent: these only take effect on `native` today. Reject
+    // rather than ignore them, so a caller never thinks they applied.
+    if (ctx.extensions?.length) throw new Error("lucarne: the docker backend does not support custom `extensions` yet — use backend: 'native'");
+    if (ctx.proxy) throw new Error("lucarne: the docker backend does not support `proxy` yet — use backend: 'native'");
     const name = "lucarne-" + id;
     if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // anonymous = fresh
     await exec("mkdir", ["-p", profileDir, recDir]);

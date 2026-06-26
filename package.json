@@ -1,6 +1,6 @@
 {
   "name": "lucarne",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
   "type": "module",
   "license": "MIT",
@@ -42,10 +42,12 @@
     }
   },
   "files": [
+    "clients",
     "dist",
     "docker",
-    "README.md",
-    "LICENSE"
+    "examples",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -53,7 +55,8 @@
     "prepublishOnly": "npm run build",
     "build:image": "docker build -t lucarne-browser:latest docker",
     "test": "npm run build && node test/acceptance.mjs",
-    "test:acceptance": "node test/acceptance.mjs"
+    "test:acceptance": "node test/acceptance.mjs",
+    "test:docker": "node test/docker-smoke.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

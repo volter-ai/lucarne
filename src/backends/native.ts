@@ -54,9 +54,18 @@ export const nativeBackend: Backend = {
       ...(ctx.proxy ? [`--proxy-server=${ctx.proxy}`] : []),
       "about:blank",
     ], { stdio: "ignore" });
-    chrome.on("error", () => { /* surfaced via waitForCdp timeout */ });
+    // Fail fast + clearly on a bad/missing binary instead of waiting out the
+    // full CDP timeout. The catch keeps a late error (after CDP is up) from
+    // becoming an unhandled rejection.
+    const launchFailed = new Promise<never>((_, reject) => {
+      chrome.once("error", (err: NodeJS.ErrnoException) => reject(new Error(
+        err.code === "ENOENT"
+          ? `lucarne: Chrome not found at '${ctx.chromePath}' — install Google Chrome or set chromePath (env LUCARNE_CHROME)`
+          : `lucarne: failed to launch Chrome — ${err.message}`)));
+    });
+    launchFailed.catch(() => { /* handled below or moot once CDP is up */ });
 
-    await waitForCdp(ctx.host, ports.cdp);
+    await Promise.race([waitForCdp(ctx.host, ports.cdp), launchFailed]);
     return {
       async stop(): Promise<void> {
         // A durable profile must be FLUSHED to disk (cookies, localStorage). A

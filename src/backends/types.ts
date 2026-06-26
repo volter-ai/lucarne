@@ -16,11 +16,11 @@ export interface BackendContext {
   recDir: string;
   /** Preserve `profileDir` on stop (durable named profile). */
   persist: boolean;
-  /** Unpacked extension dirs to load (native backend honours these). */
+  /** Unpacked extension dirs to load. native-only — the docker backend rejects these. */
   extensions?: string[];
-  /** BYO passthrough proxy (native backend `--proxy-server`). */
+  /** BYO passthrough proxy (`--proxy-server`). native-only — the docker backend rejects this. */
   proxy?: string;
-  /** Launch headless (native backend `--headless=new`) — no window, no focus steal. */
+  /** Launch headless (native backend `--headless=new`) — no window, no focus steal. (docker is always windowless.) */
   headless?: boolean;
 }
 

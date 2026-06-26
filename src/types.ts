@@ -73,6 +73,37 @@ export interface SessionStatus extends Session {
   inactivityMs?: number;
 }
 
+/** One semantic activity event (what the human or agent did), as served over HTTP. */
+export interface ActivityEvent {
+  ts: number;
+  actor: "human" | "agent";
+  kind: string;
+  url?: string;
+  selector?: string;
+  text?: string;
+  field?: string;
+  value?: string;
+  role?: string;
+  x?: number;
+  y?: number;
+}
+
+/** Where a session is right now + how fresh the human's last action is (the "don't fight" signal). */
+export interface ActivityNow {
+  url?: string;
+  title?: string;
+  focusedField: string | null;
+  lastHumanActionMsAgo: number | null;
+}
+
+/** Exportable auth/state of a session (cookies + the current origin's storage). */
+export interface SessionContext {
+  cookies: unknown[];
+  localStorage: Record<string, string>;
+  sessionStorage: Record<string, string>;
+  origin: string;
+}
+
 export interface EngineOptions {
   /** Bind address for the daemon + per-session portholes. Default "127.0.0.1". */
   host?: string;

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import readline from "node:readline";
 import { LucarneClient } from "./client.js";
+import { VERSION } from "./version.js";
 
 /**
  * A stdio MCP server exposing lucarne as agent tools — mint/list/drive/watch a
@@ -12,7 +13,7 @@ const TOOLS = [
   { name: "lucarne_create", description: "Create a browser session (returns cdpUrl + viewUrl).", inputSchema: { type: "object", properties: { profile: { type: "string" }, backend: { type: "string", enum: ["native", "docker"] } } } },
   { name: "lucarne_list", description: "List active sessions.", inputSchema: { type: "object", properties: {} } },
   { name: "lucarne_destroy", description: "Destroy a session.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-  { name: "lucarne_act", description: "Computer-use action: click/move/type/key/scroll/screenshot.", inputSchema: { type: "object", properties: { id: { type: "string" }, action: { type: "string" }, x: { type: "number" }, y: { type: "number" }, text: { type: "string" } }, required: ["id", "action"] } },
+  { name: "lucarne_act", description: "Computer-use action: click/move/type/key/scroll/screenshot.", inputSchema: { type: "object", properties: { id: { type: "string" }, action: { type: "string", enum: ["click", "move", "type", "key", "scroll", "screenshot"] }, x: { type: "number" }, y: { type: "number" }, text: { type: "string" }, key: { type: "string" }, code: { type: "string" }, mod: { type: "number" }, dx: { type: "number" }, dy: { type: "number" } }, required: ["id", "action"] } },
   { name: "lucarne_content", description: "Get the page's rendered HTML.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
 ] as const;
 
@@ -28,7 +29,7 @@ export function startMcpServer(client: LucarneClient, io: Io = process): void {
     const id = req.id;
     try {
       if (req.method === "initialize") {
-        return send({ jsonrpc: "2.0", id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "lucarne", version: "0.10.0" } } });
+        return send({ jsonrpc: "2.0", id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "lucarne", version: VERSION } } });
       }
       if (req.method === "notifications/initialized") return; // notification, no reply
       if (req.method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });

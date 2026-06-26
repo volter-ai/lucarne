@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Lucarne } from "./engine.js";
+import { VERSION } from "./version.js";
 
 const API = process.env.LUCARNE_URL ?? "http://127.0.0.1:7800";
 const TOKEN = process.env.LUCARNE_TOKEN;
@@ -21,6 +22,7 @@ Usage:
 Env:
   LUCARNE_URL     daemon URL for client commands (default http://127.0.0.1:7800)
   LUCARNE_TOKEN   bearer token (set on both the daemon and the client when used)
+  LUCARNE_CHROME  path to the Chrome/Chromium binary (native backend)
 
 Drive any session with vanilla Playwright:
   const b = await chromium.connectOverCDP(session.cdpUrl)
@@ -35,6 +37,12 @@ async function api(method: string, path: string, body?: unknown): Promise<unknow
     headers,
     body: body ? JSON.stringify(body) : undefined,
   }).catch(() => { throw new Error(`lucarne: cannot reach daemon at ${API} — is \`lucarne serve\` running?`); });
+  if (!res.ok) {
+    // Don't print an error body and exit 0 as if it worked — surface the failure.
+    const detail = await res.text().catch(() => "");
+    const hint = res.status === 401 ? " — check LUCARNE_TOKEN" : "";
+    throw new Error(`lucarne ${method} ${path} -> ${res.status}${detail ? ` ${detail.trim()}` : ""}${hint}`);
+  }
   return res.json();
 }
 
@@ -52,9 +60,11 @@ async function main(): Promise<void> {
       backend: { type: "string", short: "b" },
       profile: { type: "string", short: "p" },
       help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
     },
   });
   const cmd = positionals[0];
+  if (values.version) { process.stdout.write(VERSION + "\n"); return; }
   if (values.help || !cmd) { process.stdout.write(HELP); return; }
 
   switch (cmd) {

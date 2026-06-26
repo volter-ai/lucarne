@@ -1,4 +1,4 @@
-import type { CreateSessionOptions, Session, SessionStatus } from "./types.js";
+import type { ActivityEvent, ActivityNow, CreateSessionOptions, Session, SessionContext, SessionStatus } from "./types.js";
 
 /**
  * Typed Node client for the lucarne HTTP API. Thin wrapper over `fetch` — the
@@ -29,6 +29,16 @@ export class LucarneClient {
     return ct.includes("application/json") ? res.json() : res.text();
   }
 
+  /** Fetch a binary endpoint (screenshot/pdf/recording/download) as bytes. */
+  private async reqBytes(method: string, path: string): Promise<Uint8Array> {
+    const res = await fetch(this.baseUrl + path, {
+      method,
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`lucarne ${method} ${path} -> ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
   health(): Promise<{ ok: boolean; sessions: number }> { return this.req("GET", "/health") as Promise<{ ok: boolean; sessions: number }>; }
   create(opts: CreateSessionOptions = {}): Promise<Session> { return this.req("POST", "/sessions", opts) as Promise<Session>; }
   list(filter?: Record<string, string>): Promise<Session[]> {
@@ -53,4 +63,17 @@ export class LucarneClient {
     return this.req("POST", `/sessions/${id}/login`, opts) as Promise<{ filled: string[] }>;
   }
   profiles(): Promise<{ name: string; active: boolean }[]> { return this.req("GET", "/profiles") as Promise<{ name: string; active: boolean }[]>; }
+  touch(id: string): Promise<{ ok: boolean }> { return this.req("POST", `/sessions/${id}/touch`) as Promise<{ ok: boolean }>; }
+  activity(id: string, opts: { limit?: number } = {}): Promise<{ now: ActivityNow | undefined; recent: ActivityEvent[] }> {
+    const q = opts.limit ? `?limit=${opts.limit}` : "";
+    return this.req("GET", `/sessions/${id}/activity${q}`) as Promise<{ now: ActivityNow | undefined; recent: ActivityEvent[] }>;
+  }
+  exportContext(id: string): Promise<SessionContext> { return this.req("GET", `/sessions/${id}/context`) as Promise<SessionContext>; }
+  importContext(id: string, ctx: Partial<SessionContext>): Promise<{ ok: boolean }> { return this.req("POST", `/sessions/${id}/context`, ctx) as Promise<{ ok: boolean }>; }
+  recordings(id: string): Promise<string[]> { return this.req("GET", `/sessions/${id}/recordings`) as Promise<string[]>; }
+  recording(id: string, file: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/recordings/${encodeURIComponent(file)}`); }
+  downloads(id: string): Promise<string[]> { return this.req("GET", `/sessions/${id}/downloads`) as Promise<string[]>; }
+  download(id: string, file: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/downloads/${encodeURIComponent(file)}`); }
+  screenshot(id: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/screenshot`); }
+  pdf(id: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/pdf`); }
 }

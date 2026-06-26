@@ -87,7 +87,7 @@ export class Lucarne {
     this.port = opts.port ?? 7800;
     this.token = opts.token ?? process.env.LUCARNE_TOKEN ?? undefined;
     this.image = opts.image ?? "lucarne-browser:latest";
-    this.chromePath = opts.chromePath ?? DEFAULT_CHROME[process.platform] ?? "google-chrome";
+    this.chromePath = opts.chromePath ?? process.env.LUCARNE_CHROME ?? DEFAULT_CHROME[process.platform] ?? "google-chrome";
     this.viewport = opts.viewport ?? { width: 1280, height: 720 };
     this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
     this.headless = opts.headless ?? process.env.LUCARNE_HEADLESS === "1";
@@ -826,7 +826,14 @@ v.addEventListener('ended',()=>{i++;play()});play();});
       });
     });
 
-    return new Promise((resolve) => this.server!.listen(this.port, this.host, () => resolve()));
+    return new Promise((resolve, reject) => {
+      const onError = (e: NodeJS.ErrnoException): void => reject(new Error(
+        e.code === "EADDRINUSE"
+          ? `lucarne: port ${this.port} is already in use on ${this.host} — stop the other daemon or pass a different --port`
+          : `lucarne: server error — ${e.message}`));
+      this.server!.once("error", onError);
+      this.server!.listen(this.port, this.host, () => { this.server!.removeListener("error", onError); resolve(); });
+    });
   }
 
   async close(): Promise<void> {
