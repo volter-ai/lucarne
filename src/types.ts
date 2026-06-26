@@ -39,6 +39,8 @@ export interface CreateSessionOptions {
   extensions?: string[];
   /** Emulate a mobile device (viewport, DPR, touch, mobile UA) for the porthole. */
   mobile?: boolean;
+  /** Porthole/recording JPEG quality 1–100 (default 60). Lower = smaller frames. */
+  quality?: number;
   /** Arbitrary user tags stored on the session (filter `list`/`sessions` by them). */
   metadata?: Record<string, string>;
   /** Auto-release this session after this many ms of wall-clock, regardless of use. */

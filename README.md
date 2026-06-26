@@ -155,6 +155,15 @@ GET    /sessions/:id/logs[?kind=&limit=]  -> LogEntry[]   (network/console/brows
 GET    /sessions/:id/logs?stream=1        -> text/event-stream   (live SSE)
 GET    /sessions/:id/content              -> text/html   (rendered outerHTML)
 GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadata)
+PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
+GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
+POST   /sessions/:id/login                {credential, userSelector?, passSelector?, totpSelector?, submitSelector?}
+```
+
+Credentials are encrypted at rest (AES-256-GCM under a machine-local key) and the secret
+never leaves the engine: `POST /sessions/:id/login` injects username/password/TOTP into the
+page server-side, so the agent logs in without ever seeing the password. Per-session
+`quality` (1–100) controls screencast/recording JPEG size.
 DELETE /sessions/:id                      -> { ok }
 POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject a host file into <input type=file>)
 GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)

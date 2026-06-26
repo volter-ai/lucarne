@@ -56,6 +56,7 @@ export async function startSessionMedia(opts: {
   fps: number;
   retentionMin: number;
   mobile?: boolean;
+  quality?: number;
 }): Promise<SessionMedia> {
   // The active-tab page conn is MUTABLE: switchTab re-taps a different target so
   // the porthole/screencast + input follow it. `page` is the live reference all
@@ -107,7 +108,7 @@ export async function startSessionMedia(opts: {
       c.send("Page.screencastFrameAck", { sessionId: p.sessionId });
     });
     c.send("Page.enable");
-    c.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
+    c.send("Page.startScreencast", { format: "jpeg", quality: opts.quality ?? 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
     wireLogs(c);
   };
   wireScreencast(page);

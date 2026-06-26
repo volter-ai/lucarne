@@ -33,8 +33,8 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ **P0 seed from your real Chrome profile** — `seedFrom`/`seedFromChrome` copy cookies/logins/storage
   on a profile's first creation so it starts authenticated. *(Proof: seeded profile carries the source cookie.)*
 - ✅ P1 profile API — `GET /profiles` (list, each flagged `active`), `DELETE /profiles/:name` (refused while a session is live); create = `create({profile})`. *(Proof: listed + active-flagged · delete refused while live · delete removes it after release.)*
-- ✅ P1 **session-context export/import** — `GET/POST /sessions/:id/context` dumps cookies + the current origin's localStorage and restores them into another live session (runtime transfer, no profile sharing). *(Proof: cookies + localStorage round-trip into a different session.)* · 🔨 P2 also sessionStorage + IndexedDB
-- 🔨 P2 encrypted profiles/credentials at rest
+- ✅ P1 **session-context export/import** — `GET/POST /sessions/:id/context` dumps cookies + the current origin's localStorage and restores them into another live session (runtime transfer, no profile sharing). *(Proof: cookies + local + session storage round-trip into a different session.)* · ✅ P2 sessionStorage · 🔨 P3 IndexedDB (no clean CDP bulk dump — deferred)
+- ✅ P2 encrypted **credentials** at rest — AES-256-GCM under a machine-local `0600` key (`credentials.json`). *(Proof: plaintext password/secret absent on disk.)* · 🔨 P3 full profile-dir encryption (heavier; Chrome already encrypts cookies via the OS keychain)
 - 🚫 stored *spoofed* fingerprints (native = real fingerprint)
 
 ## C. Drive / connect
@@ -45,11 +45,11 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 ## D. Live view / human takeover (the porthole)
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
 - ✅ P1 **multi-tab** — `GET /sessions/:id/tabs` lists open tabs; `POST /sessions/:id/tabs/:targetId` re-taps the porthole (screencast + input) at that tab. *(Proof: lists 2 tabs · switch changes the active tab + the rendered frame.)*
-- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · ✅ P1 `showControls` nav chrome (`?controls=1`: URL bar + back/forward/reload → `nav` events). *(Proof: go navigates + back returns.)* · 🔨 P2 quality control · theme
+- ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · ✅ P1 `showControls` nav chrome (`?controls=1`: URL bar + back/forward/reload → `nav` events). *(Proof: go navigates + back returns.)* · ✅ P2 quality control (`quality: 1–100` → screencast JPEG quality). *(Proof: lower quality yields smaller frames.)* · 🔨 P2 theme
 - ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · ✅ P1 **mobile viewport** (`mobile: true` → device metrics + DPR + touch + mobile UA, re-applied across tab switch). *(Proof: innerWidth 390 + maxTouchPoints>0 + iPhone UA.)* *(Text entry uses key events — no separate virtual keyboard to build.)*
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
 - 🔨 P2 **WebRTC transport** option (cellular-smooth; current WS-JPEG stays the default)
-- 🔨 P2 **native-UI capture decision** — CDP screencast shows the *page*, not native browser UI (file-picker, basic-auth, print, OS dropdowns). Decide: keep CDP-screencast + handle those over CDP, or capture the real window (native backend *has* a real window). Known architectural gap for the native lane.
+- ✅ P2 **native-UI capture decision (DECIDED)** — **keep the single CDP-screencast transport; intercept native surfaces over CDP rather than capturing the OS window.** Window capture would break the property that makes lucarne deployable — *one* WS transport that survives a reverse proxy/tunnel and is identical across native + docker (docker has no host window to capture). So each native-UI surface is handled over CDP instead: **file picker** → `DOM.setFileInputFiles` (the upload API, already shipped); **JS dialogs** (alert/confirm/beforeunload) → `Page.javascriptDialogOpening` + `Page.handleJavaScriptDialog`; **basic-auth** → `Fetch.authRequired` / `Network.setExtraHTTPHeaders`; **print** → `Page.printToPDF` (the pdf API, already shipped); **`<select>` dropdowns** render in-page under CDP. Out of scope (rare, native-only): OS-level color/date pickers and the print *preview* chrome. This keeps the porthole proxy-friendly and cross-backend-uniform; the trade-off is the handful of OS chrome surfaces above, addressed individually.
 - 🔨 P2 disconnect events · IME / composition input
 
 ## E. Recording / replay
@@ -77,8 +77,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🔨 P2 extension upload/manage API
 
 ## J. Credentials / auth injection
-- 🔨 P2 credentials API — store + auto-inject username/password/**TOTP**, blur from agent/viewer
-  *(less critical than for cloud — with persistent profiles you simply stay logged in — but valuable)*
+- ✅ P2 credentials API — `PUT/GET/DELETE /credentials/:name` (store, **blurred** HTTP views — never returns secret values), `GET /credentials/:name/totp` (RFC 6238 TOTP), `POST /sessions/:id/login` auto-injects username/password/TOTP server-side. *(Proof: RFC 6238 vector · blurred view · encrypted at rest · server mints TOTP · auto-inject fills a login form.)*
 - 🔨 P3 1Password / secrets-manager integration
 
 ## K. Proxies / network
@@ -143,7 +142,9 @@ runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile
 per-session round-trip) · ✅ mobile viewport (390 + touch + iPhone UA) · ✅ survive-restart (restored by
 id + login intact). **38/38. Phase 2 (P1) complete.**
 P2 so far: ✅ log capture (SSE live console · snapshot network+console · kind filter) · ✅ rendered /content
-HTML · ✅ userMetadata tags + list filter. **43/43.**
+HTML · ✅ userMetadata tags + list filter · ✅ sessionStorage in context · ✅ quality control (smaller frames) ·
+✅ credentials API (blurred) · ✅ TOTP (RFC 6238 vector) · ✅ encrypted-at-rest · ✅ auto-inject login ·
+✅ native-UI-capture decision (documented). **49/49.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

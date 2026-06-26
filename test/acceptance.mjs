@@ -3,6 +3,7 @@
 // (needs Google Chrome installed — exercises the native backend.)
 import { Lucarne } from "../dist/index.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
+import { totpCode } from "../dist/credentials.js";
 import { chromium } from "playwright";
 import WS from "ws";
 import http from "node:http";
@@ -243,10 +244,10 @@ try {
   const ca = await attachPage(A.cdpUrl);
   ca.send("Page.navigate", { url: "https://example.com" });
   await sleep(1200);
-  await ca.call("Runtime.evaluate", { expression: `document.cookie='ctx_c=val-${ID};path=/';localStorage.setItem('ctx_l','ls-${ID}');` });
+  await ca.call("Runtime.evaluate", { expression: `document.cookie='ctx_c=val-${ID};path=/';localStorage.setItem('ctx_l','ls-${ID}');sessionStorage.setItem('ctx_s','ss-${ID}');` });
   const exported = await cEngine.exportContext(A.id);
   const hasC = exported.cookies.some((c) => c.name === "ctx_c" && c.value === `val-${ID}`);
-  check("context: export captures cookies + localStorage", hasC && exported.localStorage.ctx_l === `ls-${ID}` && exported.origin === "https://example.com");
+  check("context: export captures cookies + local + session storage", hasC && exported.localStorage.ctx_l === `ls-${ID}` && exported.sessionStorage.ctx_s === `ss-${ID}` && exported.origin === "https://example.com");
 
   // restore into a DIFFERENT session — no profile sharing, pure runtime transfer
   const B = await cEngine.create({ backend: "native", profile: "ctxB" });
@@ -256,8 +257,9 @@ try {
   await cEngine.importContext(B.id, exported);
   const bCookies = (await cb.call("Network.getAllCookies")).cookies;
   const bLs = (await cb.call("Runtime.evaluate", { expression: "localStorage.getItem('ctx_l')", returnByValue: true })).result.value;
+  const bSs = (await cb.call("Runtime.evaluate", { expression: "sessionStorage.getItem('ctx_s')", returnByValue: true })).result.value;
   ca.close(); cb.close();
-  check("context: import restores cookies + localStorage into another session", bCookies.some((c) => c.name === "ctx_c" && c.value === `val-${ID}`) && bLs === `ls-${ID}`);
+  check("context: import restores cookies + local + session storage into another session", bCookies.some((c) => c.name === "ctx_c" && c.value === `val-${ID}`) && bLs === `ls-${ID}` && bSs === `ss-${ID}`);
 
   // release-all
   const released = await cEngine.releaseAll();
@@ -473,6 +475,68 @@ try {
   lc.close();
 } finally {
   await lgEngine.close().catch(() => {});
+}
+
+// ── P2: porthole quality control ─────────────────────────────────────────────
+const qEngine = new Lucarne({ port: 7826, token: TOKEN, record: false });
+await qEngine.listen();
+const grabFrame = (id) => new Promise((resolve, reject) => {
+  const w = new WS(`ws://127.0.0.1:7826/sessions/${id}/view/ws?token=${TOKEN}`);
+  let got = false;
+  const t = setTimeout(() => { if (!got) { w.close(); reject(new Error("no frame")); } }, 5000);
+  w.on("message", (d) => { if (!got && Buffer.isBuffer(d) && d.length > 500) { got = true; clearTimeout(t); w.close(); resolve(d.length); } });
+  w.on("error", (e) => { clearTimeout(t); reject(e); });
+});
+try {
+  const lo = await qEngine.create({ backend: "native", profile: "qlo", quality: 12 });
+  const hi = await qEngine.create({ backend: "native", profile: "qhi", quality: 92 });
+  const lc = await attachPage(lo.cdpUrl), hc = await attachPage(hi.cdpUrl);
+  // identical high-frequency content on both → quality, not content, drives size
+  const paint = `(()=>{const cv=document.createElement('canvas');cv.width=1200;cv.height=600;document.body.appendChild(cv);const c=cv.getContext('2d');for(let y=0;y<600;y+=2)for(let x=0;x<1200;x+=2){c.fillStyle='rgb('+((x*7)%255)+','+((y*5)%255)+','+((x+y)%255)+')';c.fillRect(x,y,2,2);}return true})()`;
+  await lc.call("Runtime.evaluate", { expression: paint });
+  await hc.call("Runtime.evaluate", { expression: paint });
+  await sleep(1000);
+  const loSize = await grabFrame("qlo");
+  const hiSize = await grabFrame("qhi");
+  lc.close(); hc.close();
+  check("quality: lower quality yields smaller frames", loSize < hiSize, `lo=${loSize} hi=${hiSize}`);
+} finally {
+  await qEngine.close().catch(() => {});
+}
+
+// ── P2: credentials API + TOTP + encrypted-at-rest + auto-inject login ────────
+const CHOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-cred-"));
+process.env.LUCARNE_HOME = CHOME;                                // isolate the cred store + key
+const crEngine = new Lucarne({ port: 7825, token: TOKEN, record: false });
+await crEngine.listen();
+const CF = (p, opts = {}) => fetch(`http://127.0.0.1:7825${p}`, { ...opts, headers: { authorization: `Bearer ${TOKEN}`, ...(opts.headers || {}) } });
+try {
+  // RFC 6238 SHA1 test vector (secret base32 of "12345678901234567890", T=59s)
+  check("totp: matches the RFC 6238 test vector", totpCode("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 59000) === "287082");
+
+  const SECRET = "JBSWY3DPEHPK3PXP";
+  await CF("/credentials/site", { method: "PUT", body: JSON.stringify({ username: "alice", password: "s3cr3t-pw-xyz", totp: SECRET }) });
+  const blurred = await (await CF("/credentials/site")).json();
+  check("credentials: HTTP view is blurred (no secret values)",
+    blurred.username === "alice" && blurred.hasPassword === true && blurred.hasTotp === true && !("password" in blurred) && !("totp" in blurred));
+  const raw = fs.readFileSync(path.join(CHOME, "credentials.json"), "utf8");
+  check("credentials: encrypted at rest (plaintext absent on disk)", !raw.includes("s3cr3t-pw-xyz") && !raw.includes(SECRET));
+  const code = (await (await CF("/credentials/site/totp")).json()).code;
+  const now = Date.now();
+  check("credentials: server mints a current TOTP code", /^[0-9]{6}$/.test(code) && [now, now - 30000, now + 30000].some((t) => code === totpCode(SECRET, t)));
+
+  // auto-inject into a real login form — the secret stays server-side
+  const cs = await crEngine.create({ backend: "native", profile: "cred" });
+  const cc = await attachPage(cs.cdpUrl);
+  await cc.call("Runtime.evaluate", { expression: `document.body.innerHTML='<input id=u><input id=p type=password>'` });
+  const r = await crEngine.loginWithCredential(cs.id, { credential: "site", userSelector: "#u", passSelector: "#p" });
+  const vals = JSON.parse((await cc.call("Runtime.evaluate", { expression: "JSON.stringify({u:document.getElementById('u').value,p:document.getElementById('p').value})", returnByValue: true })).result.value);
+  cc.close();
+  check("credentials: auto-inject fills the login form from the store",
+    r.filled.includes("username") && r.filled.includes("password") && vals.u === "alice" && vals.p === "s3cr3t-pw-xyz");
+} finally {
+  await crEngine.close().catch(() => {});
+  fs.rmSync(CHOME, { recursive: true, force: true });
 }
 
 const failed = results.filter((r) => !r.pass).length;

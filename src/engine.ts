@@ -6,6 +6,7 @@ import type { Backend } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
+import { blurCredential, deleteCredential, getCredential, listCredentials, putCredential, totpCode, type Credential } from "./credentials.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type LogEntry, type SessionMedia } from "./session-media.js";
@@ -100,7 +101,7 @@ export class Lucarne {
     });
     const media = await startSessionMedia({
       cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
-      record: this.record, fps: this.fps, retentionMin: this.retentionMin, mobile: opts.mobile,
+      record: this.record, fps: this.fps, retentionMin: this.retentionMin, mobile: opts.mobile, quality: opts.quality,
     });
     // Load any custom unpacked extensions via CDP (the only path modern Chrome
     // allows); the launch flag was set by the backend.
@@ -306,6 +307,38 @@ export class Lucarne {
     return l;
   }
 
+  /** Current TOTP code for a stored credential (or null if it has no TOTP secret). */
+  credentialTotp(name: string): string | null {
+    const c = getCredential(name);
+    return c?.totp ? totpCode(c.totp) : null;
+  }
+
+  /**
+   * Auto-fill a login form from a stored credential — the secret stays
+   * server-side (the caller never sees the password/TOTP). Fills by selector and
+   * optionally clicks submit; returns which fields were filled.
+   */
+  async loginWithCredential(id: string, opts: { credential: string; userSelector?: string; passSelector?: string; totpSelector?: string; submitSelector?: string }): Promise<{ filled: string[] }> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const cred = getCredential(opts.credential);
+    if (!cred) throw new Error("no such credential");
+    const cdp = s.media.cdp;
+    const filled: string[] = [];
+    const fill = async (selector: string, value: string): Promise<boolean> => {
+      const r = await cdp.call("Runtime.evaluate", {
+        expression: `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return false;el.focus();el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true})()`,
+        returnByValue: true,
+      });
+      return !!r.result?.value;
+    };
+    if (opts.userSelector && cred.username && await fill(opts.userSelector, cred.username)) filled.push("username");
+    if (opts.passSelector && cred.password && await fill(opts.passSelector, cred.password)) filled.push("password");
+    if (opts.totpSelector && cred.totp && await fill(opts.totpSelector, totpCode(cred.totp))) filled.push("totp");
+    if (opts.submitSelector) await cdp.call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(opts.submitSelector)})?.click()` });
+    return { filled };
+  }
+
   /** The active page's rendered HTML (`document.documentElement.outerHTML`). */
   async content(id: string): Promise<string> {
     const s = this.sessions.get(id);
@@ -383,28 +416,27 @@ export class Lucarne {
    * origin's localStorage — for restoring into another session WITHOUT a restart.
    * (Profiles persist on disk; this is the live, cross-session transfer path.)
    */
-  async exportContext(id: string): Promise<{ cookies: unknown[]; localStorage: Record<string, string>; origin: string }> {
+  async exportContext(id: string): Promise<{ cookies: unknown[]; localStorage: Record<string, string>; sessionStorage: Record<string, string>; origin: string }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
     const { cookies } = await s.media.cdp.call("Network.getAllCookies");
     const r = await s.media.cdp.call("Runtime.evaluate", {
-      expression: "JSON.stringify({o:location.origin,ls:Object.assign({},localStorage)})",
+      expression: "JSON.stringify({o:location.origin,ls:Object.assign({},localStorage),ss:Object.assign({},sessionStorage)})",
       returnByValue: true,
     });
-    const { o, ls } = JSON.parse(r.result.value as string);
-    return { cookies, localStorage: ls, origin: o };
+    const { o, ls, ss } = JSON.parse(r.result.value as string);
+    return { cookies, localStorage: ls, sessionStorage: ss, origin: o };
   }
 
-  /** Restore a context (from `exportContext`): set cookies + the current origin's localStorage. */
-  async importContext(id: string, ctx: { cookies?: unknown[]; localStorage?: Record<string, string> }): Promise<void> {
+  /** Restore a context (from `exportContext`): cookies + the origin's local/session storage. */
+  async importContext(id: string, ctx: { cookies?: unknown[]; localStorage?: Record<string, string>; sessionStorage?: Record<string, string> }): Promise<void> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
     if (ctx.cookies?.length) await s.media.cdp.call("Network.setCookies", { cookies: ctx.cookies });
-    if (ctx.localStorage) {
-      await s.media.cdp.call("Runtime.evaluate", {
-        expression: `(()=>{const d=${JSON.stringify(ctx.localStorage)};for(const k in d)localStorage.setItem(k,d[k]);return true})()`,
-      });
-    }
+    const restore = (store: string, data?: Record<string, string>): Promise<unknown> | undefined => data &&
+      s.media.cdp.call("Runtime.evaluate", { expression: `(()=>{const d=${JSON.stringify(data)};for(const k in d)${store}.setItem(k,d[k]);return true})()` });
+    await restore("localStorage", ctx.localStorage);
+    await restore("sessionStorage", ctx.sessionStorage);
   }
 
   private tokenOk(url: string, headerAuth?: string): boolean {
@@ -427,6 +459,23 @@ export class Lucarne {
           return send(res, 200, this.tokenOk(req.url ?? "/", req.headers.authorization) ? h : { ok: h.ok, sessions: h.sessions });
         }
         if (!this.tokenOk(req.url ?? "/", req.headers.authorization)) return send(res, 401, { error: "unauthorized" });
+        const cred = pathname.match(/^\/credentials\/?([^/]*)\/?(totp)?$/);
+        if (cred) {
+          const name = cred[1] ? decodeURIComponent(cred[1]) : "";
+          if (req.method === "GET" && !name) return send(res, 200, listCredentials());
+          if (req.method === "GET" && name && cred[2] === "totp") {
+            const code = this.credentialTotp(name);
+            return code ? send(res, 200, { code }) : send(res, 404, { error: "no totp for credential" });
+          }
+          if (req.method === "GET" && name) { const b = blurCredential(name); return b ? send(res, 200, b) : send(res, 404, { error: "no such credential" }); }
+          if (req.method === "PUT" && name) {
+            let body = ""; for await (const c of req) body += c;
+            putCredential(name, body ? (JSON.parse(body) as Credential) : {});
+            return send(res, 200, { ok: true });
+          }
+          if (req.method === "DELETE" && name) return send(res, 200, { ok: deleteCredential(name) });
+          return send(res, 405, { error: "method not allowed" });
+        }
         const gf = pathname.match(/^\/files\/?(.*)$/);
         if (gf) { await this.serveFiles(req, res, send, globalFilesDir(), decodeURIComponent(gf[1]!)); return; }
         const prof = pathname.match(/^\/profiles\/?(.*)$/);
@@ -515,6 +564,14 @@ export class Lucarne {
           if (!dir) return send(res, 404, { error: "no such session" });
           await this.serveFiles(req, res, send, dir, decodeURIComponent(sf[2]!));
           return;
+        }
+        const login = pathname.match(/^\/sessions\/([^/]+)\/login$/);
+        if (login) {
+          const [, id] = login;
+          if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          let body = ""; for await (const c of req) body += c;
+          return send(res, 200, await this.loginWithCredential(id!, body ? JSON.parse(body) : {}));
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {
