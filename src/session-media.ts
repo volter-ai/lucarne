@@ -11,6 +11,16 @@ const EDIT_COMMANDS: Record<string, string> = {
   KeyA: "selectAll", KeyC: "copy", KeyV: "paste", KeyX: "cut", KeyZ: "undo", KeyY: "redo", RedoZ: "redo",
 };
 
+/** A captured network / console / browser-log entry. */
+export interface LogEntry {
+  kind: "network" | "console" | "log";
+  ts: number;
+  level?: string;
+  method?: string;
+  url?: string;
+  text?: string;
+}
+
 export interface SessionMedia {
   /** The shared CDP tap on the ACTIVE tab — reused by engine features (upload, screenshot…). */
   cdp: CdpConn;
@@ -18,6 +28,10 @@ export interface SessionMedia {
   onInput(ev: InputEvent): void;
   /** Stream stats (frames + bytes served) for status / "pressure". */
   stats(): { frames: number; streamedBytes: number };
+  /** Snapshot of captured logs (network/console/browser), oldest first. */
+  logs(): LogEntry[];
+  /** Subscribe to live log entries (for the SSE stream). */
+  onLog(cb: (e: LogEntry) => void): () => void;
   /** List the session's open tabs. */
   tabs(): Promise<PageTarget[]>;
   /** Point the porthole/screencast + input at a different tab. */
@@ -57,6 +71,27 @@ export async function startSessionMedia(opts: {
   let latest: Buffer | null = null;
   let frameCount = 0, streamedBytes = 0;
   const subs = new Set<(f: Buffer) => void>();
+  // Bounded ring of captured logs + live subscribers (SSE). Wired per page so it
+  // follows tab switches; the buffer + subscribers are shared across tabs.
+  const LOG_CAP = 2000;
+  const logBuf: LogEntry[] = [];
+  const logSubs = new Set<(e: LogEntry) => void>();
+  const pushLog = (e: LogEntry): void => {
+    logBuf.push(e);
+    if (logBuf.length > LOG_CAP) logBuf.shift();
+    for (const cb of logSubs) cb(e);
+  };
+  const wireLogs = (c: CdpConn): void => {
+    c.send("Network.enable");
+    c.on("Network.requestWillBeSent", (p: { request: { method: string; url: string } }) =>
+      pushLog({ kind: "network", method: p.request.method, url: p.request.url, ts: Date.now() }));
+    c.send("Runtime.enable");
+    c.on("Runtime.consoleAPICalled", (p: { type: string; args: { value?: unknown; description?: string }[] }) =>
+      pushLog({ kind: "console", level: p.type, text: (p.args || []).map((a) => String(a.value ?? a.description ?? "")).join(" "), ts: Date.now() }));
+    c.send("Log.enable");
+    c.on("Log.entryAdded", (p: { entry: { level: string; text: string } }) =>
+      pushLog({ kind: "log", level: p.entry.level, text: p.entry.text, ts: Date.now() }));
+  };
   const wireScreencast = (c: CdpConn): void => {
     if (opts.mobile) {
       // Mobile emulation must be re-applied per page (it's session-scoped), so it
@@ -73,6 +108,7 @@ export async function startSessionMedia(opts: {
     });
     c.send("Page.enable");
     c.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
+    wireLogs(c);
   };
   wireScreencast(page);
 
@@ -135,6 +171,8 @@ export async function startSessionMedia(opts: {
     frames,
     onInput,
     stats: () => ({ frames: frameCount, streamedBytes }),
+    logs: () => [...logBuf],
+    onLog: (cb) => { logSubs.add(cb); return () => logSubs.delete(cb); },
     tabs: () => listPages(opts.cdpUrl),
     activeTabId: () => activeId,
     async switchTab(targetId: string): Promise<void> {

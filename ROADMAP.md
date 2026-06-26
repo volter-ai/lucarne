@@ -21,7 +21,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - ✅ P1 explicit **`status`** + rich session object (uptime, idle, dims, limits); `GET /sessions/:id/status`. *(Proof: status returns uptime + dims.)* · ✅ P1 `release-all` (`DELETE /sessions`). *(Proof: destroys every live session.)*
 - ✅ P1 **`timeout`** (max duration) and **`inactivityTimeout`** (idle auto-release; `touch` / porthole input resets it). *(Proof: idle session reaped · touch keeps alive · timeout reaps even an active session.)*
 - ✅ P1 **session outlives the driver** — sessions are engine-owned processes; a porthole/CDP client disconnect never ends them, reconnect by id. ✅ P1 **survive daemon restart** — durable specs persisted to `LUCARNE_HOME/sessions.json`; `close()` keeps them, `restore()` (called by `serve`) re-spawns from the on-disk profile; explicit `destroy` forgets. *(Proof: session restored by id after restart, cookie/login intact; destroy drops the spec.)*
-- 🔨 P2 `userMetadata` tags + list-query filter
+- ✅ P2 `userMetadata` tags + list-query filter — `create({ metadata })`; `GET /sessions?meta.key=val` filters, tags echoed on the session + persisted in the registry. *(Proof: list filters by tags + echoes them.)*
 - 🔨 P3 concurrency allocation / pooling / queue
 - 🚫 regions / multi-region (your machine *is* the location) · billing/credits · rate-limits
 
@@ -57,7 +57,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 - 🔨 P2 **replay viewer/player** over the segments · per-tab recording · HLS delivery
 
 ## F. Observability / logs
-- 🔨 P2 **network log capture** (CDP `Network.*`) · **console log capture** · CDP event log — per session, API + SSE stream
+- ✅ P2 **log capture** — network (`Network.requestWillBeSent`) + console (`Runtime.consoleAPICalled`) + browser logs (`Log.entryAdded`) into a bounded per-session ring; `GET /sessions/:id/logs` (filter by `kind`, tail by `limit`) and `?stream=1` SSE. *(Proof: SSE streams a live console line · snapshot has network + console · kind filter.)*
 - ✅ P1 **health endpoint** — `GET /health` (liveness + session count; ids only to an authed caller). *(Proof: count == live sessions.)* · ✅ P1 per-session stats (frames + streamedBytes in `status`, the "pressure" signal). *(Proof: status reports frames + bytes.)*
 - 🔨 P3 log export · OpenTelemetry
 
@@ -68,7 +68,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## H. Capture / output
 - ✅ P1 **screenshot API** + **PDF API** (CDP `Page.captureScreenshot` / `printToPDF`); `GET /sessions/:id/{screenshot,pdf}`. *(Proof: valid PNG at viewport width · valid PDF ≥1 page.)*
-- 🔨 P2 rendered-`/content` HTML
+- ✅ P2 rendered-`/content` HTML — `GET /sessions/:id/content` returns the active page's `outerHTML`. *(Proof: content includes the rendered page text.)*
 - 🔨 P3 `/scrape` (elements) · markdown/readability · `/export` bundle — *optional* (raw CDP/Playwright already covers driving)
 - 🚫 `/search` · `/map` · `/crawl` · `/smart-scrape` — the *scraping platform* surface, the other lane
 
@@ -142,6 +142,8 @@ runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile
 ✅ per-session stats (frames + bytes) · ✅ showControls nav (go + back) · ✅ files workspace (global +
 per-session round-trip) · ✅ mobile viewport (390 + touch + iPhone UA) · ✅ survive-restart (restored by
 id + login intact). **38/38. Phase 2 (P1) complete.**
+P2 so far: ✅ log capture (SSE live console · snapshot network+console · kind filter) · ✅ rendered /content
+HTML · ✅ userMetadata tags + list filter. **43/43.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

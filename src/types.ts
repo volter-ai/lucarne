@@ -13,6 +13,8 @@ export interface Session {
   cdpUrl: string;
   viewUrl: string;
   createdAt: string;
+  /** User tags supplied at create (for list filtering). */
+  metadata?: Record<string, string>;
 }
 
 export interface CreateSessionOptions {
@@ -37,6 +39,8 @@ export interface CreateSessionOptions {
   extensions?: string[];
   /** Emulate a mobile device (viewport, DPR, touch, mobile UA) for the porthole. */
   mobile?: boolean;
+  /** Arbitrary user tags stored on the session (filter `list`/`sessions` by them). */
+  metadata?: Record<string, string>;
   /** Auto-release this session after this many ms of wall-clock, regardless of use. */
   timeoutMs?: number;
   /**

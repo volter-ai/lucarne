@@ -8,7 +8,7 @@ import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
-import { startSessionMedia, type SessionMedia } from "./session-media.js";
+import { startSessionMedia, type LogEntry, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
 interface Tracked extends Session {
@@ -31,6 +31,7 @@ const DEFAULT_CHROME: Record<string, string> = {
 
 const pub = (s: Session): Session => ({
   id: s.id, backend: s.backend, cdpUrl: s.cdpUrl, viewUrl: s.viewUrl, createdAt: s.createdAt,
+  ...(s.metadata ? { metadata: s.metadata } : {}),
 });
 
 /**
@@ -116,6 +117,7 @@ export class Lucarne {
       recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, stop: handle.stop,
       createdAtMs: Date.now(), lastActivityMs: Date.now(),
       timeoutMs: opts.timeoutMs, inactivityMs: opts.inactivityMs,
+      metadata: opts.metadata,
     };
     this.sessions.set(id, s);
     if (persist) this.persistSpec(id, { ...opts, profile: id, persist: true });
@@ -153,7 +155,14 @@ export class Lucarne {
     return restored;
   }
 
-  list(): Session[] { return [...this.sessions.values()].map(pub); }
+  /** All sessions, optionally filtered to those whose metadata matches every key. */
+  list(filter?: Record<string, string>): Session[] {
+    let arr = [...this.sessions.values()];
+    if (filter && Object.keys(filter).length) {
+      arr = arr.filter((s) => Object.entries(filter).every(([k, v]) => s.metadata?.[k] === v));
+    }
+    return arr.map(pub);
+  }
   get(id: string): Session | undefined { const s = this.sessions.get(id); return s ? pub(s) : undefined; }
 
   recordings(id: string): string[] {
@@ -287,6 +296,24 @@ export class Lucarne {
     return { ok: deleteProfileDir(name) };
   }
 
+  /** Captured network/console/browser logs for a session (filter by kind, tail by limit). */
+  sessionLogs(id: string, opts: { kind?: string; limit?: number } = {}): LogEntry[] {
+    const s = this.sessions.get(id);
+    if (!s) return [];
+    let l = s.media.logs();
+    if (opts.kind) l = l.filter((e) => e.kind === opts.kind);
+    if (opts.limit && opts.limit > 0) l = l.slice(-opts.limit);
+    return l;
+  }
+
+  /** The active page's rendered HTML (`document.documentElement.outerHTML`). */
+  async content(id: string): Promise<string> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const r = await s.media.cdp.call("Runtime.evaluate", { expression: "document.documentElement.outerHTML", returnByValue: true });
+    return String(r.result?.value ?? "");
+  }
+
   /** Liveness + session count, for monitoring. */
   health(): { ok: boolean; sessions: number; ids: string[] } {
     return { ok: true, sessions: this.sessions.size, ids: [...this.sessions.keys()] };
@@ -418,6 +445,15 @@ export class Lucarne {
           // /ws is handled by the upgrade listener; any other subpath is 404
           res.writeHead(404); res.end(); return;
         }
+        const cont = pathname.match(/^\/sessions\/([^/]+)\/content$/);
+        if (cont) {
+          const [, id] = cont;
+          if (req.method !== "GET") return send(res, 405, { error: "method not allowed" });
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(await this.content(id!));
+          return;
+        }
         const shot = pathname.match(/^\/sessions\/([^/]+)\/(screenshot|pdf)$/);
         if (shot) {
           const [, id, kind] = shot;
@@ -435,6 +471,24 @@ export class Lucarne {
           if (req.method === "GET" && !target) return send(res, 200, await this.tabs(id!));
           if (req.method === "POST" && target) { await this.switchTab(id!, target); return send(res, 200, { ok: true }); }
           return send(res, 405, { error: "method not allowed" });
+        }
+        const lg = pathname.match(/^\/sessions\/([^/]+)\/logs$/);
+        if (lg) {
+          const [, id] = lg;
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          const u = new URL(req.url ?? "/", "http://x");
+          if (u.searchParams.get("stream") === "1") {
+            res.writeHead(200, { "cache-control": "no-cache", "content-type": "text/event-stream" });
+            const write = (e: LogEntry): void => { res.write(`data: ${JSON.stringify(e)}\n\n`); };
+            for (const e of this.sessions.get(id!)!.media.logs()) write(e); // backlog first
+            const unsub = this.sessions.get(id!)!.media.onLog(write);
+            req.on("close", unsub);
+            return;
+          }
+          return send(res, 200, this.sessionLogs(id!, {
+            kind: u.searchParams.get("kind") ?? undefined,
+            limit: u.searchParams.get("limit") ? Number(u.searchParams.get("limit")) : undefined,
+          }));
         }
         const st = pathname.match(/^\/sessions\/([^/]+)\/(status|touch)$/);
         if (st) {
@@ -510,7 +564,12 @@ export class Lucarne {
           let body = ""; for await (const c of req) body += c;
           return send(res, 200, await this.create(body ? (JSON.parse(body) as CreateSessionOptions) : {}));
         }
-        if (req.method === "GET" && !id) return send(res, 200, this.list());
+        if (req.method === "GET" && !id) {
+          const u = new URL(req.url ?? "/", "http://x");
+          const filter: Record<string, string> = {};
+          for (const [k, v] of u.searchParams) if (k.startsWith("meta.")) filter[k.slice(5)] = v;
+          return send(res, 200, this.list(filter));
+        }
         if (req.method === "GET" && id) { const s = this.get(id); return s ? send(res, 200, s) : send(res, 404, { error: "no such session" }); }
         if (req.method === "DELETE" && !id) return send(res, 200, { released: await this.releaseAll() });
         if (req.method === "DELETE" && id) return send(res, 200, { ok: await this.destroy(id) });

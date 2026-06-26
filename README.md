@@ -151,6 +151,10 @@ GET    /sessions/:id/context              -> { cookies, localStorage, origin }  
 POST   /sessions/:id/context              {cookies?, localStorage?}  -> { ok }   (import)
 GET    /sessions/:id/tabs                 -> { active, tabs:[{id,url,title}] }
 POST   /sessions/:id/tabs/:targetId       -> { ok }   (point porthole at that tab)
+GET    /sessions/:id/logs[?kind=&limit=]  -> LogEntry[]   (network/console/browser)
+GET    /sessions/:id/logs?stream=1        -> text/event-stream   (live SSE)
+GET    /sessions/:id/content              -> text/html   (rendered outerHTML)
+GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadata)
 DELETE /sessions/:id                      -> { ok }
 POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject a host file into <input type=file>)
 GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)

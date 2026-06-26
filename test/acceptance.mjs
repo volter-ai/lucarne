@@ -5,6 +5,7 @@ import { Lucarne } from "../dist/index.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { chromium } from "playwright";
 import WS from "ws";
+import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -427,6 +428,51 @@ try {
   await e2.close();
 } finally {
   fs.rmSync(RHOME, { recursive: true, force: true });
+}
+
+// ── P2: log capture (network + console) + SSE stream ─────────────────────────
+const lgEngine = new Lucarne({ port: 7824, token: TOKEN, record: false });
+await lgEngine.listen();
+try {
+  const ls = await lgEngine.create({ backend: "native", profile: "logs", metadata: { purpose: "test", tier: "p2" } });
+  const lc = await attachPage(ls.cdpUrl);
+  // SSE: subscribe (raw http for predictable streaming), then generate a console
+  // line, and assert it arrives over the stream.
+  const sseHit = await new Promise((resolve) => {
+    let buf = "", done = false;
+    const finish = (v) => { if (!done) { done = true; try { reqq.destroy(); } catch {} resolve(v); } };
+    const reqq = http.get(`http://127.0.0.1:7824/sessions/logs/logs?stream=1&token=${TOKEN}`, (res) => {
+      res.on("data", (d) => { buf += d.toString(); if (buf.includes("LUCARNE-LOG-MARKER")) finish(true); });
+      res.on("end", () => finish(false));
+    });
+    reqq.on("error", () => finish(false));
+    setTimeout(async () => {
+      lc.send("Page.navigate", { url: "https://example.com" });
+      await sleep(1500);
+      await lc.call("Runtime.evaluate", { expression: "console.log('LUCARNE-LOG-MARKER')" });
+    }, 200);
+    setTimeout(() => finish(false), 7000);
+  });
+  check("logs(SSE): live console line streams to subscribers", sseHit);
+
+  const snap = lgEngine.sessionLogs(ls.id);
+  const hasNet = snap.some((e) => e.kind === "network" && /example\.com/.test(e.url || ""));
+  const hasCon = snap.some((e) => e.kind === "console" && (e.text || "").includes("LUCARNE-LOG-MARKER"));
+  check("logs(snapshot): network + console captured", hasNet && hasCon);
+  const onlyNet = lgEngine.sessionLogs(ls.id, { kind: "network" });
+  check("logs(filter): kind filter returns only that kind", onlyNet.length > 0 && onlyNet.every((e) => e.kind === "network"));
+
+  // ── P2: rendered /content HTML ──────────────────────────────────────────────
+  const html = await lgEngine.content(ls.id);
+  check("content: returns the page's rendered HTML", html.includes("<html") && html.includes("Example Domain"));
+
+  // ── P2: userMetadata tags + list filter ─────────────────────────────────────
+  const tagged = lgEngine.list({ purpose: "test" });
+  const none = lgEngine.list({ purpose: "nope" });
+  check("metadata: list filters by user tags + echoes them", tagged.some((s) => s.id === ls.id && s.metadata?.tier === "p2") && none.length === 0);
+  lc.close();
+} finally {
+  await lgEngine.close().catch(() => {});
 }
 
 const failed = results.filter((r) => !r.pass).length;
