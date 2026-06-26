@@ -711,6 +711,12 @@ try {
   const rs = await recEngine.create({ backend: "native", profile: "rec" });
   const rc = await attachPage(rs.cdpUrl);
   rc.send("Page.navigate", { url: "https://example.com" });
+  // DIAGNOSTIC: does THIS session's screencast produce a porthole frame at all?
+  let diagFrame = 0;
+  try {
+    const dw = new WS(`ws://127.0.0.1:7833/sessions/rec/view/ws?token=${TOKEN}`);
+    diagFrame = await new Promise((res) => { const t = setTimeout(() => { try { dw.close(); } catch {} res(0); }, 4000); dw.on("message", (d) => { if (Buffer.isBuffer(d) && d.length > 500) { clearTimeout(t); dw.close(); res(d.length); } }); dw.on("error", () => res(0)); });
+  } catch { /* */ }
   // Find the first FINALIZED segment that actually has video — on a slow display
   // the first 2s segment can close before the first frame arrives (a 48B empty
   // mp4), so skip empties and ffprobe for a real duration.
@@ -734,7 +740,12 @@ try {
   }
   rc.close();
   let detail = good ? `${good.seg} ${good.bytes}B ${good.dur}s` : "no playable segment";
-  if (!good) { try { detail += " | ffmpeg: " + fs.readFileSync(path.join(os.tmpdir(), "lucarne", "rec-rec", "ffmpeg.log"), "utf8").trim().split("\n").slice(-3).join(" / "); } catch { detail += " (no ffmpeg.log)"; } }
+  if (!good) {
+    const sizes = [];
+    for (const seg of recEngine.recordings(rs.id).slice(0, 5)) { try { sizes.push((await (await fetch(`http://127.0.0.1:7833/sessions/rec/recordings/${seg}?token=${TOKEN}`)).arrayBuffer()).byteLength); } catch { /* */ } }
+    detail += ` | porthole-frame=${diagFrame}B segs=[${sizes}]`;
+    try { detail += " | ffmpeg: " + fs.readFileSync(path.join(os.tmpdir(), "lucarne", "rec-rec", "ffmpeg.log"), "utf8").trim().split("\n").slice(-2).join(" / "); } catch { detail += " (no ffmpeg.log)"; }
+  }
   check("recording: a record:true session produces a playable mp4 segment", !!good, detail);
 } finally {
   await recEngine.close().catch(() => {});
