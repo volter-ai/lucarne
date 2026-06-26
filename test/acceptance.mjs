@@ -751,6 +751,25 @@ try {
   check("activity: human typing into a password field is captured + REDACTED", !!typeEv && typeEv.actor === "human" && typeEv.value === "‹redacted›");
   check("activity: nav attributed human (porthole) vs agent (CDP driver)", !!humanNav && (humanNav.url || "").includes("example.com") && !!agentNav && (agentNav.url || "").startsWith("data:"));
   check("activity: now reports current url + the Playwright-verb view renders", !!now?.url && pw.includes("await page.goto") && pw.includes("# human") && pw.includes("# agent"));
+  // A2 also resolves the element's ARIA role
+  check("activity(A2): a click also resolves the element role", clickEv?.role === "button");
+  // ?format=text renders human-readable timestamped log lines (the redacted type is one of them)
+  const txt = await (await fetch(`http://127.0.0.1:7836/sessions/act/activity?format=text&token=${TOKEN}`)).text();
+  check("activity: ?format=text renders timestamped log lines", /\d{4}-\d\d-\d\dT/.test(txt) && txt.includes("human") && txt.includes("type") && txt.includes("‹redacted›") && txt.includes("agent"));
+  // default GET returns the {now, recent} JSON shape over HTTP (not just the in-process readers)
+  const j = await (await fetch(`http://127.0.0.1:7836/sessions/act/activity?token=${TOKEN}`)).json();
+  check("activity: default GET returns {now, recent} over HTTP", !!j.now && "lastHumanActionMsAgo" in j.now && Array.isArray(j.recent) && j.recent.length > 0 && typeof j.recent[0].kind === "string");
+  // ?stream=1 SSE replays the feed as a live event-stream channel
+  const sseEv = await new Promise((resolve, reject) => {
+    const r = http.get(`http://127.0.0.1:7836/sessions/act/activity?stream=1&token=${TOKEN}`, (res) => {
+      let buf = "";
+      res.on("data", (c) => { buf += c.toString(); const m = buf.match(/data: (.+)\n\n/); if (m) { clearTimeout(to); r.destroy(); try { resolve(JSON.parse(m[1])); } catch (e) { reject(e); } } });
+      res.on("error", reject);
+    });
+    r.on("error", reject);
+    const to = setTimeout(() => { r.destroy(); reject(new Error("sse timeout")); }, 4000);
+  });
+  check("activity: ?stream=1 SSE replays the feed (live channel)", !!sseEv && typeof sseEv.kind === "string" && typeof sseEv.actor === "string");
 } finally {
   await aEngine.close().catch(() => {});
 }
