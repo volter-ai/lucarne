@@ -53,6 +53,10 @@ echo "[lucarne] prune loop: keep last ${RETENTION_MIN} min"
   done ) &
 
 RECORDER="${RECORDER:-gst}"
+if [ "$RECORDER" = "off" ]; then
+  echo "[lucarne] recording disabled"
+  exec tail -f /dev/null
+fi
 if [ "$RECORDER" = "ffmpeg" ]; then
   echo "[lucarne] ffmpeg ring recorder (blind grab)"
   exec ffmpeg -loglevel warning -nostdin \

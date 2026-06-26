@@ -27,12 +27,24 @@ export interface EngineOptions {
   host?: string;
   /** Daemon HTTP port. Default 7800. */
   port?: number;
+  /**
+   * Optional bearer token. When set, the control API and native portholes
+   * require it (`Authorization: Bearer <t>` or `?token=<t>`). Set this whenever
+   * you bind to a non-loopback host. Default: `LUCARNE_TOKEN` env, else none.
+   */
+  token?: string;
   /** Docker image for the docker backend. Default "lucarne-browser:latest". */
   image?: string;
   /** Path to the Chrome/Chromium binary for the native backend. */
   chromePath?: string;
   /** Viewport (and capture) size. Default 1280x720. */
   viewport?: { width: number; height: number };
+  /** Record sessions to a rolling buffer. Default true (`LUCARNE_RECORD=0` disables). */
+  record?: boolean;
+  /** Recording frame-rate / segment cadence. Default 4. */
+  fps?: number;
+  /** Minutes of recording to retain. Default 60. */
+  retentionMin?: number;
   /** First CDP port to allocate. Default 9300. */
   cdpPortBase?: number;
   /** First porthole (view) port to allocate. Default 8100. */

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Lucarne } from "./engine.js";
 
 const API = process.env.LUCARNE_URL ?? "http://127.0.0.1:7800";
+const TOKEN = process.env.LUCARNE_TOKEN;
 
 const HELP = `lucarne — self-hostable browser sessions you can drive, watch, and record
 
@@ -14,19 +15,24 @@ Usage:
   lucarne ls                                        list sessions
   lucarne rm <id>                                   destroy a session
   lucarne open <id>                                 open a session's porthole
+  lucarne rec <id>                                  list a session's recordings
   lucarne build-image                               build the docker backend image
 
 Env:
-  LUCARNE_URL   daemon URL for client commands (default http://127.0.0.1:7800)
+  LUCARNE_URL     daemon URL for client commands (default http://127.0.0.1:7800)
+  LUCARNE_TOKEN   bearer token (set on both the daemon and the client when used)
 
 Drive any session with vanilla Playwright:
   const b = await chromium.connectOverCDP(session.cdpUrl)
 `;
 
 async function api(method: string, path: string, body?: unknown): Promise<unknown> {
+  const headers: Record<string, string> = {};
+  if (body) headers["content-type"] = "application/json";
+  if (TOKEN) headers["authorization"] = `Bearer ${TOKEN}`;
   const res = await fetch(API + path, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   }).catch(() => { throw new Error(`lucarne: cannot reach daemon at ${API} — is \`lucarne serve\` running?`); });
   return res.json();
@@ -86,6 +92,12 @@ async function main(): Promise<void> {
       if (!s.viewUrl) throw new Error(`no such session '${id}'`);
       openUrl(s.viewUrl);
       process.stdout.write(`opening ${s.viewUrl}\n`);
+      return;
+    }
+    case "rec": {
+      const id = positionals[1];
+      if (!id) throw new Error("usage: lucarne rec <id>");
+      process.stdout.write(JSON.stringify(await api("GET", `/sessions/${id}/recordings`), null, 2) + "\n");
       return;
     }
     case "build-image": {

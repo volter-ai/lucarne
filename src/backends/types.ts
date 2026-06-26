@@ -5,12 +5,22 @@ export interface BackendContext {
   image: string;
   chromePath: string;
   viewport: { width: number; height: number };
+  /** Optional bearer token gating the daemon API + native portholes. */
+  token?: string | undefined;
+  /** Record sessions (default true). */
+  record: boolean;
+  /** Recording frame-rate floor / segment cadence. */
+  fps: number;
+  /** Minutes of recording to retain (ring buffer). */
+  retentionMin: number;
 }
 
 export interface BackendHandle {
   /** Absolute URL of the porthole (view + control). */
   viewUrl: string;
-  /** Tear down the browser + its porthole and reclaim resources. */
+  /** Directory where this session's recording segments land. */
+  recDir: string;
+  /** Tear down the browser + its porthole/recorder and reclaim resources. */
   stop(): Promise<void>;
 }
 

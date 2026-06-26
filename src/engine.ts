@@ -1,10 +1,13 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import type { Backend } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import type { CreateSessionOptions, EngineOptions, Session } from "./types.js";
 
 interface Tracked extends Session {
+  recDir: string;
   stop(): Promise<void>;
 }
 
@@ -26,9 +29,13 @@ const pub = (s: Session): Session => ({
 export class Lucarne {
   readonly host: string;
   readonly port: number;
+  private readonly token: string | undefined;
   private readonly image: string;
   private readonly chromePath: string;
   private readonly viewport: { width: number; height: number };
+  private readonly record: boolean;
+  private readonly fps: number;
+  private readonly retentionMin: number;
   private nextCdp: number;
   private nextView: number;
   private readonly sessions = new Map<string, Tracked>();
@@ -38,9 +45,13 @@ export class Lucarne {
   constructor(opts: EngineOptions = {}) {
     this.host = opts.host ?? "127.0.0.1";
     this.port = opts.port ?? 7800;
+    this.token = opts.token ?? process.env.LUCARNE_TOKEN ?? undefined;
     this.image = opts.image ?? "lucarne-browser:latest";
     this.chromePath = opts.chromePath ?? DEFAULT_CHROME[process.platform] ?? "google-chrome";
     this.viewport = opts.viewport ?? { width: 1280, height: 720 };
+    this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
+    this.fps = opts.fps ?? 4;
+    this.retentionMin = opts.retentionMin ?? 60;
     this.nextCdp = opts.cdpPortBase ?? 9300;
     this.nextView = opts.viewPortBase ?? 8100;
   }
@@ -54,12 +65,14 @@ export class Lucarne {
     const ports = { cdp: this.nextCdp++, view: this.nextView++ };
     const handle = await backend.start(id, ports, {
       host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
+      token: this.token, record: this.record, fps: this.fps, retentionMin: this.retentionMin,
     });
     const s: Tracked = {
       id, backend: backend.kind,
       cdpUrl: `http://${this.host}:${ports.cdp}`,
       viewUrl: handle.viewUrl,
       createdAt: new Date().toISOString(),
+      recDir: handle.recDir,
       stop: handle.stop,
     };
     this.sessions.set(id, s);
@@ -69,6 +82,15 @@ export class Lucarne {
   list(): Session[] { return [...this.sessions.values()].map(pub); }
   get(id: string): Session | undefined { const s = this.sessions.get(id); return s ? pub(s) : undefined; }
 
+  /** Recording segment filenames for a session, oldest first. */
+  recordings(id: string): string[] {
+    const s = this.sessions.get(id);
+    if (!s) return [];
+    try {
+      return fs.readdirSync(s.recDir).filter((f) => f.startsWith("seg_") && f.endsWith(".mp4")).sort();
+    } catch { return []; }
+  }
+
   async destroy(id: string): Promise<boolean> {
     const s = this.sessions.get(id);
     if (!s) return false;
@@ -77,7 +99,14 @@ export class Lucarne {
     return true;
   }
 
-  /** Start the HTTP control API: POST/GET /sessions, DELETE /sessions/:id. */
+  private authed(req: http.IncomingMessage): boolean {
+    if (!this.token) return true;
+    const u = new URL(req.url ?? "/", "http://x");
+    if (u.searchParams.get("token") === this.token) return true;
+    return req.headers["authorization"] === `Bearer ${this.token}`;
+  }
+
+  /** Start the HTTP control API: /sessions CRUD + /sessions/:id/recordings. */
   listen(): Promise<void> {
     const send = (res: http.ServerResponse, code: number, body: unknown): void => {
       res.writeHead(code, { "content-type": "application/json" });
@@ -85,14 +114,30 @@ export class Lucarne {
     };
     this.server = http.createServer(async (req, res) => {
       try {
-        const m = new URL(req.url ?? "/", "http://x").pathname.match(/^\/sessions\/?(.*)$/);
+        if (!this.authed(req)) return send(res, 401, { error: "unauthorized" });
+        const pathname = new URL(req.url ?? "/", "http://x").pathname;
+        const rec = pathname.match(/^\/sessions\/([^/]+)\/recordings\/?(.*)$/);
+        if (rec) {
+          const [, id, file] = rec;
+          if (req.method === "GET" && !file) return send(res, 200, this.recordings(id!));
+          if (req.method === "GET" && file) {
+            const s = this.sessions.get(id!);
+            const fp = s && path.join(s.recDir, path.basename(file));
+            if (!fp || !fs.existsSync(fp)) return send(res, 404, { error: "no such recording" });
+            res.writeHead(200, { "content-type": "video/mp4" });
+            fs.createReadStream(fp).pipe(res);
+            return;
+          }
+          return send(res, 405, { error: "method not allowed" });
+        }
+        const m = pathname.match(/^\/sessions\/?(.*)$/);
         if (!m) return send(res, 404, { error: "not found" });
         const id = m[1];
         if (req.method === "POST" && !id) {
           let body = "";
           for await (const c of req) body += c;
-          const opts = body ? (JSON.parse(body) as CreateSessionOptions) : {};
-          return send(res, 200, await this.create(opts));
+          const o = body ? (JSON.parse(body) as CreateSessionOptions) : {};
+          return send(res, 200, await this.create(o));
         }
         if (req.method === "GET" && !id) return send(res, 200, this.list());
         if (req.method === "GET" && id) {

@@ -72,8 +72,9 @@ One API, two backends — pick per session via `backend`:
 | fingerprint | **real** (your actual machine) | Linux / no-GPU (bot-detectable) |
 | IP | your residential IP | your residential IP |
 | isolation | per-profile data isolation | container (process + fs + net) |
-| porthole | raw-CDP screencast (MJPEG) | noVNC |
-| needs | Google Chrome | Docker + `lucarne build-image` |
+| porthole | raw-CDP screencast (MJPEG), token-gated | noVNC (loopback-only) |
+| recording | CDP screencast → ffmpeg (hardware-encoded on macOS) | in-container GStreamer |
+| needs | Google Chrome (+ ffmpeg for recording) | Docker + `lucarne build-image` |
 
 Use **`native`** when you're operating *your own* accounts (real fingerprint + IP matter, isolation-from-your-main-browser is enough). Use **`docker`** when you want stronger sandboxing and don't mind the occasional "verify new device".
 
@@ -100,21 +101,28 @@ await engine.close();                           // stop API + tear down all sess
 HTTP control API (what the CLI talks to):
 
 ```
-POST   /sessions   {profile?, backend?}  -> Session
+POST   /sessions                          {profile?, backend?}  -> Session
 GET    /sessions                          -> Session[]
 GET    /sessions/:id                      -> Session
 DELETE /sessions/:id                      -> { ok }
+GET    /sessions/:id/recordings           -> string[]   (segment filenames, oldest first)
+GET    /sessions/:id/recordings/:file     -> video/mp4
 ```
+
+`Session = { id, backend, cdpUrl, viewUrl, createdAt }`. Recording is on by default
+(`record: false` or `LUCARNE_RECORD=0` to disable), a rolling buffer of `retentionMin`
+minutes (default 60) of one-minute segments.
 
 ## Security
 
-`lucarne` binds the daemon and all portholes to `127.0.0.1` by default — and you should keep it that way.
+`lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
 
-- **CDP is full, unauthenticated control of the browser.** Never expose a `cdpUrl` on a public interface.
-- **The porthole has no auth.** It is a viewer/controller of a live, possibly-logged-in browser. Put your *own* auth + transport (a tunnel, a reverse proxy, an SSH forward) in front of it before it leaves localhost.
+- **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host.
+- **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** native portholes. Set this whenever you bind to a non-loopback host.
+- **The docker (noVNC) porthole is served by the container**, so it is **not** token-gated by lucarne — keep it on loopback, or front it with your own proxy.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
-`lucarne` deliberately does **not** ship auth, tunneling, or a fleet UI — those belong to whatever consumes it.
+`lucarne` ships an *optional* token, but deliberately does **not** ship tunneling or a fleet UI — those belong to whatever consumes it.
 
 ## Why "lucarne"
 
