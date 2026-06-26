@@ -179,6 +179,21 @@ export class Lucarne {
     return Buffer.from(r.data, "base64");
   }
 
+  /** List a session's open tabs (id, url, title) + which is active in the porthole. */
+  async tabs(id: string): Promise<{ active: string | undefined; tabs: { id: string; url: string; title: string }[] }> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    const tabs = (await s.media.tabs()).map((t) => ({ id: t.id, url: t.url, title: t.title }));
+    return { active: s.media.activeTabId(), tabs };
+  }
+
+  /** Point the porthole (screencast + input) at a different tab. */
+  async switchTab(id: string, targetId: string): Promise<void> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    await s.media.switchTab(targetId);
+  }
+
   /** Liveness + session count, for monitoring. */
   health(): { ok: boolean; sessions: number; ids: string[] } {
     return { ok: true, sessions: this.sessions.size, ids: [...this.sessions.keys()] };
@@ -301,6 +316,14 @@ export class Lucarne {
           res.writeHead(200, { "content-type": kind === "pdf" ? "application/pdf" : "image/png" });
           res.end(buf);
           return;
+        }
+        const tab = pathname.match(/^\/sessions\/([^/]+)\/tabs\/?(.*)$/);
+        if (tab) {
+          const [, id, target] = tab;
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          if (req.method === "GET" && !target) return send(res, 200, await this.tabs(id!));
+          if (req.method === "POST" && target) { await this.switchTab(id!, target); return send(res, 200, { ok: true }); }
+          return send(res, 405, { error: "method not allowed" });
         }
         const st = pathname.match(/^\/sessions\/([^/]+)\/(status|touch)$/);
         if (st) {

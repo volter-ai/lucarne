@@ -12,13 +12,19 @@ export interface CdpConn {
   close(): void;
 }
 
-export async function attachPage(base: string): Promise<CdpConn> {
-  const targets = (await (await fetch(base + "/json")).json()) as Array<{
-    type: string;
-    webSocketDebuggerUrl?: string;
-  }>;
-  const page = targets.find((t) => t.type === "page") ?? targets[0];
-  if (!page?.webSocketDebuggerUrl) throw new Error("lucarne: no CDP page target to attach to");
+export interface PageTarget { id: string; url: string; title: string; webSocketDebuggerUrl?: string }
+
+/** List the session's page targets (tabs), newest Chrome ordering. */
+export async function listPages(base: string): Promise<PageTarget[]> {
+  const targets = (await (await fetch(base + "/json")).json()) as Array<PageTarget & { type: string }>;
+  return targets.filter((t) => t.type === "page").map((t) => ({ id: t.id, url: t.url, title: t.title, webSocketDebuggerUrl: t.webSocketDebuggerUrl }));
+}
+
+/** Attach to a page target — the first page, or a specific tab by `targetId`. */
+export async function attachPage(base: string, targetId?: string): Promise<CdpConn> {
+  const pages = await listPages(base);
+  const page = targetId ? pages.find((t) => t.id === targetId) : pages[0];
+  if (!page?.webSocketDebuggerUrl) throw new Error(`lucarne: no CDP page target to attach to${targetId ? ` (${targetId})` : ""}`);
   const wsUrl = base.replace("http://", "ws://") + "/devtools/" + page.webSocketDebuggerUrl.split("/devtools/")[1];
   return connectCdp(wsUrl);
 }

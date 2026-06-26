@@ -2,7 +2,7 @@
 // "Done" for a feature means its proof here passes. Run: npm run test:acceptance
 // (needs Google Chrome installed — exercises the native backend.)
 import { Lucarne } from "../dist/index.js";
-import { attachPage } from "../dist/cdp.js";
+import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { chromium } from "playwright";
 import WS from "ws";
 import fs from "node:fs";
@@ -285,6 +285,31 @@ try {
 } finally {
   await xEngine.close().catch(() => {});
   fs.rmSync(extDir, { recursive: true, force: true });
+}
+
+// ── P1: multi-tab (list + switch the porthole's active tab) ──────────────────
+const mEngine = new Lucarne({ port: 7817, token: TOKEN, record: false });
+await mEngine.listen();
+try {
+  const ms = await mEngine.create({ backend: "native", profile: "multi" });
+  const mc = await attachPage(ms.cdpUrl);
+  mc.send("Page.navigate", { url: "https://example.com" });
+  await sleep(1500);
+  const shotA = await mEngine.screenshot(ms.id);                 // tab1 (active)
+  // open a second, visually distinct tab
+  const mb = await attachBrowser(ms.cdpUrl);
+  const { targetId } = await mb.call("Target.createTarget", { url: "data:text/html,<body style=background:red><h1>TAB2</h1></body>" });
+  await sleep(900);
+  const before = await mEngine.tabs(ms.id);
+  check("multi-tab: lists all open tabs", before.tabs.length === 2 && before.active !== targetId);
+  await mEngine.switchTab(ms.id, targetId);
+  await sleep(900);
+  const after = await mEngine.tabs(ms.id);
+  const shotB = await mEngine.screenshot(ms.id);                 // now tab2
+  mc.close(); mb.close();
+  check("multi-tab: switch changes active tab + frame", after.active === targetId && shotB.length > 1000 && !shotA.equals(shotB));
+} finally {
+  await mEngine.close().catch(() => {});
 }
 
 const failed = results.filter((r) => !r.pass).length;

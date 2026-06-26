@@ -1,4 +1,4 @@
-import { attachBrowser, attachPage, type CdpConn } from "./cdp.js";
+import { attachBrowser, attachPage, listPages, type CdpConn, type PageTarget } from "./cdp.js";
 import { startRecorder, type Recorder } from "./recorder.js";
 import { virtualKeyCode } from "./keymap.js";
 import type { FrameSource, InputEvent } from "./porthole.js";
@@ -11,10 +11,16 @@ const EDIT_COMMANDS: Record<string, string> = {
 };
 
 export interface SessionMedia {
-  /** The shared CDP tap — reused by engine-level features (upload, screenshot…). */
+  /** The shared CDP tap on the ACTIVE tab — reused by engine features (upload, screenshot…). */
   cdp: CdpConn;
   frames: FrameSource;
   onInput(ev: InputEvent): void;
+  /** List the session's open tabs. */
+  tabs(): Promise<PageTarget[]>;
+  /** Point the porthole/screencast + input at a different tab. */
+  switchTab(targetId: string): Promise<void>;
+  /** The active tab's target id. */
+  activeTabId(): string | undefined;
   close(): void;
 }
 
@@ -33,7 +39,12 @@ export async function startSessionMedia(opts: {
   fps: number;
   retentionMin: number;
 }): Promise<SessionMedia> {
-  const conn = await attachPage(opts.cdpUrl);
+  // The active-tab page conn is MUTABLE: switchTab re-taps a different target so
+  // the porthole/screencast + input follow it. `page` is the live reference all
+  // closures read; engine features read it back via the `cdp` field (kept in sync).
+  const firstPage = await listPages(opts.cdpUrl);
+  let activeId: string | undefined = firstPage[0]?.id;
+  let page = await attachPage(opts.cdpUrl);
   // Capture downloads to a retrievable per-session dir (list/get over the API).
   // MUST be browser-level + kept open: a page-session setting only scopes to that
   // session, so a download from any other page/driver would escape it.
@@ -41,13 +52,16 @@ export async function startSessionMedia(opts: {
   browserConn.call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: opts.downloadDir, eventsEnabled: true }).catch(() => {});
   let latest: Buffer | null = null;
   const subs = new Set<(f: Buffer) => void>();
-  conn.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
-    latest = Buffer.from(p.data, "base64");
-    for (const cb of subs) cb(latest);
-    conn.send("Page.screencastFrameAck", { sessionId: p.sessionId });
-  });
-  conn.send("Page.enable");
-  conn.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
+  const wireScreencast = (c: CdpConn): void => {
+    c.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
+      latest = Buffer.from(p.data, "base64");
+      for (const cb of subs) cb(latest);
+      c.send("Page.screencastFrameAck", { sessionId: p.sessionId });
+    });
+    c.send("Page.enable");
+    c.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
+  };
+  wireScreencast(page);
 
   const frames: FrameSource = {
     get: () => latest,
@@ -56,7 +70,7 @@ export async function startSessionMedia(opts: {
   const onInput = (ev: InputEvent): void => {
     const modifiers = ev.mod ?? 0;
     if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
-      conn.send("Input.dispatchMouseEvent", {
+      page.send("Input.dispatchMouseEvent", {
         type: ev.t === "down" ? "mousePressed" : ev.t === "up" ? "mouseReleased" : "mouseMoved",
         x: ev.x, y: ev.y,
         button: ev.t === "move" ? "none" : (MOUSE_BUTTON[ev.button ?? 0] ?? "left"),
@@ -65,14 +79,14 @@ export async function startSessionMedia(opts: {
         modifiers,
       });
     } else if (ev.t === "wheel") {
-      conn.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy, modifiers });
+      page.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy, modifiers });
     } else if (ev.t === "touch") {
       const type = ev.phase === "start" ? "touchStart" : ev.phase === "end" ? "touchEnd" : "touchMove";
-      conn.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: ev.x, y: ev.y }] });
+      page.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: ev.x, y: ev.y }] });
     } else if (ev.t === "paste" && typeof ev.text === "string") {
       // Clipboard sync: deliver text the operator pasted into the porthole as if
       // pasted into the focused field (CDP inserts it like a real paste).
-      conn.send("Input.insertText", { text: ev.text });
+      page.send("Input.insertText", { text: ev.text });
     } else if ((ev.t === "keydown" || ev.t === "keyup") && ev.key) {
       const down = ev.t === "keydown";
       const cmdKey = (modifiers & 2) !== 0 || (modifiers & 4) !== 0; // ctrl or meta = "command" modifier
@@ -80,7 +94,7 @@ export async function startSessionMedia(opts: {
       const text = down && ev.key.length === 1 && !cmdKey ? ev.key : undefined;
       // editing accelerators must be sent as CDP `commands` — synthetic keydowns alone don't fire them
       const command = down && cmdKey && ev.code ? EDIT_COMMANDS[ev.code === "KeyZ" && modifiers & 8 ? "RedoZ" : ev.code] : undefined;
-      conn.send("Input.dispatchKeyEvent", {
+      page.send("Input.dispatchKeyEvent", {
         type: down ? (text !== undefined ? "keyDown" : "rawKeyDown") : "keyUp",
         key: ev.key,
         code: ev.code ?? "",
@@ -98,14 +112,27 @@ export async function startSessionMedia(opts: {
     ? startRecorder({ recDir: opts.recDir, fps: opts.fps, retentionMin: opts.retentionMin, frames })
     : null;
 
-  return {
-    cdp: conn,
+  const ret: SessionMedia = {
+    cdp: page,
     frames,
     onInput,
+    tabs: () => listPages(opts.cdpUrl),
+    activeTabId: () => activeId,
+    async switchTab(targetId: string): Promise<void> {
+      if (targetId === activeId) return;
+      const next = await attachPage(opts.cdpUrl, targetId);
+      wireScreencast(next);
+      const old = page;
+      page = next;            // input + engine features follow the new tab
+      activeId = targetId;
+      ret.cdp = next;
+      try { old.send("Page.stopScreencast"); old.close(); } catch { /* ignore */ }
+    },
     close(): void {
       try { recorder?.close(); } catch { /* ignore */ }
-      try { conn.close(); } catch { /* ignore */ }
+      try { page.close(); } catch { /* ignore */ }
       try { browserConn.close(); } catch { /* ignore */ }
     },
   };
+  return ret;
 }

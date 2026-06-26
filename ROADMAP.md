@@ -44,7 +44,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 ## D. Live view / human takeover (the porthole)
 - ✅ interactive porthole, **full input parity** (modifiers, editing shortcuts, drag, multi-click, right-click, scroll), token-gated, single-origin / proxy-embeddable
-- 🔨 P1 **multi-tab** — list pages, per-tab view, switch/focus tab (sessions have >1 tab today; porthole shows one)
+- ✅ P1 **multi-tab** — `GET /sessions/:id/tabs` lists open tabs; `POST /sessions/:id/tabs/:targetId` re-taps the porthole (screencast + input) at that tab. *(Proof: lists 2 tabs · switch changes the active tab + the rendered frame.)*
 - ✅ P1 view-only mode (`?interactable=0`, input dropped server-side) *(Proof: input from a view-only socket never reaches Chrome.)* · 🔨 P1 `showControls` nav chrome (URL bar + back/forward) · quality control · theme
 - ✅ P1 **touch input** (phone gestures → `Input.dispatchTouchEvent`, no touch-emulation so the desktop fingerprint stays authentic). *(Proof: porthole tap fires the page touch handler at mapped coords.)* · 🔨 P1 mobile viewport / virtual keyboard
 - ✅ P0 **clipboard sync** — text pasted into the porthole is delivered into the focused field (CDP `Input.insertText`). *(Proof: paste lands in a real input.)*
@@ -138,7 +138,7 @@ name + sha256 · ✅ download: porthole-triggered download captured + bytes matc
 P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) · ✅ inactivity reap (+touch reset) ·
 ✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
 into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
-runs). **24/24.**
+runs) · ✅ multi-tab (list + switch changes the rendered frame). **26/26.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

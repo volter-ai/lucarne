@@ -144,6 +144,8 @@ GET    /sessions/:id/status               -> SessionStatus   (uptime, idle, dims
 POST   /sessions/:id/touch                -> { ok }   (reset the inactivity clock)
 GET    /sessions/:id/context              -> { cookies, localStorage, origin }   (export)
 POST   /sessions/:id/context              {cookies?, localStorage?}  -> { ok }   (import)
+GET    /sessions/:id/tabs                 -> { active, tabs:[{id,url,title}] }
+POST   /sessions/:id/tabs/:targetId       -> { ok }   (point porthole at that tab)
 DELETE /sessions/:id                      -> { ok }
 POST   /sessions/:id/upload               {path, selector?}  -> { ok }  (inject a host file into <input type=file>)
 GET    /sessions/:id/downloads            -> string[]   (captured download filenames, oldest first)
