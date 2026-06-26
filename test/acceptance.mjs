@@ -711,25 +711,31 @@ try {
   const rs = await recEngine.create({ backend: "native", profile: "rec" });
   const rc = await attachPage(rs.cdpUrl);
   rc.send("Page.navigate", { url: "https://example.com" });
-  // wait until at least one segment has FINALIZED (a 2nd appears ⇒ the 1st is closed)
-  let segs = [];
-  for (let i = 0; i < 48 && segs.length < 2; i++) { await sleep(250); segs = recEngine.recordings(rs.id); }
-  rc.close();
-  let bytes = 0, durationOk = false;
-  if (segs.length) {
-    const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7833/sessions/rec/recordings/${segs[0]}?token=${TOKEN}`)).arrayBuffer());
-    bytes = buf.length;
+  // Find the first FINALIZED segment that actually has video — on a slow display
+  // the first 2s segment can close before the first frame arrives (a 48B empty
+  // mp4), so skip empties and ffprobe for a real duration.
+  const probe = (buf) => {
+    if (buf.length < 1200) return 0; // empty/warm-up or still-writing
     const tmpMp4 = path.join(os.tmpdir(), `lucarne-rec-${ID}.mp4`);
     fs.writeFileSync(tmpMp4, buf);
-    try {
-      const dur = execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", tmpMp4], { encoding: "utf8" }).trim();
-      durationOk = parseFloat(dur) > 0;
-    } catch { /* ffprobe missing */ }
+    let dur = 0;
+    try { dur = parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", tmpMp4], { encoding: "utf8" }).trim()); } catch { /* ffprobe missing */ }
     fs.rmSync(tmpMp4, { force: true });
+    return dur || 0;
+  };
+  let good = null;
+  for (let i = 0; i < 64 && !good; i++) {
+    await sleep(250);
+    for (const seg of recEngine.recordings(rs.id)) {
+      const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7833/sessions/rec/recordings/${seg}?token=${TOKEN}`)).arrayBuffer());
+      const dur = probe(buf);
+      if (dur > 0) { good = { seg, bytes: buf.length, dur }; break; }
+    }
   }
-  let detail = segs[0] ? `${segs[0]} ${bytes}B` : "no segment";
-  if (!segs.length) { try { detail += " | ffmpeg: " + fs.readFileSync(path.join(os.tmpdir(), "lucarne", "rec-rec", "ffmpeg.log"), "utf8").trim().split("\n").slice(-3).join(" / "); } catch { detail += " (no ffmpeg.log)"; } }
-  check("recording: a record:true session produces a playable mp4 segment", segs.length >= 1 && bytes > 1000 && durationOk, detail);
+  rc.close();
+  let detail = good ? `${good.seg} ${good.bytes}B ${good.dur}s` : "no playable segment";
+  if (!good) { try { detail += " | ffmpeg: " + fs.readFileSync(path.join(os.tmpdir(), "lucarne", "rec-rec", "ffmpeg.log"), "utf8").trim().split("\n").slice(-3).join(" / "); } catch { detail += " (no ffmpeg.log)"; } }
+  check("recording: a record:true session produces a playable mp4 segment", !!good, detail);
 } finally {
   await recEngine.close().catch(() => {});
 }
