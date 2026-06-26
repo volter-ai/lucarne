@@ -18,8 +18,16 @@ export interface SessionDirs {
   recDir: string;
   /** Where this session's browser downloads land (retrievable via the API). */
   downloadDir: string;
+  /** Per-session scratch workspace (stage files to upload / collect outputs). */
+  filesDir: string;
   /** Preserve `profileDir` on stop (durable named profile). */
   persist: boolean;
+}
+
+/** The durable, session-independent files workspace. */
+export function globalFilesDir(): string {
+  const home = process.env.LUCARNE_HOME ?? path.join(os.homedir(), ".lucarne");
+  return path.join(home, "files");
 }
 
 export function profilesRoot(): string {
@@ -33,7 +41,8 @@ export function sessionDirs(id: string, persist: boolean): SessionDirs {
     : path.join(os.tmpdir(), "lucarne", "ephemeral-" + id);
   const recDir = path.join(os.tmpdir(), "lucarne", "rec-" + id);
   const downloadDir = path.join(os.tmpdir(), "lucarne", "dl-" + id);
-  return { profileDir, recDir, downloadDir, persist };
+  const filesDir = path.join(os.tmpdir(), "lucarne", "ws-" + id);
+  return { profileDir, recDir, downloadDir, filesDir, persist };
 }
 
 /** A persisted profile exists once Chrome has written its `Default` subdir. */

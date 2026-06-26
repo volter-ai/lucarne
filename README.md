@@ -158,6 +158,8 @@ GET    /sessions/:id/recordings/:file     -> video/mp4
 GET    /health                            -> { ok, sessions }   (no token needed; ids only when authed)
 GET    /profiles                          -> [{ name, active }]   (durable profiles on disk)
 DELETE /profiles/:name                    -> { ok }   (refused while a session is live)
+GET    /files | PUT/GET/DELETE /files/:name           -> durable global workspace
+GET    /sessions/:id/files | PUT/GET/DELETE .../files/:name   -> per-session scratch workspace
 ```
 
 `Session = { id, backend, cdpUrl, viewUrl, createdAt }`. Recording is on by default

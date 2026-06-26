@@ -64,7 +64,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 ## G. File handling
 - ✅ **P0 download retrieval** — downloads captured to a per-session dir (browser-level `Browser.setDownloadBehavior`); `GET/DELETE /sessions/:id/downloads[/file]`. *(Proof: porthole-triggered download captured, bytes match.)*
 - ✅ **P0 file upload into the browser** — inject a host file into `<input type=file>` via CDP `DOM.setFileInputFiles`; `POST /sessions/:id/upload`. *(Proof: page's file input reports matching name + sha256.)*
-- 🔨 P1 session + global files/workspace API
+- ✅ P1 session + global files/workspace API — `GET/PUT/DELETE /files/:name` (durable global) and `/sessions/:id/files/:name` (per-session scratch); stage files to upload / collect outputs. *(Proof: global + per-session put→list→get round-trips bytes by sha256; delete removes.)*
 
 ## H. Capture / output
 - ✅ P1 **screenshot API** + **PDF API** (CDP `Page.captureScreenshot` / `printToPDF`); `GET /sessions/:id/{screenshot,pdf}`. *(Proof: valid PNG at viewport width · valid PDF ≥1 page.)*
@@ -139,7 +139,8 @@ P1 so far: ✅ screenshot · ✅ pdf · ✅ health · ✅ status (rich object) �
 ✅ max-duration timeout · ✅ view-only (input dropped server-side) · ✅ context export/import (round-trips
 into another session) · ✅ release-all · ✅ touch input (tap fires page handler at mapped coords) · ✅ extensions (content script
 runs) · ✅ multi-tab (list + switch changes the rendered frame) · ✅ profile API (list/active-guard/delete) ·
-✅ per-session stats (frames + bytes) · ✅ showControls nav (go + back). **31/31.**
+✅ per-session stats (frames + bytes) · ✅ showControls nav (go + back) · ✅ files workspace (global +
+per-session round-trip). **34/34.**
 Proven *ad hoc* this session, to be converted to committed proofs: recording → valid 60s mp4;
 full chain (console→bridge→lucarne) renders a live green pixel + click/type lands in the UI.
 

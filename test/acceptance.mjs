@@ -351,6 +351,33 @@ try {
   await nEngine.close().catch(() => {});
 }
 
+// ── P1: files workspace API (global + per-session) ───────────────────────────
+const wEngine = new Lucarne({ port: 7820, token: TOKEN, record: false });
+await wEngine.listen();
+const F = (p, opts = {}) => fetch(`http://127.0.0.1:7820${p}`, { ...opts, headers: { authorization: `Bearer ${TOKEN}`, ...(opts.headers || {}) } });
+const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
+try {
+  // global workspace — no session needed
+  const gBytes = crypto.randomBytes(1024);
+  await F("/files/g.bin", { method: "PUT", body: gBytes });
+  const gList = await (await F("/files")).json();
+  const gGot = Buffer.from(await (await F("/files/g.bin")).arrayBuffer());
+  check("files(global): put → list → get round-trips bytes", gList.includes("g.bin") && sha(gGot) === sha(gBytes));
+  const gDel = await (await F("/files/g.bin", { method: "DELETE" })).json();
+  const gList2 = await (await F("/files")).json();
+  check("files(global): delete removes the file", gDel.ok === true && !gList2.includes("g.bin"));
+
+  // per-session workspace
+  const ws = await wEngine.create({ backend: "native", profile: "wsx" });
+  const sBytes = crypto.randomBytes(777);
+  await F(`/sessions/${ws.id}/files/s.bin`, { method: "PUT", body: sBytes });
+  const sList = await (await F(`/sessions/${ws.id}/files`)).json();
+  const sGot = Buffer.from(await (await F(`/sessions/${ws.id}/files/s.bin`)).arrayBuffer());
+  check("files(session): per-session workspace round-trips bytes", sList.includes("s.bin") && sha(sGot) === sha(sBytes));
+} finally {
+  await wEngine.close().catch(() => {});
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);

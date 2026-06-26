@@ -7,13 +7,14 @@ import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { portholeHtml } from "./porthole.js";
-import { deleteProfileDir, listProfileNames, profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
+import { deleteProfileDir, globalFilesDir, listProfileNames, profileExists, realChromeUserDataDir, seedProfile, sessionDirs } from "./profiles.js";
 import { startSessionMedia, type SessionMedia } from "./session-media.js";
 import type { CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
 interface Tracked extends Session {
   recDir: string;
   downloadDir: string;
+  filesDir: string;
   media: SessionMedia;
   createdAtMs: number;
   lastActivityMs: number;
@@ -87,6 +88,7 @@ export class Lucarne {
       if (source) seedProfile(source, dirs.profileDir);
     }
     fs.mkdirSync(dirs.downloadDir, { recursive: true });
+    fs.mkdirSync(dirs.filesDir, { recursive: true });
     const cdp = this.nextCdp++;
     const cdpUrl = `http://${this.host}:${cdp}`;
     const handle = await backend.start(id, { cdp }, {
@@ -109,7 +111,7 @@ export class Lucarne {
       id, backend: backend.kind, cdpUrl,
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
-      recDir: dirs.recDir, downloadDir: dirs.downloadDir, media, stop: handle.stop,
+      recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, stop: handle.stop,
       createdAtMs: Date.now(), lastActivityMs: Date.now(),
       timeoutMs: opts.timeoutMs, inactivityMs: opts.inactivityMs,
     };
@@ -161,6 +163,52 @@ export class Lucarne {
     if (!s) return null;
     const fp = path.join(s.downloadDir, path.basename(file));
     return fs.existsSync(fp) ? fp : null;
+  }
+
+  // ── Files workspace (per-session scratch dir or the global durable dir) ──
+  /** The directory backing a files scope: a session id, or `null` for global. */
+  private filesDirFor(id: string | null): string | null {
+    if (id === null) return globalFilesDir();
+    const s = this.sessions.get(id);
+    return s ? s.filesDir : null;
+  }
+  putWorkspaceFile(dir: string, name: string, data: Buffer): void {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, path.basename(name)), data);
+  }
+  listWorkspaceFiles(dir: string): string[] {
+    try { return fs.readdirSync(dir).filter((f) => !f.startsWith(".")).sort(); } catch { return []; }
+  }
+  workspaceFilePath(dir: string, name: string): string | null {
+    const fp = path.join(dir, path.basename(name));
+    return fs.existsSync(fp) ? fp : null;
+  }
+
+  /** REST handler shared by the session and global files workspaces. */
+  private async serveFiles(
+    req: http.IncomingMessage, res: http.ServerResponse,
+    send: (res: http.ServerResponse, code: number, body: unknown) => void,
+    dir: string, name: string,
+  ): Promise<void> {
+    if (req.method === "GET" && !name) return send(res, 200, this.listWorkspaceFiles(dir));
+    if (req.method === "GET" && name) {
+      const fp = this.workspaceFilePath(dir, name);
+      if (!fp) return send(res, 404, { error: "no such file" });
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      fs.createReadStream(fp).pipe(res);
+      return;
+    }
+    if (req.method === "PUT" && name) {
+      const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
+      this.putWorkspaceFile(dir, name, Buffer.concat(chunks));
+      return send(res, 200, { ok: true });
+    }
+    if (req.method === "DELETE" && name) {
+      const fp = this.workspaceFilePath(dir, name);
+      if (fp) fs.rmSync(fp, { force: true });
+      return send(res, 200, { ok: !!fp });
+    }
+    return send(res, 405, { error: "method not allowed" });
   }
 
   /** PNG screenshot of the session's current page (CDP `Page.captureScreenshot`). */
@@ -251,6 +299,7 @@ export class Lucarne {
     try { s.media.close(); } catch { /* ignore */ }
     await s.stop().catch(() => {});
     try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
     this.sessions.delete(id);
     return true;
   }
@@ -311,6 +360,8 @@ export class Lucarne {
           return send(res, 200, this.tokenOk(req.url ?? "/", req.headers.authorization) ? h : { ok: h.ok, sessions: h.sessions });
         }
         if (!this.tokenOk(req.url ?? "/", req.headers.authorization)) return send(res, 401, { error: "unauthorized" });
+        const gf = pathname.match(/^\/files\/?(.*)$/);
+        if (gf) { await this.serveFiles(req, res, send, globalFilesDir(), decodeURIComponent(gf[1]!)); return; }
         const prof = pathname.match(/^\/profiles\/?(.*)$/);
         if (prof) {
           const name = prof[1];
@@ -363,6 +414,13 @@ export class Lucarne {
             return send(res, 200, { ok: true });
           }
           return send(res, 405, { error: "method not allowed" });
+        }
+        const sf = pathname.match(/^\/sessions\/([^/]+)\/files\/?(.*)$/);
+        if (sf) {
+          const dir = this.filesDirFor(sf[1]!);
+          if (!dir) return send(res, 404, { error: "no such session" });
+          await this.serveFiles(req, res, send, dir, decodeURIComponent(sf[2]!));
+          return;
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {
