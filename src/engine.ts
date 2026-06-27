@@ -87,6 +87,18 @@ function rebindForbidden(headers: http.IncomingHttpHeaders): boolean {
   return false;
 }
 
+/**
+ * Reject a non-positive / NaN numeric config option AT CONSTRUCTION with a clear
+ * message naming the offending option (lucarne's fail-closed ethos), rather than
+ * silently using it and only surfacing it later as a broken capture/recording.
+ */
+function positiveOption(name: string, value: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`lucarne: ${name} must be a positive number (got ${value})`);
+  }
+  return value;
+}
+
 /** Constant-time string equality (length-independent) — for token comparison. */
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a), bb = Buffer.from(b);
@@ -170,12 +182,14 @@ export class Lucarne {
     this.image = opts.image ?? "lucarne-browser:latest";
     this.chromePath = opts.chromePath ?? process.env.LUCARNE_CHROME ?? resolveChrome();
     this.viewport = opts.viewport ?? { width: 1280, height: 720 };
+    positiveOption("viewport.width", this.viewport.width);
+    positiveOption("viewport.height", this.viewport.height);
     this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
     this.headless = opts.headless ?? process.env.LUCARNE_HEADLESS === "1";
     this.activityDefault = opts.activity ?? process.env.LUCARNE_ACTIVITY === "1";
-    this.fps = opts.fps ?? 4;
-    this.retentionMin = opts.retentionMin ?? 60;
-    this.segmentSeconds = opts.segmentSeconds ?? 60;
+    this.fps = positiveOption("fps", opts.fps ?? 4);
+    this.retentionMin = positiveOption("retentionMin", opts.retentionMin ?? 60);
+    this.segmentSeconds = positiveOption("segmentSeconds", opts.segmentSeconds ?? 60);
     this.nextCdp = opts.cdpPortBase ?? 9300;
     this.registryFile = opts.registryFile ?? registryFilePath();
     this.maxConcurrent = opts.maxConcurrent ?? Infinity;
