@@ -1091,25 +1091,30 @@ try {
 // ── Recording END-TO-END THROUGH THE ENGINE (record:true wires the recorder) ──
 // The unit proof above bypasses the engine; this proves create({record}) actually
 // records and GET /recordings/:file serves a real mp4 over HTTP.
-const e2eRec = new Lucarne({ port: 7834, token: TOKEN, record: true, fps: 6, segmentSeconds: 2 });
+const e2eRec = new Lucarne({ port: 7834, token: TOKEN, record: true, fps: 6, segmentSeconds: 1 });
 await e2eRec.listen();
 try {
   const es = await e2eRec.create({ backend: "native", profile: "e2erec" });
   const ec = await attachPage(es.cdpUrl);
-  await ec.call("Runtime.evaluate", { expression: "document.body.innerHTML='<h1 style=\"font:80px monospace\">LIVE</h1>'" });
-  // open the porthole so the shared screencast (which the recorder taps) actually flows
+  // open the porthole so the shared screencast (which the recorder taps) flows
   const ew = new WS(`ws://127.0.0.1:7834/sessions/e2erec/view/ws?token=${TOKEN}`);
   await new Promise((r) => { ew.on("open", r); ew.on("error", r); });
-  await sleep(5000);            // let ≥1 two-second segment cut + finalize
-  ew.close(); ec.close();
-  const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
-  let mp4ok = false, n = 0;
-  if (Array.isArray(segs) && segs.length) {
-    const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`)).arrayBuffer());
-    n = buf.length;
-    mp4ok = n > 1000 && buf.includes(Buffer.from("ftyp"));   // mp4 file-type box
+  // poll while driving continuous visual change (so the screencast keeps emitting and
+  // 1s segments cut+finalize) — robust to muxer/runner timing, not a fixed sleep.
+  let mp4ok = false, n = 0, segCount = 0;
+  for (let i = 0; i < 20 && !mp4ok; i++) {
+    await ec.call("Runtime.evaluate", { expression: `document.body.innerHTML='<h1 style=font:80px monospace>LIVE ${i}</h1>'` });
+    await sleep(800);
+    const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
+    segCount = Array.isArray(segs) ? segs.length : 0;
+    if (segCount) {
+      const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`)).arrayBuffer());
+      n = buf.length;
+      mp4ok = n > 1000 && buf.includes(Buffer.from("ftyp"));   // mp4 file-type box
+    }
   }
-  check("recording(e2e): create({record:true}) records + /recordings/:file serves a real mp4", mp4ok, `${Array.isArray(segs) ? segs.length : 0} segs, ${n}B`);
+  ew.close(); ec.close();
+  check("recording(e2e): create({record:true}) records + /recordings/:file serves a real mp4", mp4ok, `${segCount} segs, ${n}B`);
   await e2eRec.destroy(es.id);
 } finally {
   await e2eRec.close().catch(() => {});
