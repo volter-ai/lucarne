@@ -31,7 +31,10 @@ never open the PR, request review, or merge.
    have placed you on it (a local runner gives you an isolated worktree already on that branch); create it only
    if needed — don't fail if you're already there:
    `git checkout -b "agent/issue-$ZTRACK_ISSUE" 2>/dev/null || git checkout "agent/issue-$ZTRACK_ISSUE"`.
-4. Implement. Run the project's tests/checks; accept a check that exits 0.
+4. Implement. Verify with a **fast, TARGETED** check — the build/typecheck plus the specific test(s) your
+   change affects (or a quick runtime spot-check). **Do NOT run the project's full/slow suite locally** (e.g.
+   a browser/e2e suite that takes many minutes) — CI runs the full suite on the PR and is the real gate;
+   running it in-session just doubles the wait. Accept a targeted check that exits 0.
 5. **Commit your implementation — stage ONLY the files you changed for this issue, BY PATH.**
    **NEVER `git add -A` / `git add .`** — those sweep OA's own working files (the tracker's `.volter/`
    sync-state, any scratch, etc.) into the PR, which the reviewer will (correctly) reject as unrelated
