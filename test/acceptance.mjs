@@ -940,6 +940,20 @@ try {
   await bareEngine.close().catch(() => {});
   check("backend seam: an unregistered backend is rejected", /unknown backend/.test(unkBackend));
 
+  // per-session create() inputs are validated and fail closed (not silently sent to CDP)
+  const vEngine = new Lucarne({ port: 7842, token: TOKEN, record: false });
+  await vEngine.listen();
+  let qErr = "", geoLatErr = "", geoLonErr = "", qNanErr = "";
+  try { await vEngine.create({ profile: "vq", quality: 999 }); } catch (e) { qErr = e.message; }
+  try { await vEngine.create({ profile: "vqn", quality: NaN }); } catch (e) { qNanErr = e.message; }
+  try { await vEngine.create({ profile: "vgla", geo: { latitude: 200, longitude: 0 } }); } catch (e) { geoLatErr = e.message; }
+  try { await vEngine.create({ profile: "vglo", geo: { latitude: 0, longitude: 999 } }); } catch (e) { geoLonErr = e.message; }
+  await vEngine.close().catch(() => {});
+  check("create: an out-of-range quality is rejected with a clear message naming the field", /quality must be.*between 1 and 100/.test(qErr), qErr);
+  check("create: a NaN quality is rejected with a clear message", /quality must be/.test(qNanErr), qNanErr);
+  check("create: an out-of-range geo.latitude is rejected with a clear message", /geo\.latitude must be.*between -90 and 90/.test(geoLatErr), geoLatErr);
+  check("create: an out-of-range geo.longitude is rejected with a clear message", /geo\.longitude must be.*between -180 and 180/.test(geoLonErr), geoLonErr);
+
   // pluggable credential provider: the engine uses the injected store, not the file default
   const mem = new Map();
   const customStore = {

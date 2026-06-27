@@ -87,6 +87,27 @@ function rebindForbidden(headers: http.IncomingHttpHeaders): boolean {
   return false;
 }
 
+/**
+ * Validate per-session create() inputs that are otherwise passed straight to CDP
+ * unchecked — fail closed with a clear message naming the offending field (lucarne's
+ * ethos), BEFORE any session is spawned. Omitted values are left untouched so their
+ * defaults still apply.
+ */
+function validateCreateOptions(opts: CreateSessionOptions): void {
+  if (opts.quality !== undefined) {
+    const q = opts.quality;
+    if (typeof q !== "number" || !Number.isFinite(q) || q < 1 || q > 100)
+      throw new Error(`lucarne: quality must be a number between 1 and 100 (got ${q})`);
+  }
+  if (opts.geo !== undefined) {
+    const { latitude, longitude } = opts.geo;
+    if (typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90)
+      throw new Error(`lucarne: geo.latitude must be a number between -90 and 90 (got ${latitude})`);
+    if (typeof longitude !== "number" || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)
+      throw new Error(`lucarne: geo.longitude must be a number between -180 and 180 (got ${longitude})`);
+  }
+}
+
 /** Constant-time string equality (length-independent) — for token comparison. */
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a), bb = Buffer.from(b);
@@ -198,6 +219,7 @@ export class Lucarne {
   }
 
   async create(opts: CreateSessionOptions = {}): Promise<Session> {
+    validateCreateOptions(opts); // fail closed on bad quality/geo before spawning anything
     const id = (opts.profile ?? "s" + Date.now().toString(36)).replace(/[^a-z0-9_-]/gi, "");
     const live = this.sessions.get(id);
     if (live) return pub(live);
