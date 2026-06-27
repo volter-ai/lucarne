@@ -59,12 +59,14 @@
     "test:docker": "node test/docker-smoke.mjs"
   },
   "dependencies": {
+    "termfleet": "^0.2.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "playwright": "^1.49.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "ztrack": "^0.34.1"
   }
 }

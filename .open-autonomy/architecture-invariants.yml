@@ -1,0 +1,22 @@
+schema: open-autonomy.architecture-invariants.v1
+# YOUR project's architectural immune system — the boundaries the autonomy loop must NOT erode while it
+# maintains this repo. The reviewer ENFORCES these on every PR (see the reviewer skill's architecture step).
+# They are HUMAN-OWNED: the loop may PROPOSE an invariant, but only a maintainer RATIFIES one — an optimizer
+# must never move its own measuring stick. Editing this file is human-required (no agent re-architects).
+#
+# RATIFY YOURS: have the fleet propose invariants by reading this codebase, then keep the ones you accept here.
+# Until you add invariants, the reviewer's architecture check is a safe no-op (empty list = nothing to enforce).
+# Each invariant the reviewer can check has this shape:
+#
+#   - id: domain-has-no-framework            # kebab id
+#     title: The domain layer imports no framework
+#     statement: >
+#       Files under src/domain/** depend only on the standard library and other domain code — never the web
+#       framework, the ORM, or transport. Framework concerns live in the adapters layer.
+#     violation: A src/domain/** file imports express/prisma/axios/etc., or reaches a request/response/db handle.
+#     review: For EACH changed file under src/domain/**, verdict Y/N "imports a framework?" with the line.
+#     on_change: human-required          # amending THIS invariant requires a maintainer
+#
+# Consequences the reviewer applies: an accidental VIOLATION -> fail (rework back inside the boundary); an
+# intentional AMENDMENT, an edit to this file, or genuine AMBIGUITY -> human-required (a maintainer rules).
+invariants: []

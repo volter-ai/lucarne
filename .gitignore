@@ -6,3 +6,21 @@ __pycache__/
 *.pyc
 .env
 .env.*
+
+# ztrack (added by ztrack init)
+.volter/tracker/tracker.sqlite
+.volter/tracker/tracker.sqlite-*
+.volter/tracker/tracker.sqlite.lock
+.volter/tracker/local-store.json
+.volter/tracker/markdown/
+.volter/agent-dispatch/
+.volter/github/
+.volter/sync/
+.volter/.ztrack-loop.json
+.volter/.ztrack-loop-iter-*
+.volter/.ztrack-loop-exempt-*
+.volter/.ztrack-loop-capped.json
+
+# open-autonomy runtime
+.worktrees/
+.open-autonomy/runner-state/

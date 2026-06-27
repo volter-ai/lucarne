@@ -1,0 +1,109 @@
+schema: open-autonomy.autonomy.v1
+codeHost: github
+documents:
+  resources:
+    - .open-autonomy/architecture-invariants.yml
+    - .claude/settings.json
+    - .github/workflows/merge.yml
+    - .github/workflows/security.yml
+    - .github/dependabot.yml
+    - standards/workflow.md
+    - standards/issue-and-evidence.md
+    - standards/risk-and-review.md
+skills:
+  pm: .codex/skills/pm
+  draft: .codex/skills/draft
+  develop: .codex/skills/develop
+  reviewer: .codex/skills/reviewer
+agents:
+  pm:
+    skill: pm
+    workflowFile: pm.yml
+    triggers:
+      schedule: "*/15 * * * *"
+    capabilities:
+      - tasks:converse
+      - agent:launch
+      - agent:list
+  draft:
+    skill: draft
+    workflowFile: draft.yml
+    params:
+      ZTRACK_ISSUE: subject.ref
+    triggers:
+      dispatch: true
+    capabilities:
+      - tasks:author
+      - tasks:converse
+  develop:
+    skill: develop
+    workflowFile: develop.yml
+    params:
+      ZTRACK_ISSUE: subject.ref
+    triggers:
+      dispatch: true
+    capabilities:
+      - code:propose
+      - tasks:converse
+    review: reviewer
+  reviewer:
+    skill: reviewer
+    workflowFile: reviewer.yml
+    params:
+      TARGET_REF: subject.ref
+      SUBJECT_TEXT: subject.text
+      ACTOR_ROLE: subject.actorRole
+    triggers:
+      issue_comment:
+        types:
+          - created
+      pull_request_target:
+        types:
+          - opened
+          - synchronize
+          - reopened
+          - ready_for_review
+    timeout: 20
+    capabilities:
+      - code:review
+      - tasks:converse
+policy:
+  wip:
+    maxInProgress: 1
+    maxInReview: 1
+  autonomy:
+    max_develop_attempts: 2
+  risk:
+    human_required_paths:
+      - .github/workflows/**
+      - .codex/skills/**
+      - .claude/skills/**
+      - .open-autonomy/**
+      - scheduler/run.mjs
+      - scheduler/schedule.json
+      - scripts/prompts/**
+      - scripts/agent.ts
+      - scripts/agent-propose.ts
+      - scripts/agent-visual-verify.ts
+      - scripts/autonomy-runner.mjs
+      - scripts/check-supply-chain.ts
+      - scripts/claude-agent-run.ts
+      - scripts/human-approval-gate.ts
+      - scripts/model-proxy-exchange.ts
+      - scripts/model-proxy-mint.ts
+      - scripts/model-proxy-revoke.ts
+      - scripts/rearm-auto-merge.ts
+      - scripts/reconcile-merged-issues.ts
+      - scripts/run-agent.mjs
+      - scripts/runner-defaults.mjs
+      - scripts/runner.ts
+      - scripts/transcript.ts
+      - profiles/**/skills/**
+      - .volter/tracker/validation/**
+    human_required_topics:
+      - auth
+      - secrets
+      - billing
+      - deployment
+      - destructive data migration
+      - dependency trust

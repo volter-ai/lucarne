@@ -1,0 +1,33 @@
+name: Merge
+# Standard code-host CI resource — installed into every github install that has a code:propose agent (a
+# resource, carried by the profile like the standards docs; NOT engine output — docs/CODE_HOST_RESOURCES.md).
+# It realizes the integration boundary, the sibling of deploy's "no agent deploys": agents only ever PROPOSE
+# (open a PR); the merge is performed here, deterministically, by no agent. This workflow ARMS native
+# auto-merge on open agent PRs and RECONCILES issues whose linked PR has merged. Enabling auto-merge requires
+# push access, so it holds contents:write (+ pull-requests:write to manage the PR, issues:write to reconcile) —
+# BUT it cannot bypass review: branch protection requires ci + agent-review server-side with no bypass, so
+# `--auto` only ever lands a PR once those are green (a red/unreviewed PR is refused even with contents:write).
+# Branch protection is the gate, not the absence of a permission. A bot-opened PR fires no pull_request event
+# (GITHUB_TOKEN anti-recursion), so the proposer DISPATCHES this right after opening its PR (exactly as it
+# dispatches ci/agent-review), and a schedule re-runs it as the deterministic backstop for any arm/close missed.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile || bun install
+      - name: Arm native auto-merge on open agent PRs (cannot bypass review — branch protection gates the merge)
+        run: bun scripts/rearm-auto-merge.ts || true
+      - name: Reconcile — close issues whose linked PR has merged
+        run: bun scripts/reconcile-merged-issues.ts || true

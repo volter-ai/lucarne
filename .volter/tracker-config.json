@@ -1,0 +1,22 @@
+{
+  "backend": "markdown",
+  "local": {
+    "teamKey": "LOCAL"
+  },
+  "validation": {
+    "entrypoint": ".volter/tracker/validation/preset.mts",
+    "installedFrom": "simple-gh-sdlc"
+  },
+  "organization": {
+    "check": {
+      "categories": {
+        "sourced": 1,
+        "code": 2
+      }
+    }
+  },
+  "sync": {
+    "provider": "github",
+    "repo": "volter-ai/lucarne"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "intervalSeconds": 900,
+  "env": {},
+  "scripts": [
+    "AUTONOMY_AGENT=pm AUTONOMY_SINGLETON=1 node scripts/run-agent.mjs"
+  ]
+}
