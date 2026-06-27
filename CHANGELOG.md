@@ -4,6 +4,52 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.4.0]
+
+A second adversarial review round (6 skeptics — regression-on-the-1.3.0-diff, security
+bypass re-attack, empirical concurrency stress, recording-in-headless, cross-platform,
+completeness) found that 1.3.0's own hardening shipped new holes. All fixed, each with a
+committed proof.
+
+### Security
+- **The porthole WebSocket upgrade is now CSRF/rebinding-guarded** (was: only the HTTP
+  plane). A cross-origin web page could open the porthole WS and drive + watch a tokenless
+  loopback daemon — **critical**, now closed (shared guard on both planes).
+- **The rebinding host check is a strict loopback LITERAL** — `127.x.evil.com` (which
+  `startsWith("127.")` accepted) and an absent `Host` are now refused (fail-closed).
+- **`file://` nav block strips leading C0 control chars** first (`\x00file://` bypassed the
+  old `\s*` regex) and default-denies by scheme allowlist (http/https/about/data only).
+- **Body cap is enforced WHILE reading** (a `Transfer-Encoding: chunked` body bypassed the
+  content-length-only check → OOM). Upload confinement now uses `realpath` (symlink escape).
+
+### Fixed (concurrency)
+- **destroy-then-recreate-same-id no longer clobbers the new session** — `create` awaits an
+  in-flight teardown, so the old `destroy`'s dir cleanup can't wipe the successor's
+  workspace (a confirmed race I introduced in 1.3.0). Verified under empirical stress.
+
+### Fixed (Windows — was hard-broken)
+- Backends use `node:fs` instead of POSIX `mkdir`/`rm` (every session create threw `ENOENT`
+  on Windows). Tunnel teardown kills the tree via `taskkill` on win32 (the POSIX
+  process-group kill silently orphaned the tunnel). Chrome resolves from a per-platform
+  candidate list (Program Files (x86) / per-user install / `chromium`).
+
+### Fixed (privacy)
+- **Typed-secret redaction is captured at type-time and broadened** — a password typed
+  before a submit/navigation was leaking UNredacted (focus gone at flush → fail-open); now
+  fail-closed, covering password + `autocomplete` cc/otp/current-password + name/id
+  cvv/ssn/card/secret. **Network-log URLs are stripped of query/fragment** (they carried
+  OAuth/bearer tokens into the `/logs` ring).
+
+### Fixed (recording)
+- **Recording works for static/headless pages.** The screencast only fires on visual change,
+  so `--headless=new` idle pages produced empty segments; a frame watchdog now primes the
+  frame via `Page.captureScreenshot`. The e2e proof asserts a real (>2 KB, `ftyp`) segment
+  for a STATIC unwatched page (the prior proof had been weakened to a 200/MIME check that a
+  48-byte empty stub passed).
+
+### Chore
+- Regenerated `package-lock.json` (was pinned at `0.5.0` → `npm ci` failed on a fresh clone).
+
 ## [1.3.0]
 
 A hardening release from a 6-dimension adversarial review (security red-team,

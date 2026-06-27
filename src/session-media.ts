@@ -9,6 +9,19 @@ import type { ActivityEvent, ActivityNow, LogEntry } from "./types.js";
 export type { ActivityEvent, ActivityNow, LogEntry } from "./types.js";
 
 const MOUSE_BUTTON = ["left", "middle", "right"] as const;
+
+/**
+ * Porthole nav is allowlisted to web schemes only. Strips the leading C0 controls +
+ * whitespace that Chrome's URL parser removes BEFORE the scheme (so `\x00file://`
+ * can't slip past), then default-denies anything but http/https/about/data. Blocks
+ * file:/chrome:/chrome-extension:/view-source:/filesystem:/blob:/javascript: …
+ */
+export function isWebNavUrl(raw: string): boolean {
+  const u = raw.replace(/^[\x00-\x20]+/, "");           // strip leading C0 controls + space
+  const m = u.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);    // explicit scheme?
+  if (!m) return true;                                  // scheme-relative / path → same-origin web
+  return ["http", "https", "about", "data"].includes(m[1]!.toLowerCase());
+}
 const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 // editing accelerators (Cmd/Ctrl + key) → CDP edit command
@@ -78,6 +91,7 @@ export async function startSessionMedia(opts: {
   // re-applied per page (it's page-session-scoped, like mobile emulation).
   if (opts.geo) browserConn.call("Browser.grantPermissions", { permissions: ["geolocation"] }).catch(() => {});
   let latest: Buffer | null = null;
+  let lastFrameMs = 0;
   let frameCount = 0, streamedBytes = 0;
   const subs = new Set<(f: Buffer) => void>();
   // Bounded ring of captured logs + live subscribers (SSE). Wired per page so it
@@ -104,24 +118,34 @@ export async function startSessionMedia(opts: {
     if (actBuf.length > ACT_CAP) actBuf.shift();
     for (const cb of actSubs) cb(e);
   };
-  // coalesce consecutive keystrokes into one `type` event, then check the focused
-  // field's secrecy off the hot path and redact.
-  let typeBuf: { actor: "human" | "agent"; text: string } | null = null;
+  // coalesce consecutive keystrokes into one `type` event. CRITICAL: capture the
+  // field's secrecy WHEN TYPING STARTS (the field is provably focused then) — NOT at
+  // flush, which races a submit/navigation (focus gone → old code defaulted to
+  // unredacted and LEAKED the password). Read fails closed (redact on uncertainty).
+  const readSecrecy = async (): Promise<{ secret: boolean; field?: string }> => {
+    try {
+      const r = await page.call("Runtime.evaluate", { returnByValue: true, expression:
+        "(()=>{const e=document.activeElement;if(!e)return '||1';" +
+        "const ty=(e.type||e.tagName.toLowerCase());" +
+        "const nm=(e.name||e.id||e.getAttribute('aria-label')||'');" +
+        "const ac=(e.getAttribute('autocomplete')||'').toLowerCase();" +
+        "const sec=ty==='password'||/cc-number|cc-csc|cc-exp|current-password|new-password|one-time-code/.test(ac)||/pass|pwd|cvv|cvc|ssn|secret|otp|securitycode|cardnum|account/i.test(nm)?1:0;" +
+        "return ty+'|'+nm+'|'+sec})()" });
+      const [, nm, sec] = String(r.result?.value ?? "||1").split("|");
+      return { secret: sec === "1", field: nm || undefined };
+    } catch { return { secret: true }; }   // page navigating/gone → fail closed
+  };
+  let typeBuf: { actor: "human" | "agent"; text: string; secretP: Promise<{ secret: boolean; field?: string }> } | null = null;
   let typeTimer: ReturnType<typeof setTimeout> | undefined;
   const flushType = async (): Promise<void> => {
     const buf = typeBuf; typeBuf = null;
     if (!buf || !buf.text) return;
-    let field: string | undefined, secret = false;
-    try {
-      const r = await page.call("Runtime.evaluate", { expression: "(()=>{const e=document.activeElement;if(!e)return '|';return (e.type||e.tagName.toLowerCase())+'|'+(e.name||e.id||e.getAttribute('aria-label')||'')})()", returnByValue: true });
-      const [t, n] = String(r.result?.value ?? "|").split("|");
-      secret = t === "password"; field = n || undefined;
-    } catch { /* page gone */ }
+    const { secret, field } = await buf.secretP;
     pushAct({ ts: Date.now(), actor: buf.actor, kind: "type", field, value: secret ? "‹redacted›" : buf.text });
   };
   const appendType = (actor: "human" | "agent", text: string): void => {
     if (!opts.activity) return;
-    if (!typeBuf || typeBuf.actor !== actor) { void flushType(); typeBuf = { actor, text: "" }; }
+    if (!typeBuf || typeBuf.actor !== actor) { void flushType(); typeBuf = { actor, text: "", secretP: readSecrecy() }; }
     typeBuf.text += text;
     clearTimeout(typeTimer); typeTimer = setTimeout(() => void flushType(), 800);
   };
@@ -145,10 +169,14 @@ export async function startSessionMedia(opts: {
       pushAct({ ts: Date.now(), actor: Date.now() - lastHumanMs < 1500 ? "human" : "agent", kind: "nav", url });
     });
   };
+  // Strip query + fragment from a logged URL — they routinely carry OAuth codes,
+  // access/bearer tokens, and API keys; the captured-log ring is readable over
+  // /logs + SSE, so keep secrets out of it while preserving the path for debugging.
+  const stripUrlSecrets = (u: string): string => { try { const x = new URL(u); return x.origin + x.pathname + (x.search ? "?…" : ""); } catch { return u.split("?")[0] ?? u; } };
   const wireLogs = (c: CdpConn): void => {
     c.send("Network.enable");
     c.on("Network.requestWillBeSent", (p: { request: { method: string; url: string } }) =>
-      pushLog({ kind: "network", method: p.request.method, url: p.request.url, ts: Date.now() }));
+      pushLog({ kind: "network", method: p.request.method, url: stripUrlSecrets(p.request.url), ts: Date.now() }));
     c.send("Runtime.enable");
     c.on("Runtime.consoleAPICalled", (p: { type: string; args: { value?: unknown; description?: string }[] }) =>
       pushLog({ kind: "console", level: p.type, text: (p.args || []).map((a) => String(a.value ?? a.description ?? "")).join(" "), ts: Date.now() }));
@@ -167,6 +195,7 @@ export async function startSessionMedia(opts: {
     if (opts.geo) c.send("Emulation.setGeolocationOverride", { latitude: opts.geo.latitude, longitude: opts.geo.longitude, accuracy: opts.geo.accuracy ?? 50 });
     c.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
       latest = Buffer.from(p.data, "base64");
+      lastFrameMs = Date.now();
       frameCount++; streamedBytes += latest.length;
       for (const cb of subs) cb(latest);
       c.send("Page.screencastFrameAck", { sessionId: p.sessionId });
@@ -177,6 +206,26 @@ export async function startSessionMedia(opts: {
     wireActivity(c);
   };
   wireScreencast(page);
+
+  // Frame watchdog: `Page.screencastFrame` only fires on visual CHANGE, and headless
+  // Chrome composites no frames for a static/idle page — so `latest` could stay null
+  // and recording (which replays `latest`) would write an empty file. When no frame
+  // has arrived recently, force a render via Page.captureScreenshot to seed `latest`.
+  // Bounded to ~1/sec when idle; unref'd so it never holds the process open.
+  const FRAME_IDLE_MS = 1200;
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastFrameMs < FRAME_IDLE_MS) return;   // live frames flowing — skip
+    page.call("Page.captureScreenshot", { format: "jpeg", quality: opts.quality ?? 60 })
+      .then((r: { data?: string }) => {
+        if (!r?.data) return;
+        latest = Buffer.from(r.data, "base64");
+        lastFrameMs = Date.now();
+        frameCount++; streamedBytes += latest.length;
+        for (const cb of subs) cb(latest);
+      })
+      .catch(() => { /* page busy/navigating — try next tick */ });
+  }, 1000);
+  watchdog.unref?.();
 
   const frames: FrameSource = {
     get: () => latest,
@@ -210,10 +259,11 @@ export async function startSessionMedia(opts: {
       if (ev.phase === "commit") page.send("Input.insertText", { text });
       else page.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
     } else if (ev.t === "nav") {
-      // Refuse local-resource schemes: `file://`/`chrome://` would turn the browser
-      // into an arbitrary host-file reader (read back via /content or /screenshot),
-      // escalating beyond "browser/account control" to host-FS read. http(s)/data/about only.
-      if (ev.action === "go" && ev.url && !/^\s*(file|chrome|chrome-extension|view-source):/i.test(ev.url)) page.send("Page.navigate", { url: ev.url });
+      // Allow ONLY web schemes for porthole navigation. file://, chrome://, etc. would
+      // turn the browser into an arbitrary host-file reader (read back via /content or
+      // /screenshot). Default-deny by allowlist, after stripping leading C0/whitespace
+      // (the chars Chrome's URL parser strips) so `\x00file://` can't slip past.
+      if (ev.action === "go" && ev.url && isWebNavUrl(ev.url)) page.send("Page.navigate", { url: ev.url });
       else if (ev.action === "back") page.send("Runtime.evaluate", { expression: "history.back()" });
       else if (ev.action === "forward") page.send("Runtime.evaluate", { expression: "history.forward()" });
       else if (ev.action === "reload") page.send("Page.reload", {});
@@ -276,6 +326,7 @@ export async function startSessionMedia(opts: {
       try { old.send("Page.stopScreencast"); old.close(); } catch { /* ignore */ }
     },
     close(): void {
+      clearInterval(watchdog);
       try { recorder?.close(); } catch { /* ignore */ }
       try { page.close(); } catch { /* ignore */ }
       try { browserConn.close(); } catch { /* ignore */ }

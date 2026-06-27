@@ -1,10 +1,9 @@
-import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { attachBrowser } from "../cdp.js";
 import type { Backend, BackendContext, BackendHandle } from "./types.js";
 import { waitForCdp } from "./types.js";
-
-const exec = promisify(execFile);
 
 /** Resolve once the child has exited, or after `ms` (caller then SIGKILLs). */
 function waitExit(child: ChildProcess, ms: number): Promise<void> {
@@ -23,12 +22,15 @@ export const nativeBackend: Backend = {
   kind: "native",
   async start(id, ports, ctx: BackendContext): Promise<BackendHandle> {
     const { profileDir, recDir, persist } = ctx;
-    if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // anonymous = fresh
-    await exec("mkdir", ["-p", profileDir, recDir]);
+    // Use node:fs (not POSIX `rm`/`mkdir`) so this works on Windows too.
+    if (!persist) fs.rmSync(profileDir, { recursive: true, force: true }); // anonymous = fresh
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.mkdirSync(recDir, { recursive: true });
     // A durable profile carries singleton locks from its last run; clear them so
     // Chrome relaunches into the same data dir instead of refusing/forking a copy.
-    await Promise.all(["SingletonLock", "SingletonCookie", "SingletonSocket"].map(
-      (l) => exec("rm", ["-f", `${profileDir}/${l}`]).catch(() => {})));
+    for (const l of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+      try { fs.rmSync(path.join(profileDir, l), { force: true }); } catch { /* ignore */ }
+    }
     const chrome: ChildProcess = spawn(ctx.chromePath, [
       `--remote-debugging-port=${ports.cdp}`,
       `--user-data-dir=${profileDir}`,
@@ -81,8 +83,8 @@ export const nativeBackend: Backend = {
           await waitExit(chrome, 6000);
         }
         try { chrome.kill("SIGKILL"); } catch { /* ignore */ }
-        await exec("rm", ["-rf", recDir]).catch(() => {});
-        if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // keep durable profiles
+        try { fs.rmSync(recDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        if (!persist) try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* ignore */ } // keep durable profiles
       },
     };
   },

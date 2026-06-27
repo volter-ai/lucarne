@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 
 /**
@@ -80,19 +80,24 @@ export function tunnelSpawnSpec(opts: TunnelOptions): { file: string; args: stri
 export function startTunnel(opts: TunnelOptions): Promise<TunnelHandle> {
   const spec = tunnelSpawnSpec(opts);
   const timeoutMs = opts.timeoutMs ?? 30_000;
-  // A `--tunnel-cmd` runs under a shell; spawn it DETACHED so it leads its own
-  // process group, and tear down the whole group on stop — otherwise SIGTERM to
-  // the shell can orphan the real tunnel (a wrapper script that doesn't `exec`),
-  // leaving the public ingress open after the daemon stops.
+  // A `--tunnel-cmd` runs under a shell; on POSIX spawn it DETACHED so it leads its
+  // own process group and we can kill the WHOLE group on stop (a wrapper that doesn't
+  // `exec` would otherwise orphan the real tunnel). Windows has no process groups and
+  // `process.kill(-pid)` throws there, so DON'T detach on win32 — use taskkill /T.
+  const isWin = process.platform === "win32";
   const child: ChildProcess = spec.shell
-    ? spawn(spec.file, { shell: true, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LUCARNE_LOCAL_URL: `http://${opts.host}:${opts.port}`, LUCARNE_PORT: String(opts.port) } })
+    ? spawn(spec.file, { shell: true, detached: !isWin, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LUCARNE_LOCAL_URL: `http://${opts.host}:${opts.port}`, LUCARNE_PORT: String(opts.port) } })
     : spawn(spec.file, spec.args, { stdio: ["ignore", "pipe", "pipe"] });
 
-  // Kill the child (and its group, for the detached shell case), SIGKILL backstop.
+  // Kill the child (and, for the detached shell case, its whole group); SIGKILL backstop.
   const teardown = (): void => {
     const pid = child.pid;
     const sig = (s: NodeJS.Signals): void => {
-      try { if (spec.shell && pid) process.kill(-pid, s); else child.kill(s); } catch { /* already gone */ }
+      try {
+        if (isWin && pid) { try { execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" }); } catch { /* */ } child.kill(); }
+        else if (spec.shell && pid) process.kill(-pid, s);   // POSIX process-group kill
+        else child.kill(s);
+      } catch { /* already gone */ }
     };
     sig("SIGTERM");
     const t = setTimeout(() => sig("SIGKILL"), 3000);

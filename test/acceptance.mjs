@@ -4,7 +4,9 @@
 import { Lucarne, LucarneClient, VERSION } from "../dist/index.js";
 import { nativeBackend } from "../dist/backends/native.js";
 import { pickPublicUrl, tunnelSpawnSpec, ensureTunnelToken, startTunnel } from "../dist/tunnel.js";
+import { isWebNavUrl } from "../dist/session-media.js";
 import { globalFilesDir } from "../dist/profiles.js";
+import net from "node:net";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -274,6 +276,19 @@ try {
   const okConc = await lEngine.create({ backend: "native", profile: "life5" });
   check("lifecycle: concurrent double-destroy is idempotent (slot accounting intact)", !lEngine.get(ld.id) && !!lEngine.get(okConc.id) && before >= 1);
   await lEngine.destroy(okConc.id);
+
+  // destroy(id) WITHOUT awaiting, then immediately recreate the same id: the new
+  // session's workspace dirs must SURVIVE (the old destroy's rmSync must not clobber
+  // the successor — create now awaits the in-flight teardown).
+  const rc = await lEngine.create({ backend: "native", profile: "racy" });
+  void lEngine.destroy(rc.id);                         // don't await — teardown in flight
+  const rc2 = await lEngine.create({ backend: "native", profile: "racy" });  // races the teardown
+  // stage a file into the NEW session's per-session workspace, then confirm it persists
+  await (await fetch(`http://127.0.0.1:7814/sessions/racy/files/keep.txt`, { method: "PUT", headers: { authorization: `Bearer ${TOKEN}` }, body: "survive" })).text();
+  await sleep(1500);                                   // let the old teardown's rmSync run
+  const stillThere = await (await fetch(`http://127.0.0.1:7814/sessions/racy/files/keep.txt`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
+  check("lifecycle: destroy-then-recreate-same-id does not clobber the new session's dirs", !!lEngine.get(rc2.id) && stillThere === "survive");
+  await lEngine.destroy(rc2.id);
 } finally {
   await lEngine.close().catch(() => {});
 }
@@ -812,6 +827,17 @@ try {
   // human types a "password" through the porthole
   for (const k of ["s", "e", "c", "r", "e", "t"]) { aw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); aw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
   await sleep(1100);                                          // coalesce + flush → redact
+
+  // P0 regression: the SUBMIT race — type into a password field then immediately
+  // navigate away (Enter/submit blurs the field). Secrecy is captured at type-time,
+  // so it must STILL redact even though activeElement is gone at flush.
+  await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<input id=pw2 type=password name=login_pw>';document.getElementById('pw2').focus()" });
+  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) { aw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); aw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
+  ac.send("Page.navigate", { url: "data:text/html,<title>after-submit</title>gone" });  // race the flush
+  await sleep(1400);
+  const pwEvents = aEngine.sessionActivity("act").filter((a) => a.kind === "type");
+  check("activity(P0): a password typed before a submit/navigation is STILL redacted (no race leak)",
+    pwEvents.length > 0 && pwEvents.every((e) => e.value === "‹redacted›") && !pwEvents.some((e) => (e.value || "").includes("hunter2")));
   // A2: a click resolves the element under the cursor (selector + text)
   await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<button id=login style=\"position:fixed;top:20px;left:20px;width:120px;height:40px\">Log in</button>'" });
   aw.send(JSON.stringify({ t: "down", x: 80, y: 40, button: 0, buttons: 1, clickCount: 1 }));
@@ -959,10 +985,42 @@ try {
   const badOrigin = await rawReq(7861, "/sessions", { origin: "https://evil.example.com" });
   check("security: tokenless daemon serves loopback Host but rejects a rebound foreign Host", okHost === 200 && badHost === 403);
   check("security: tokenless daemon rejects a cross-origin request (CSRF/rebind)", badOrigin === 403);
-  // 2. Body-size cap: an over-limit declared content-length is 413'd
+  // 1b. The `127.x.evil.com` rebinding bypass (a `startsWith("127.")` hole) is closed
+  const rebind1 = await rawReq(7861, "/health", { host: "127.0.0.1.evil.com" });
+  const rebind2 = await rawReq(7861, "/health", { host: "127.evil.com" });
+  check("security: a `127.x.evil.com` Host (DNS-rebind) is refused (strict literal, not startsWith)", rebind1 === 403 && rebind2 === 403);
+  // 1c. Absent Host fails CLOSED (raw socket — http.request always adds Host)
+  const noHostCode = await new Promise((resolve) => {
+    const s = net.connect(7861, "127.0.0.1", () => s.write("GET /sessions HTTP/1.0\r\n\r\n"));
+    let buf = ""; s.on("data", (d) => { buf += d; }); const fin = () => { const m = buf.match(/HTTP\/1\.[01] (\d+)/); resolve(m ? +m[1] : 0); };
+    s.on("end", fin); s.on("error", () => resolve(0)); setTimeout(() => { s.destroy(); fin(); }, 1500);
+  });
+  check("security: an absent Host header fails closed (403)", noHostCode === 403);
+  // 1d. CRITICAL: the porthole WS upgrade is guarded too (cross-origin WS can't drive a tokenless daemon)
+  const wsResult = (headers) => new Promise((resolve) => {
+    const ws = new WS("ws://127.0.0.1:7861/sessions/x/view/ws", { headers });
+    ws.on("open", () => { ws.close(); resolve("OPEN"); });
+    ws.on("error", () => resolve("REJECTED")); ws.on("unexpected-response", () => resolve("REJECTED"));
+    setTimeout(() => resolve("TIMEOUT"), 2000);
+  });
+  check("security: cross-origin WebSocket upgrade is rejected (the WS plane is guarded too)", (await wsResult({ origin: "https://evil.example.com" })) !== "OPEN" && (await wsResult({ host: "evil.example.com" })) !== "OPEN");
+  // 2. Body-size cap: declared over-limit content-length is 413'd…
   const big = await rawReq(7861, "/files/x", { "content-length": String(200 * 1024 * 1024) }, "PUT");
   check("security: an over-cap request body is rejected (413)", big === 413);
+  // 2b. …AND a CHUNKED body with no content-length is capped DURING read (not bypassable)
+  const chunkedCode = await new Promise((resolve) => {
+    const r = http.request({ host: "127.0.0.1", port: 7861, path: "/files/x", method: "PUT", headers: { "transfer-encoding": "chunked" } }, (res) => { res.resume(); resolve(res.statusCode); });
+    r.on("error", () => resolve(0));
+    let sent = 0; const block = Buffer.alloc(1024 * 1024, 0x61);
+    const pump = () => { if (sent > 140 * 1024 * 1024) { r.end(); return; } sent += block.length; if (r.write(block)) setImmediate(pump); else r.once("drain", pump); };
+    pump();
+  });
+  check("security: a chunked (no content-length) over-cap body is capped during read (413)", chunkedCode === 413);
   await gEngine.close().catch(() => {});
+
+  // file:// nav allowlist (S2) — incl. the leading-control-char bypass
+  check("security: nav allowlist permits http(s), refuses file://, \\x00file://, chrome://, filesystem:",
+    isWebNavUrl("https://example.com") && !isWebNavUrl("file:///etc/passwd") && !isWebNavUrl("\x00file:///etc/passwd") && !isWebNavUrl("\x01chrome://settings") && !isWebNavUrl("filesystem:http://x/") && isWebNavUrl("/relative/path"));
 
   // 3. timing-safe token: right token passes, wrong (same-length) token fails — through the real gate
   const tEngine = new Lucarne({ port: 7862, token: "right-token-value", record: false });
@@ -1096,28 +1154,26 @@ await e2eRec.listen();
 try {
   const es = await e2eRec.create({ backend: "native", profile: "e2erec" });
   const ec = await attachPage(es.cdpUrl);
-  // open the porthole so the shared screencast (which the recorder taps) flows
-  const ew = new WS(`ws://127.0.0.1:7834/sessions/e2erec/view/ws?token=${TOKEN}`);
-  await new Promise((r) => { ew.on("open", r); ew.on("error", r); });
-  // Poll for the engine to wire a live recorder that produces a segment served by
-  // /recordings (the integration this proof uniquely covers — the UNIT proof above
-  // already guarantees frames→ffmpeg→a *playable* mp4). Deterministic: a segment file
-  // appears within a few seconds; we don't depend on a mid-stream moov finalize.
-  let served = false, status = 0, n = 0, segCount = 0;
-  for (let i = 0; i < 20 && !served; i++) {
-    await ec.call("Runtime.evaluate", { expression: `document.body.innerHTML='<h1 style=font:80px monospace>LIVE ${i}</h1>'` });
-    await sleep(800);
+  // Paint ONCE then leave the page STATIC — this is the headless condition that
+  // produced empty 48B segments before the frame-watchdog fix (the screencast emits
+  // no frames for an idle page; the watchdog must prime `latest` via captureScreenshot).
+  // NO porthole is opened either — recording must work without a watcher.
+  await ec.call("Runtime.evaluate", { expression: "document.body.innerHTML='<h1 style=\"font:120px monospace;color:#0a0\">REC STATIC</h1>'" });
+  // Poll for a recording segment with REAL content (> the 48B empty-stub the bug produced).
+  let n = 0, segCount = 0, real = false;
+  for (let i = 0; i < 20 && !real; i++) {
+    await sleep(900);
     const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
     segCount = Array.isArray(segs) ? segs.length : 0;
     if (segCount) {
       const res = await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`);
-      status = res.status;
-      n = (await res.arrayBuffer()).byteLength;
-      served = status === 200 && res.headers.get("content-type") === "video/mp4";
+      const buf = Buffer.from(await res.arrayBuffer());
+      n = buf.length;
+      real = res.status === 200 && n > 2000 && buf.includes(Buffer.from("ftyp"));  // real frames, not a 48B stub
     }
   }
-  ew.close(); ec.close();
-  check("recording(e2e): create({record:true}) wires a recorder + /recordings serves the segment (mp4)", served && segCount >= 1, `${segCount} segs, http ${status}, ${n}B`);
+  ec.close();
+  check("recording(e2e): a STATIC headless page records real frames (watchdog primes latest, >2KB segment)", real, `${segCount} segs, ${n}B`);
   await e2eRec.destroy(es.id);
 } finally {
   await e2eRec.close().catch(() => {});

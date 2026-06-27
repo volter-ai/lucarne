@@ -5,6 +5,25 @@ import type http from "node:http";
 /** Send a JSON response (the engine + every service share this one shape). */
 export type Send = (res: http.ServerResponse, code: number, body: unknown) => void;
 
+/** Default body cap — must match engine.MAX_BODY_BYTES. */
+export const MAX_BODY_BYTES = 128 * 1024 * 1024;
+
+/**
+ * Read a request body with a HARD cap enforced WHILE reading — a `content-length`
+ * check alone is bypassed by `Transfer-Encoding: chunked`. Throws a tagged error
+ * past the limit so callers can 413.
+ */
+export async function readBodyCapped(req: http.IncomingMessage, limit = MAX_BODY_BYTES): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let n = 0;
+  for await (const c of req) {
+    n += (c as Buffer).length;
+    if (n > limit) { const e = new Error("payload too large"); (e as { code?: string }).code = "LUCARNE_BODY_TOO_LARGE"; throw e; }
+    chunks.push(c as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 /** A subsystem route handler: returns true if it owned (and answered) the request. */
 export interface RouteService {
   handle(req: http.IncomingMessage, res: http.ServerResponse, send: Send, pathname: string): Promise<boolean> | boolean;
@@ -36,8 +55,9 @@ export async function serveWorkspace(
     return;
   }
   if (req.method === "PUT" && name) {
-    const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
-    putWorkspaceFile(dir, name, Buffer.concat(chunks));
+    let data: Buffer;
+    try { data = await readBodyCapped(req); } catch { return send(res, 413, { error: "payload too large" }); }
+    putWorkspaceFile(dir, name, data);
     return send(res, 200, { ok: true });
   }
   if (req.method === "DELETE" && name) {

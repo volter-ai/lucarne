@@ -8,7 +8,7 @@ import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { FileCredentialStore, totpCode, type CredentialProvider } from "./credentials.js";
-import { serveWorkspace, type Send } from "./http.js";
+import { readBodyCapped, serveWorkspace, type Send } from "./http.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
@@ -30,11 +30,22 @@ interface Tracked extends Session {
   stop(): Promise<void>;
 }
 
-const DEFAULT_CHROME: Record<string, string> = {
-  darwin: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  linux: "google-chrome",
-  win32: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+// Per-platform candidate paths, first existing one wins (a single hardcoded path
+// misses Program Files (x86) / per-user installs on Windows and chromium on Linux).
+const CHROME_CANDIDATES: Record<string, string[]> = {
+  darwin: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium"],
+  linux: ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
+  win32: [
+    `${process.env.PROGRAMFILES ?? "C:/Program Files"}/Google/Chrome/Application/chrome.exe`,
+    `${process.env["PROGRAMFILES(X86)"] ?? "C:/Program Files (x86)"}/Google/Chrome/Application/chrome.exe`,
+    `${process.env.LOCALAPPDATA ?? ""}/Google/Chrome/Application/chrome.exe`,
+  ],
 };
+function resolveChrome(): string {
+  const cands = CHROME_CANDIDATES[process.platform] ?? ["google-chrome"];
+  // Absolute candidates are probed; a bare command name (linux) is left for PATH.
+  return cands.find((c) => !path.isAbsolute(c) || fs.existsSync(c)) ?? cands[0]!;
+}
 
 // CDP is FULL unauthenticated control of the browser — it is ALWAYS bound to
 // loopback and never the API bind host (which may be 0.0.0.0). Publish, connect,
@@ -45,10 +56,35 @@ const CDP_HOST = "127.0.0.1";
 // files (uploads, extensions) ride this; 128 MB is generous for that purpose.
 const MAX_BODY_BYTES = 128 * 1024 * 1024;
 
-// A loopback BIND only (127.x / ::1 / localhost). `0.0.0.0` binds all interfaces
-// and is therefore OFF-loopback (exposed) — it must carry a token.
-const isLoopbackBind = (h: string): boolean =>
-  h === "::1" || h === "localhost" || h.startsWith("127.");
+/**
+ * Is a request's Host/Origin a genuine loopback LITERAL? Used for the tokenless
+ * CSRF/DNS-rebinding guard — this validates an ATTACKER-CONTROLLED header, so it
+ * must be an exact literal match (NOT `startsWith("127.")`, which `127.x.evil.com`
+ * defeats). Case-folded, trailing-dot tolerant, IPv4-127.0.0.0/8 exact.
+ */
+function isLoopbackHostLiteral(h: string): boolean {
+  const x = h.toLowerCase().replace(/\.$/, "");
+  return x === "localhost" || x === "::1" || /^127(?:\.\d{1,3}){3}$/.test(x);
+}
+
+/** Strip a trailing :port and surrounding brackets from a Host/authority header. */
+function hostnameOf(authority: string): string {
+  return authority.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+}
+
+/**
+ * The tokenless CSRF / DNS-rebinding gate, shared by the HTTP router AND the WS
+ * upgrade (a malicious page can open a cross-origin WebSocket — the server must
+ * enforce). Returns true if the request should be REFUSED. Fail-closed on a
+ * missing Host. When a token is set, the token is the auth and this is skipped.
+ */
+function rebindForbidden(headers: http.IncomingHttpHeaders): boolean {
+  const host = hostnameOf(headers.host ?? "");
+  if (!host || !isLoopbackHostLiteral(host)) return true;       // absent/foreign Host → refuse
+  const origin = headers.origin;
+  if (origin) { try { if (!isLoopbackHostLiteral(new URL(origin).hostname)) return true; } catch { return true; } }
+  return false;
+}
 
 /** Constant-time string equality (length-independent) — for token comparison. */
 function safeEqual(a: string, b: string): boolean {
@@ -103,8 +139,10 @@ export class Lucarne {
   private readonly sessions = new Map<string, Tracked>();
   /** In-flight `create`s keyed by id, so concurrent same-id creates coalesce. */
   private readonly creating = new Map<string, Promise<Session>>();
-  /** Sessions currently being torn down — makes `destroy` idempotent under the reaper. */
-  private readonly destroying = new Set<string>();
+  /** In-flight teardowns keyed by id — makes `destroy` idempotent under the reaper AND
+   *  lets a same-id `create` wait for teardown to finish (else it spawns onto a profile
+   *  dir still being wiped, and the old destroy's rmSync clobbers the new session). */
+  private readonly destroying = new Map<string, Promise<void>>();
   private readonly backends: Record<string, Backend> = {};
   private readonly credentials: CredentialProvider;
   private readonly credentialsService: CredentialsService;
@@ -125,7 +163,7 @@ export class Lucarne {
     this.port = opts.port ?? 7800;
     this.token = opts.token ?? process.env.LUCARNE_TOKEN ?? undefined;
     this.image = opts.image ?? "lucarne-browser:latest";
-    this.chromePath = opts.chromePath ?? process.env.LUCARNE_CHROME ?? DEFAULT_CHROME[process.platform] ?? "google-chrome";
+    this.chromePath = opts.chromePath ?? process.env.LUCARNE_CHROME ?? resolveChrome();
     this.viewport = opts.viewport ?? { width: 1280, height: 720 };
     this.record = opts.record ?? process.env.LUCARNE_RECORD !== "0";
     this.headless = opts.headless ?? process.env.LUCARNE_HEADLESS === "1";
@@ -169,6 +207,11 @@ export class Lucarne {
   }
 
   private async spawnSession(id: string, opts: CreateSessionOptions): Promise<Session> {
+    // Wait for any in-flight teardown of this id to FINISH first — otherwise we spawn
+    // onto a profile dir still being wiped, and the old destroy's rmSync clobbers the
+    // new session's freshly-created workspace dirs (a confirmed race).
+    const teardown = this.destroying.get(id);
+    if (teardown) await teardown.catch(() => {});
     const backend = this.backends[opts.backend ?? "docker"];
     if (!backend) throw new Error(`lucarne: unknown backend '${opts.backend}'`);
     const persist = opts.persist ?? !!opts.profile;
@@ -293,12 +336,14 @@ export class Lucarne {
     // /files, or captured downloads) — an unconfined host path would let a caller
     // exfiltrate any file the daemon can read (~/.ssh, the cred key) via a file input.
     // Stage the file with PUT /files first if it isn't already there.
-    const resolved = path.resolve(hostPath);
-    const allowed = [s.filesDir, globalFilesDir(), s.downloadDir].map((d) => path.resolve(d) + path.sep);
+    // realpath BOTH sides so a SYMLINK inside the workspace can't point out (a plain
+    // path.resolve only normalizes `..`, it doesn't dereference links).
+    if (!fs.existsSync(hostPath)) throw new Error(`no such file: ${hostPath}`);
+    const resolved = fs.realpathSync(hostPath);
+    const allowed = [s.filesDir, globalFilesDir(), s.downloadDir].map((d) => { try { return fs.realpathSync(d) + path.sep; } catch { return path.resolve(d) + path.sep; } });
     if (!allowed.some((root) => resolved.startsWith(root))) {
       throw new Error("lucarne: upload path must be inside the session files workspace (/files) — stage it there first");
     }
-    if (!fs.existsSync(resolved)) throw new Error(`no such file: ${hostPath}`);
     const cdp = s.media.cdp;
     await cdp.call("DOM.enable");
     const { root } = await cdp.call("DOM.getDocument", { depth: 0 });
@@ -535,15 +580,18 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     // `docker rm -f`), and the 500ms reaper would otherwise re-enter destroy ~12× for
     // the same session and over-release the slot. Remove + flag BEFORE the first await.
     if (this.destroying.has(id)) return false;
-    this.destroying.add(id);
     this.sessions.delete(id);
     this.releaseSlot();
     if (forget) this.forgetSpec(id);
-    try { s.media.close(); } catch { /* ignore */ }
-    await s.stop().catch(() => {});
-    try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    this.destroying.delete(id);
+    // Store the teardown promise so a same-id `create` can await it (no clobber race).
+    const teardown = (async (): Promise<void> => {
+      try { s.media.close(); } catch { /* ignore */ }
+      await s.stop().catch(() => {});
+      try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    })().finally(() => this.destroying.delete(id));
+    this.destroying.set(id, teardown);
+    await teardown;
     return true;
   }
 
@@ -608,12 +656,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
         // DNS-rebinding / CSRF guard for the no-token (loopback) mode: a malicious web
         // page can otherwise drive a localhost daemon. With a token the token IS the
         // auth (and the Host is the tunnel domain), so only guard when tokenless.
-        if (!this.token) {
-          const hostHeader = (req.headers.host ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
-          if (hostHeader && !isLoopbackBind(hostHeader) && hostHeader !== "127.0.0.1") return send(res, 403, { error: "forbidden host (set LUCARNE_TOKEN to allow non-loopback access)" });
-          const origin = req.headers.origin;
-          if (origin) { try { const oh = new URL(origin).hostname; if (!isLoopbackBind(oh) && oh !== "127.0.0.1") return send(res, 403, { error: "cross-origin forbidden" }); } catch { return send(res, 403, { error: "bad origin" }); } }
-        }
+        if (!this.token && rebindForbidden(req.headers)) return send(res, 403, { error: "forbidden host/origin (set LUCARNE_TOKEN for non-loopback access)" });
         const pathname = new URL(req.url ?? "/", "http://x").pathname;
         if (pathname === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(openApiSpec)); return; }
         if (pathname === "/docs") { res.writeHead(200, { "content-type": "text/html" }); res.end(docsHtml()); return; }
@@ -655,7 +698,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           const [, id] = act;
           if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
           if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
-          let body = ""; for await (const c of req) body += c;
+          const body = (await readBodyCapped(req)).toString();
           return send(res, 200, await this.act(id!, body ? JSON.parse(body) : {}));
         }
         const cont = pathname.match(/^\/sessions\/([^/]+)\/content$/);
@@ -739,7 +782,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
           if (req.method === "GET") return send(res, 200, await this.exportContext(id!));
           if (req.method === "POST") {
-            let body = ""; for await (const c of req) body += c;
+            const body = (await readBodyCapped(req)).toString();
             await this.importContext(id!, body ? JSON.parse(body) : {});
             return send(res, 200, { ok: true });
           }
@@ -757,14 +800,14 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           const [, id] = login;
           if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
           if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
-          let body = ""; for await (const c of req) body += c;
+          const body = (await readBodyCapped(req)).toString();
           return send(res, 200, await this.loginWithCredential(id!, body ? JSON.parse(body) : {}));
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {
           const [, id] = up;
           if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
-          let body = ""; for await (const c of req) body += c;
+          const body = (await readBodyCapped(req)).toString();
           const { path: hostPath, selector } = body ? (JSON.parse(body) as { path: string; selector?: string }) : { path: "" };
           await this.uploadFile(id!, hostPath, selector);
           return send(res, 200, { ok: true });
@@ -805,7 +848,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
         if (!m) return send(res, 404, { error: "not found" });
         const id = m[1];
         if (req.method === "POST" && !id) {
-          let body = ""; for await (const c of req) body += c;
+          const body = (await readBodyCapped(req)).toString();
           return send(res, 200, await this.create(body ? (JSON.parse(body) as CreateSessionOptions) : {}));
         }
         if (req.method === "GET" && !id) {
@@ -818,12 +861,19 @@ v.addEventListener('ended',()=>{i++;play()});play();});
         if (req.method === "DELETE" && !id) return send(res, 200, { released: await this.releaseAll() });
         if (req.method === "DELETE" && id) return send(res, 200, { ok: await this.destroy(id) });
         return send(res, 405, { error: "method not allowed" });
-      } catch (e) { return send(res, 500, { error: String((e as Error).message ?? e) }); }
+      } catch (e) {
+        if ((e as { code?: string }).code === "LUCARNE_BODY_TOO_LARGE") return send(res, 413, { error: "payload too large" });
+        return send(res, 500, { error: String((e as Error).message ?? e) });
+      }
     });
 
     // the porthole WebSocket: /sessions/:id/view/ws  (frames out, input in)
     this.server.on("upgrade", (req, socket, head) => {
       const url = req.url ?? "/";
+      // The SAME tokenless CSRF/rebinding gate as the HTTP plane — a browser lets JS
+      // open a cross-origin WebSocket (Origin is advisory), so without this a malicious
+      // page could drive + watch the porthole tokenless. (CRITICAL if omitted.)
+      if (!this.token && rebindForbidden(req.headers)) { socket.destroy(); return; }
       const wm = new URL(url, "http://x").pathname.match(/^\/sessions\/([^/]+)\/view\/ws$/);
       if (!wm || !this.tokenOk(url, req.headers.authorization)) { socket.destroy(); return; }
       const s = this.sessions.get(wm[1]!);

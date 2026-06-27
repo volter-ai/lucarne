@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lucarne"
-version = "1.3.0"
+version = "1.4.0"
 description = "Python client for lucarne — create and drive self-hostable browser sessions (the engine is a Node daemon)."
 readme = "README.md"
 requires-python = ">=3.8"

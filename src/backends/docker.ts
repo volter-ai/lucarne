@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import { promisify } from "node:util";
 import type { Backend, BackendContext, BackendHandle } from "./types.js";
 import { waitForCdp } from "./types.js";
@@ -22,8 +23,9 @@ export const dockerBackend: Backend = {
     // Reclaim an orphan container of the same name (a previous daemon crash left it
     // holding the name + CDP port), else `docker run --name` would fail on restore.
     await exec("docker", ["rm", "-f", name]).catch(() => {});
-    if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // anonymous = fresh
-    await exec("mkdir", ["-p", profileDir, recDir]);
+    if (!persist) fs.rmSync(profileDir, { recursive: true, force: true }); // anonymous = fresh (node:fs — Windows-safe)
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.mkdirSync(recDir, { recursive: true });
     await exec("docker", [
       "run", "-d", "--name", name, "--shm-size=1g", "--security-opt", "seccomp=unconfined",
       // CDP is full unauthenticated browser control — publish it to LOOPBACK ONLY,
@@ -40,8 +42,8 @@ export const dockerBackend: Backend = {
     return {
       async stop(): Promise<void> {
         await exec("docker", ["rm", "-f", name]).catch(() => {});
-        await exec("rm", ["-rf", recDir]).catch(() => {});
-        if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // keep durable profiles
+        try { fs.rmSync(recDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        if (!persist) try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* ignore */ } // keep durable profiles
       },
     };
   },
