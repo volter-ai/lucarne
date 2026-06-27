@@ -1,7 +1,16 @@
 {
   "version": 1,
   "service": "github",
-  "rebuiltAt": "2026-06-27T08:02:18.924Z",
-  "eventCount": 0,
-  "subjects": {}
+  "rebuiltAt": "2026-06-27T08:50:46.893Z",
+  "eventCount": 1,
+  "latestEventId": "github.issue.delta:volter-ai/lucarne#issue:1:324b420ef155d2a2",
+  "subjects": {
+    "issue:volter-ai/lucarne#issue:1": {
+      "type": "issue",
+      "id": "volter-ai/lucarne#issue:1",
+      "latestEventId": "github.issue.delta:volter-ai/lucarne#issue:1:324b420ef155d2a2",
+      "latestType": "github.issue.delta",
+      "updatedAt": "2026-06-27T08:50:16Z"
+    }
+  }
 }
