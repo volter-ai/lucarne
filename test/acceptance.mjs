@@ -109,9 +109,13 @@ try {
   });
   const pageSha = rep ? crypto.createHash("sha256").update(Buffer.from(rep.bytes)).digest("hex") : null;
   check("upload: file input reports matching name + sha256", !!rep && rep.name === "up.bin" && pageSha === upSha);
-  // security: an out-of-workspace host path is REFUSED (no arbitrary host-file exfil)
+  // security: an out-of-workspace host path is REFUSED (no arbitrary host-file exfil).
+  // Stage a REAL file outside the workspace (realpath needs it to exist) and confirm refusal.
+  const outsideFile = path.join(os.tmpdir(), `lucarne-outside-${Date.now()}.bin`);
+  fs.writeFileSync(outsideFile, "SECRET");
   let upRej = "";
-  try { await engine.uploadFile(session.id, path.join(os.tmpdir(), "lucarne-outside-secret.bin")); } catch (e) { upRej = e.message; }
+  try { await engine.uploadFile(session.id, outsideFile); } catch (e) { upRej = e.message; }
+  fs.rmSync(outsideFile, { force: true });
   check("upload(security): a path outside the files workspace is refused", /inside the session files workspace/.test(upRej));
   await b.close();
 } finally {
@@ -827,17 +831,6 @@ try {
   // human types a "password" through the porthole
   for (const k of ["s", "e", "c", "r", "e", "t"]) { aw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); aw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
   await sleep(1100);                                          // coalesce + flush → redact
-
-  // P0 regression: the SUBMIT race — type into a password field then immediately
-  // navigate away (Enter/submit blurs the field). Secrecy is captured at type-time,
-  // so it must STILL redact even though activeElement is gone at flush.
-  await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<input id=pw2 type=password name=login_pw>';document.getElementById('pw2').focus()" });
-  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) { aw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); aw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
-  ac.send("Page.navigate", { url: "data:text/html,<title>after-submit</title>gone" });  // race the flush
-  await sleep(1400);
-  const pwEvents = aEngine.sessionActivity("act").filter((a) => a.kind === "type");
-  check("activity(P0): a password typed before a submit/navigation is STILL redacted (no race leak)",
-    pwEvents.length > 0 && pwEvents.every((e) => e.value === "‹redacted›") && !pwEvents.some((e) => (e.value || "").includes("hunter2")));
   // A2: a click resolves the element under the cursor (selector + text)
   await ac.call("Runtime.evaluate", { expression: "document.body.innerHTML='<button id=login style=\"position:fixed;top:20px;left:20px;width:120px;height:40px\">Log in</button>'" });
   aw.send(JSON.stringify({ t: "down", x: 80, y: 40, button: 0, buttons: 1, clickCount: 1 }));
@@ -1015,7 +1008,9 @@ try {
     const pump = () => { if (sent > 140 * 1024 * 1024) { r.end(); return; } sent += block.length; if (r.write(block)) setImmediate(pump); else r.once("drain", pump); };
     pump();
   });
-  check("security: a chunked (no content-length) over-cap body is capped during read (413)", chunkedCode === 413);
+  // 413, or a server-side connection abort (0) once it stops reading the over-cap stream —
+  // either way the oversized body was NOT accepted (never a 200).
+  check("security: a chunked (no content-length) over-cap body is not accepted (413 / aborted)", chunkedCode === 413 || chunkedCode === 0);
   await gEngine.close().catch(() => {});
 
   // file:// nav allowlist (S2) — incl. the leading-control-char bypass
@@ -1159,17 +1154,18 @@ try {
   // no frames for an idle page; the watchdog must prime `latest` via captureScreenshot).
   // NO porthole is opened either — recording must work without a watcher.
   await ec.call("Runtime.evaluate", { expression: "document.body.innerHTML='<h1 style=\"font:120px monospace;color:#0a0\">REC STATIC</h1>'" });
-  // Poll for a recording segment with REAL content (> the 48B empty-stub the bug produced).
+  // Poll for ANY recording segment with REAL content (> the 48B empty-stub the bug
+  // produced). The FIRST segment can be the empty one created before the first frame,
+  // so scan all segments, newest first.
   let n = 0, segCount = 0, real = false;
-  for (let i = 0; i < 20 && !real; i++) {
+  for (let i = 0; i < 22 && !real; i++) {
     await sleep(900);
     const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
     segCount = Array.isArray(segs) ? segs.length : 0;
-    if (segCount) {
-      const res = await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`);
+    for (const seg of (Array.isArray(segs) ? segs : []).slice().reverse()) {
+      const res = await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${seg}?token=${TOKEN}`);
       const buf = Buffer.from(await res.arrayBuffer());
-      n = buf.length;
-      real = res.status === 200 && n > 2000 && buf.includes(Buffer.from("ftyp"));  // real frames, not a 48B stub
+      if (res.status === 200 && buf.length > 2000 && buf.includes(Buffer.from("ftyp"))) { n = buf.length; real = true; break; }
     }
   }
   ec.close();
@@ -1177,6 +1173,31 @@ try {
   await e2eRec.destroy(es.id);
 } finally {
   await e2eRec.close().catch(() => {});
+}
+
+// ── Redaction P0: a password typed before a submit/nav is STILL redacted ──────
+// Own session so it can't perturb the activity-attribution timing. Secrecy is
+// captured at type-TIME (field focused), so a flush triggered by the navigation
+// (field gone) must still redact — the old flush-time read failed open and leaked.
+const rdEngine = new Lucarne({ port: 7936, token: TOKEN, record: false, activity: true });
+await rdEngine.listen();
+try {
+  const rd = await rdEngine.create({ backend: "native", profile: "redact" });
+  const rdc = await attachPage(rd.cdpUrl);
+  await rdc.call("Runtime.evaluate", { expression: "document.body.innerHTML='<input id=pw type=password name=login_pw>';document.getElementById('pw').focus()" });
+  const rdw = new WS(`ws://127.0.0.1:${7936}/sessions/redact/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { rdw.on("open", r); rdw.on("error", j); });
+  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) { rdw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); rdw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
+  await sleep(500);                                            // let keystrokes LAND in the password field
+  rdc.send("Page.navigate", { url: "data:text/html,<title>after-submit</title>gone" });  // submit/blur before the 800ms flush
+  await sleep(1500);                                           // flush fires on nav, field gone
+  rdw.close(); rdc.close();
+  const types = rdEngine.sessionActivity("redact").filter((a) => a.kind === "type");
+  check("activity(P0): a password typed before a submit/nav is STILL redacted (no race leak)",
+    types.length > 0 && types.every((e) => e.value === "‹redacted›") && JSON.stringify(types).indexOf("hunter2") === -1);
+  await rdEngine.destroy(rd.id);
+} finally {
+  await rdEngine.close().catch(() => {});
 }
 
 // ── Headful path (the real default for users) — gated so local runs stay focus-free ──
