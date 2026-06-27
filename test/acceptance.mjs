@@ -950,6 +950,25 @@ try {
     /retentionMin must be a positive number/.test(retErr), retErr);
   check("config: a valid/default construction is unaffected", okCtor);
 
+  // per-session create() input validation: an out-of-range/NaN `quality` or `geo`
+  // is REJECTED before the session is created with a clear message naming the field
+  // + its constraint — not forwarded straight to CDP (Page.startScreencast /
+  // Emulation.setGeolocationOverride) where Chrome silently clamps/ignores it.
+  const vEngine = new Lucarne({ port: 7863, token: TOKEN, record: false });
+  let qErr = "", latErr = "", lonErr = "", qNaNErr = "";
+  try { await vEngine.create({ backend: "native", profile: "vq", quality: 999 }); } catch (e) { qErr = e.message; }
+  try { await vEngine.create({ backend: "native", profile: "vqn", quality: NaN }); } catch (e) { qNaNErr = e.message; }
+  try { await vEngine.create({ backend: "native", profile: "vlat", geo: { latitude: 200, longitude: 0 } }); } catch (e) { latErr = e.message; }
+  try { await vEngine.create({ backend: "native", profile: "vlon", geo: { latitude: 0, longitude: 999 } }); } catch (e) { lonErr = e.message; }
+  await vEngine.close().catch(() => {});
+  check("create: an out-of-range `quality` is rejected with a clear message before the session is created",
+    /quality must be between 1 and 100/.test(qErr), qErr);
+  check("create: a NaN `quality` is rejected with a clear message", /quality must be between 1 and 100/.test(qNaNErr), qNaNErr);
+  check("create: an out-of-range `geo.latitude` is rejected with a clear message",
+    /geo\.latitude must be between -90 and 90/.test(latErr), latErr);
+  check("create: an out-of-range `geo.longitude` is rejected with a clear message",
+    /geo\.longitude must be between -180 and 180/.test(lonErr), lonErr);
+
   // backend-registration seam: with no backends registered, an unknown backend is rejected
   const bareEngine = new Lucarne({ port: 7841, token: TOKEN, record: false, backends: [] });
   await bareEngine.listen();
