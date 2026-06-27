@@ -76,11 +76,15 @@ async function main(): Promise<void> {
     case "serve": {
       const tunnelCmd = values["tunnel-cmd"];
       const tunneling = !!(values.tunnel || tunnelCmd);
-      // A tunneled daemon is reachable off-loopback, so it MUST be token-gated —
-      // auto-provision one if none was set.
+      // A daemon reachable off-loopback (a tunnel, or an explicit non-loopback
+      // --host) MUST be token-gated — never expose the fleet unauthenticated.
+      // Auto-provision one if none was set, so the "token required off-loopback"
+      // guarantee is ENFORCED, not merely advised.
+      const host = values.host ?? "127.0.0.1";
+      const offLoopback = tunneling || !(host === "127.0.0.1" || host === "::1" || host === "localhost" || host.startsWith("127."));
       let token = process.env.LUCARNE_TOKEN;
       let generated = false;
-      if (tunneling) { const t = ensureTunnelToken(token); token = t.token; generated = t.generated; }
+      if (offLoopback) { const t = ensureTunnelToken(token); token = t.token; generated = t.generated; }
       const engine = new Lucarne({
         port: values.port ? Number(values.port) : undefined,
         host: values.host,
@@ -88,7 +92,7 @@ async function main(): Promise<void> {
       });
       await engine.listen();
       process.stdout.write(`lucarne engine on http://${engine.host}:${engine.port}\n`);
-      if (generated) process.stdout.write(`lucarne token (auto-provisioned for the tunnel): ${token}\n`);
+      if (generated) process.stdout.write(`lucarne token (auto-provisioned — required off-loopback): ${token}\n`);
       const restored = await engine.restore();
       if (restored.length) process.stdout.write(`lucarne restored ${restored.length} durable session(s): ${restored.join(", ")}\n`);
       let tunnel: { url: string; stop(): void } | undefined;

@@ -210,7 +210,10 @@ export async function startSessionMedia(opts: {
       if (ev.phase === "commit") page.send("Input.insertText", { text });
       else page.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
     } else if (ev.t === "nav") {
-      if (ev.action === "go" && ev.url) page.send("Page.navigate", { url: ev.url });
+      // Refuse local-resource schemes: `file://`/`chrome://` would turn the browser
+      // into an arbitrary host-file reader (read back via /content or /screenshot),
+      // escalating beyond "browser/account control" to host-FS read. http(s)/data/about only.
+      if (ev.action === "go" && ev.url && !/^\s*(file|chrome|chrome-extension|view-source):/i.test(ev.url)) page.send("Page.navigate", { url: ev.url });
       else if (ev.action === "back") page.send("Runtime.evaluate", { expression: "history.back()" });
       else if (ev.action === "forward") page.send("Runtime.evaluate", { expression: "history.forward()" });
       else if (ev.action === "reload") page.send("Page.reload", {});

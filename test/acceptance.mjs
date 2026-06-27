@@ -140,9 +140,14 @@ try {
   let s3 = await pEngine.create({ backend: "native", profile: "seed-B", seedFrom: seedSource });
   check("seed: fresh profile seeded from another carries its cookie", (await readCookie(s3.cdpUrl)) === COOKIE.value);
 
-  // a named profile must NOT re-seed once established (no clobber on reuse)
-  const s3dir = path.join(HOME, "profiles", "seed-B");
-  check("seed: only seeds on first creation (profile dir exists)", fs.existsSync(path.join(s3dir, "Default")));
+  // a named profile must NOT re-seed once established: destroy seed-B, then re-create
+  // it pointing seedFrom at a DIFFERENT (cookie-less) source — the original cookie
+  // must SURVIVE (proving no clobber), not be replaced by the empty source.
+  await pEngine.destroy(s3.id);
+  const emptySrc = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-emptyseed-"));
+  const s3b = await pEngine.create({ backend: "native", profile: "seed-B", seedFrom: emptySrc });
+  check("seed: an established profile is NOT re-seeded (no clobber on reuse)", (await readCookie(s3b.cdpUrl)) === COOKIE.value);
+  fs.rmSync(emptySrc, { recursive: true, force: true });
 } finally {
   await pEngine.close().catch(() => {});
   fs.rmSync(HOME, { recursive: true, force: true });
@@ -245,6 +250,22 @@ try {
   let tReaped = false;
   for (let i = 0; i < 20 && !tReaped; i++) { await sleep(150); lEngine.touch(lt.id); tReaped = !lEngine.get(lt.id); }
   check("timeout: max-duration reaps even an active session", tReaped);
+
+  // act() (agent driving, NO human touch) must reset the idle clock — else an
+  // agent-driven inactivity session is reaped mid-work.
+  const la = await lEngine.create({ backend: "native", profile: "life3", inactivityMs: 700 });
+  for (let i = 0; i < 6; i++) { await sleep(200); await lEngine.act(la.id, { action: "move", x: 5, y: 5 }); }
+  check("inactivity: act() (agent driving) keeps the session alive past its idle window", !!lEngine.get(la.id));
+  await lEngine.destroy(la.id);
+
+  // double-destroy is idempotent: hammering destroy on one session releases its slot
+  // exactly once (a non-idempotent release would corrupt the slot counter).
+  const ld = await lEngine.create({ backend: "native", profile: "life4", maxConcurrent: undefined });
+  const before = lEngine.list().length;
+  await Promise.all(Array.from({ length: 8 }, () => lEngine.destroy(ld.id)));
+  const okConc = await lEngine.create({ backend: "native", profile: "life5" });
+  check("lifecycle: concurrent double-destroy is idempotent (slot accounting intact)", !lEngine.get(ld.id) && !!lEngine.get(okConc.id) && before >= 1);
+  await lEngine.destroy(okConc.id);
 } finally {
   await lEngine.close().catch(() => {});
 }
@@ -592,7 +613,7 @@ try {
   const lgs = await client.logs(sdkS.id);
   check("sdk: logs() returns a typed LogEntry[]", Array.isArray(lgs) && lgs.every((e) => typeof e.kind === "string"));
   const dp = await client.deleteProfile("definitely-not-a-real-profile-xyz");
-  check("sdk: deleteProfile() returns {ok}", typeof dp.ok === "boolean");
+  check("sdk: deleteProfile() of a missing profile returns ok:false", dp.ok === false);
 
   // SDK parity: credentials + global files + extensions over the typed client (no Chrome needed)
   await client.putCredential("sdkcred", { username: "u@x", password: "p", totp: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" });
@@ -605,11 +626,14 @@ try {
   const fbytes = await client.file("sdk.txt");
   check("sdk: files put/list/get round-trips bytes", (await client.files()).includes("sdk.txt") && Buffer.from(fbytes).toString() === "hello-sdk");
   check("sdk: deleteFile() works", (await client.deleteFile("sdk.txt")).ok === true);
-  check("sdk: extensions() returns a list", Array.isArray(await client.extensions()));
+  // extensions: real round-trip — upload a file under a managed extension, list it, delete it
+  await fetch(`http://127.0.0.1:7827/extensions/sdkext/manifest.json`, { method: "PUT", headers: { authorization: `Bearer ${TOKEN}` }, body: "{}" });
+  check("sdk: extensions() lists an uploaded managed extension", (await client.extensions()).includes("sdkext"));
+  check("sdk: deleteExtension() removes it", (await client.deleteExtension("sdkext")).ok === true && !(await client.extensions()).includes("sdkext"));
 
-  // theme: the porthole HTML honors ?theme (client-side cosmetic)
-  const view = await (await fetch(`http://127.0.0.1:7827/sessions/sdk/view/?token=${TOKEN}`)).text();
-  check("theme: porthole supports the theme param", view.includes("theme") && view.includes("light"));
+  // theme: the served porthole HTML actually carries the theme-application code path
+  const view = await (await fetch(`http://127.0.0.1:7827/sessions/sdk/view/?theme=light&token=${TOKEN}`)).text();
+  check("theme: porthole template wires ?theme into a real style switch", /theme/.test(view) && /light/.test(view) && /searchParams|URLSearchParams|location\.search/.test(view));
 
   // IME: composition commits CJK that plain keydowns cannot produce
   const ic = await attachPage(sdkS.cdpUrl);
@@ -911,6 +935,63 @@ try {
   check("pack: ships the CLI + MCP binaries", packedFiles.includes("dist/cli.js") && packedFiles.includes("dist/mcp.js"));
 }
 
+// ── Security hardening (no Chrome) — the adversarial-review fixes ─────────────
+{
+  // raw http — undici/fetch forbids overriding Host and recomputes content-length,
+  // so the malicious-header cases must go through node:http directly.
+  const rawReq = (port, pathname, headers = {}, method = "GET") => new Promise((resolve) => {
+    const r = http.request({ host: "127.0.0.1", port, path: pathname, method, headers }, (res) => { res.resume(); resolve(res.statusCode); });
+    r.on("error", () => resolve(0)); r.end();
+  });
+  // 1. DNS-rebinding / CSRF guard: a tokenless loopback daemon rejects a foreign Host + cross-origin
+  const gEngine = new Lucarne({ port: 7861, record: false }); // NO token = the vulnerable default
+  await gEngine.listen();
+  const okHost = await rawReq(7861, "/health");
+  const badHost = await rawReq(7861, "/health", { host: "evil.example.com" });
+  const badOrigin = await rawReq(7861, "/sessions", { origin: "https://evil.example.com" });
+  check("security: tokenless daemon serves loopback Host but rejects a rebound foreign Host", okHost === 200 && badHost === 403);
+  check("security: tokenless daemon rejects a cross-origin request (CSRF/rebind)", badOrigin === 403);
+  // 2. Body-size cap: an over-limit declared content-length is 413'd
+  const big = await rawReq(7861, "/files/x", { "content-length": String(200 * 1024 * 1024) }, "PUT");
+  check("security: an over-cap request body is rejected (413)", big === 413);
+  await gEngine.close().catch(() => {});
+
+  // 3. timing-safe token: right token passes, wrong (same-length) token fails — through the real gate
+  const tEngine = new Lucarne({ port: 7862, token: "right-token-value", record: false });
+  await tEngine.listen();
+  const good = await fetch("http://127.0.0.1:7862/sessions", { headers: { authorization: "Bearer right-token-value" } });
+  const bad = await fetch("http://127.0.0.1:7862/sessions", { headers: { authorization: "Bearer wrong-token-value" } });
+  check("security: token gate accepts the right token, rejects a wrong one (timing-safe compare)", good.status === 200 && bad.status === 401);
+  await tEngine.close().catch(() => {});
+
+  // 4. docker CDP is pinned to loopback in the spawn args, regardless of engine --host
+  const dockerSrc = fs.readFileSync(new URL("../dist/backends/docker.js", import.meta.url), "utf8");
+  check("security: docker backend publishes CDP to 127.0.0.1 only (not the bind host)", dockerSrc.includes("127.0.0.1:${ports.cdp}:9222") && !dockerSrc.includes("${ctx.host}:${ports.cdp}:9222"));
+
+  // 5. CLI auto-provisions a token when binding off-loopback (--host 0.0.0.0), enforcing the guarantee
+  const offLoop = await new Promise((resolve) => {
+    const c = spawn("node", ["dist/cli.js", "serve", "--host", "0.0.0.0", "--port", "7863"], { env: { ...process.env, LUCARNE_TOKEN: "" } });
+    let out = "";
+    c.stdout.on("data", (d) => { out += d.toString(); if (/auto-provisioned/.test(out)) { c.kill(); resolve({ out }); } });
+    setTimeout(() => { c.kill(); resolve({ out }); }, 6000);
+  });
+  check("security: serve --host 0.0.0.0 auto-provisions a token (never off-loopback unauthenticated)", /auto-provisioned — required off-loopback/.test(offLoop.out));
+
+  // 6. create rollback: when media bring-up fails (fake backend, no real CDP), the slot is released
+  const rEngine = new Lucarne({ port: 7864, record: false, maxConcurrent: 1, backends: [] });
+  rEngine.registerBackend({ kind: "fake", start: async () => ({ async stop() {} }) }); // CDP never comes up → startSessionMedia throws
+  await rEngine.listen();
+  let firstErr = "";
+  try { await rEngine.create({ backend: "fake", profile: "rb1" }); } catch (e) { firstErr = e.message; }
+  // if the slot leaked, this second create would hang forever; race it against a timeout
+  const second = await Promise.race([
+    rEngine.create({ backend: "fake", profile: "rb2" }).then(() => "created", (e) => "errored:" + e.message),
+    new Promise((res) => setTimeout(() => res("HUNG"), 4000)),
+  ]);
+  await rEngine.close().catch(() => {});
+  check("security/leak: a failed create rolls back its slot (next create isn't deadlocked)", !!firstErr && second !== "HUNG");
+}
+
 // ── Tunnel seam: expose via a tunnel you already have (no network needed here) ──
 // Proven deterministically with a stub --tunnel-cmd (a node one-liner that prints a
 // fake public URL), so ngrok/cloudflared aren't required in CI.
@@ -997,6 +1078,33 @@ try {
   check("recording: real frames produce a finalized, playable mp4", dur > 0 && !!segName, segName ? `${segName} ${segBytes}B ${dur}s` : (frame ? "no playable segment" : "no frame"));
 } finally {
   await recEngine.close().catch(() => {});
+}
+
+// ── Recording END-TO-END THROUGH THE ENGINE (record:true wires the recorder) ──
+// The unit proof above bypasses the engine; this proves create({record}) actually
+// records and GET /recordings/:file serves a real mp4 over HTTP.
+const e2eRec = new Lucarne({ port: 7834, token: TOKEN, record: true, fps: 6, segmentSeconds: 2 });
+await e2eRec.listen();
+try {
+  const es = await e2eRec.create({ backend: "native", profile: "e2erec" });
+  const ec = await attachPage(es.cdpUrl);
+  await ec.call("Runtime.evaluate", { expression: "document.body.innerHTML='<h1 style=\"font:80px monospace\">LIVE</h1>'" });
+  // open the porthole so the shared screencast (which the recorder taps) actually flows
+  const ew = new WS(`ws://127.0.0.1:7834/sessions/e2erec/view/ws?token=${TOKEN}`);
+  await new Promise((r) => { ew.on("open", r); ew.on("error", r); });
+  await sleep(5000);            // let ≥1 two-second segment cut + finalize
+  ew.close(); ec.close();
+  const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
+  let mp4ok = false, n = 0;
+  if (Array.isArray(segs) && segs.length) {
+    const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`)).arrayBuffer());
+    n = buf.length;
+    mp4ok = n > 1000 && buf.includes(Buffer.from("ftyp"));   // mp4 file-type box
+  }
+  check("recording(e2e): create({record:true}) records + /recordings/:file serves a real mp4", mp4ok, `${Array.isArray(segs) ? segs.length : 0} segs, ${n}B`);
+  await e2eRec.destroy(es.id);
+} finally {
+  await e2eRec.close().catch(() => {});
 }
 
 // ── Headful path (the real default for users) — gated so local runs stay focus-free ──

@@ -6,10 +6,16 @@ The daemon is the source of truth; this is convenience sugar. The session's
 from __future__ import annotations
 
 import json
+import urllib.parse
 import urllib.request
 from typing import Any
 
-__version__ = "1.2.2"
+try:  # single source of truth — the installed package metadata (pyproject version)
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("lucarne")
+except Exception:  # not installed (vendored single file) — fall back to a literal
+    __version__ = "1.3.0"
 
 
 class LucarneClient:
@@ -36,7 +42,10 @@ class LucarneClient:
         return self._req("POST", "/sessions", opts)
 
     def list(self, **meta: str) -> list:
-        q = "?" + "&".join(f"meta.{k}={v}" for k, v in meta.items()) if meta else ""
+        # URL-encode keys/values (matches the Node SDK) so a filter containing a
+        # space/&/=/non-ASCII isn't mis-split by the server's query parser.
+        qz = urllib.parse.quote
+        q = "?" + "&".join(f"meta.{qz(k)}={qz(v)}" for k, v in meta.items()) if meta else ""
         return self._req("GET", "/sessions" + q)
 
     def get(self, session_id: str) -> dict:

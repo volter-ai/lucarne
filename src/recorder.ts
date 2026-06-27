@@ -1,17 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { spawn, execFile, execFileSync, type ChildProcess } from "node:child_process";
 import type { FrameSource } from "./porthole.js";
 
 export interface Recorder {
   close(): void;
 }
 
+// ffmpeg availability is probed ONCE and cached — never a synchronous spawn per
+// session create (that blocked the event loop / healthz under load). An eager async
+// probe at module load usually wins; a one-time sync fallback covers the rare race
+// where the very first create beats the async result.
+let ffmpegOk: boolean | null = null;
+execFile("ffmpeg", ["-version"], (err) => { if (ffmpegOk === null) ffmpegOk = !err; });
+function ffmpegAvailable(): boolean {
+  if (ffmpegOk !== null) return ffmpegOk;
+  try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); ffmpegOk = true; }
+  catch { ffmpegOk = false; }
+  return ffmpegOk;
+}
+
 /**
- * CCTV ring recorder for the native backend: feeds the shared screencast frames
- * into ffmpeg at a constant cadence (so segments cut on time even when the page
- * is static), hardware-encoded on macOS. Best-effort — returns null and logs if
- * ffmpeg isn't installed; drive + watch still work.
+ * CCTV ring recorder (both backends — it consumes the shared CDP screencast, which
+ * is backend-agnostic): feeds frames into ffmpeg at a constant cadence (so segments
+ * cut on time even when the page is static), hardware-encoded on macOS. Best-effort
+ * — returns null and logs if ffmpeg isn't installed; drive + watch still work.
  */
 export function startRecorder(opts: {
   recDir: string;
@@ -21,10 +34,8 @@ export function startRecorder(opts: {
   segmentSeconds?: number;
   frames: FrameSource;
 }): Recorder | null {
-  try {
-    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
-  } catch {
-    process.stderr.write("lucarne: ffmpeg not found — native recording disabled (drive + watch still work)\n");
+  if (!ffmpegAvailable()) {
+    process.stderr.write("lucarne: ffmpeg not found — recording disabled (drive + watch still work)\n");
     return null;
   }
 

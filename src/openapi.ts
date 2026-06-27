@@ -45,8 +45,11 @@ export const openApiSpec = {
     "/sessions/{id}/login": { post: { summary: "Auto-inject a stored credential", responses: { "200": { description: "{filled}" } } } },
     "/sessions/{id}/replay": { get: { summary: "Recording replay player (HTML)", responses: { "200": { description: "text/html" } } } },
     "/sessions/{id}/view": { get: { summary: "Porthole (watch + control); ?interactable=0 read-only, ?controls=1 URL bar", responses: { "200": { description: "text/html" } } } },
+    "/sessions/{id}/files": { get: { summary: "List per-session scratch workspace files", responses: { "200": { description: "string[]" } } } },
     "/profiles": { get: { summary: "List durable profiles", responses: { "200": { description: "[{name,active}]" } } } },
     "/profiles/{name}": { delete: { summary: "Delete a durable profile (refused while live)", responses: { "200": { description: "{ok,reason?}" } } } },
+    "/files": { get: { summary: "List global workspace files", responses: { "200": { description: "string[]" } } } },
+    "/extensions": { get: { summary: "List managed extensions", responses: { "200": { description: "string[]" } } } },
     "/extensions/{name}": {
       get: { summary: "List/serve a managed extension's files", responses: { "200": { description: "string[] | bytes" } } },
       delete: { summary: "Delete a managed extension", responses: { "200": { description: "{ok}" } } },

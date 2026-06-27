@@ -19,11 +19,17 @@ export const dockerBackend: Backend = {
     if (ctx.extensions?.length) throw new Error("lucarne: the docker backend does not support custom `extensions` yet — use backend: 'native'");
     if (ctx.proxy) throw new Error("lucarne: the docker backend does not support `proxy` yet — use backend: 'native'");
     const name = "lucarne-" + id;
+    // Reclaim an orphan container of the same name (a previous daemon crash left it
+    // holding the name + CDP port), else `docker run --name` would fail on restore.
+    await exec("docker", ["rm", "-f", name]).catch(() => {});
     if (!persist) await exec("rm", ["-rf", profileDir]).catch(() => {}); // anonymous = fresh
     await exec("mkdir", ["-p", profileDir, recDir]);
     await exec("docker", [
       "run", "-d", "--name", name, "--shm-size=1g", "--security-opt", "seccomp=unconfined",
-      "-p", `${ctx.host}:${ports.cdp}:9222`,            // only CDP is exposed
+      // CDP is full unauthenticated browser control — publish it to LOOPBACK ONLY,
+      // never the engine's bind host (ctx.host is already 127.0.0.1, but pin it
+      // explicitly so this can never expose CDP to the LAN).
+      "-p", `127.0.0.1:${ports.cdp}:9222`,
       "-v", `${profileDir}:/profile`,
       "-e", `RES=${ctx.viewport.width}x${ctx.viewport.height}`,
       ctx.image,

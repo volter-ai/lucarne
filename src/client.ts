@@ -88,6 +88,7 @@ export class LucarneClient {
   recording(id: string, file: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/recordings/${encodeURIComponent(file)}`); }
   downloads(id: string): Promise<string[]> { return this.req("GET", `/sessions/${id}/downloads`) as Promise<string[]>; }
   download(id: string, file: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/downloads/${encodeURIComponent(file)}`); }
+  deleteDownload(id: string, file: string): Promise<{ ok: boolean }> { return this.req("DELETE", `/sessions/${id}/downloads/${encodeURIComponent(file)}`) as Promise<{ ok: boolean }>; }
   screenshot(id: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/screenshot`); }
   pdf(id: string): Promise<Uint8Array> { return this.reqBytes("GET", `/sessions/${id}/pdf`); }
 

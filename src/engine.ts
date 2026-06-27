@@ -1,8 +1,9 @@
+import crypto from "node:crypto";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer } from "ws";
-import type { Backend } from "./backends/types.js";
+import type { Backend, BackendHandle } from "./backends/types.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
@@ -10,7 +11,7 @@ import { FileCredentialStore, totpCode, type CredentialProvider } from "./creden
 import { serveWorkspace, type Send } from "./http.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
-import { deleteProfileDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
+import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
 import { CredentialsService } from "./services/credentials-service.js";
 import { ExtensionsService } from "./services/extensions-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
@@ -34,6 +35,30 @@ const DEFAULT_CHROME: Record<string, string> = {
   linux: "google-chrome",
   win32: "C:/Program Files/Google/Chrome/Application/chrome.exe",
 };
+
+// CDP is FULL unauthenticated control of the browser — it is ALWAYS bound to
+// loopback and never the API bind host (which may be 0.0.0.0). Publish, connect,
+// and the returned cdpUrl all use this; do not key CDP off `host`.
+const CDP_HOST = "127.0.0.1";
+
+// Cap a single request body so one large upload can't OOM the daemon. Workspace
+// files (uploads, extensions) ride this; 128 MB is generous for that purpose.
+const MAX_BODY_BYTES = 128 * 1024 * 1024;
+
+// A loopback BIND only (127.x / ::1 / localhost). `0.0.0.0` binds all interfaces
+// and is therefore OFF-loopback (exposed) — it must carry a token.
+const isLoopbackBind = (h: string): boolean =>
+  h === "::1" || h === "localhost" || h.startsWith("127.");
+
+/** Constant-time string equality (length-independent) — for token comparison. */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a), bb = Buffer.from(b);
+  // Hash to a fixed length so timingSafeEqual never throws on length mismatch and
+  // length itself isn't a timing oracle.
+  const ah = crypto.createHash("sha256").update(ab).digest();
+  const bh = crypto.createHash("sha256").update(bb).digest();
+  return crypto.timingSafeEqual(ah, bh) && ab.length === bb.length;
+}
 
 /** Render an activity event in a format the agent already reads fluently. */
 function activityLine(e: ActivityEvent, format: "text" | "playwright"): string {
@@ -76,6 +101,10 @@ export class Lucarne {
   private readonly segmentSeconds: number;
   private nextCdp: number;
   private readonly sessions = new Map<string, Tracked>();
+  /** In-flight `create`s keyed by id, so concurrent same-id creates coalesce. */
+  private readonly creating = new Map<string, Promise<Session>>();
+  /** Sessions currently being torn down — makes `destroy` idempotent under the reaper. */
+  private readonly destroying = new Set<string>();
   private readonly backends: Record<string, Backend> = {};
   private readonly credentials: CredentialProvider;
   private readonly credentialsService: CredentialsService;
@@ -127,8 +156,19 @@ export class Lucarne {
 
   async create(opts: CreateSessionOptions = {}): Promise<Session> {
     const id = (opts.profile ?? "s" + Date.now().toString(36)).replace(/[^a-z0-9_-]/gi, "");
-    const existing = this.sessions.get(id);
-    if (existing) return pub(existing);
+    const live = this.sessions.get(id);
+    if (live) return pub(live);
+    // Coalesce concurrent same-id creates onto ONE in-flight promise — otherwise two
+    // racing creates each spawn a browser on the same profile dir and orphan one
+    // (leaking its slot + process).
+    const pending = this.creating.get(id);
+    if (pending) return pending;
+    const p = this.spawnSession(id, opts).finally(() => this.creating.delete(id));
+    this.creating.set(id, p);
+    return p;
+  }
+
+  private async spawnSession(id: string, opts: CreateSessionOptions): Promise<Session> {
     const backend = this.backends[opts.backend ?? "docker"];
     if (!backend) throw new Error(`lucarne: unknown backend '${opts.backend}'`);
     const persist = opts.persist ?? !!opts.profile;
@@ -142,12 +182,12 @@ export class Lucarne {
     fs.mkdirSync(dirs.downloadDir, { recursive: true });
     fs.mkdirSync(dirs.filesDir, { recursive: true });
     const cdp = this.nextCdp++;
-    const cdpUrl = `http://${this.host}:${cdp}`;
+    const cdpUrl = `http://${CDP_HOST}:${cdp}`;
     await this.acquireSlot();
-    let handle, media;
+    let handle: BackendHandle | undefined, media: SessionMedia | undefined;
     try {
       handle = await backend.start(id, { cdp }, {
-        host: this.host, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
+        host: CDP_HOST, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
         profileDir: dirs.profileDir, recDir: dirs.recDir, persist, extensions: opts.extensions, proxy: opts.proxy,
         headless: opts.headless ?? this.headless,
       });
@@ -156,20 +196,27 @@ export class Lucarne {
         record: this.record, fps: this.fps, retentionMin: this.retentionMin, segmentSeconds: this.segmentSeconds, mobile: opts.mobile, quality: opts.quality, geo: opts.geo,
         activity: opts.activity ?? this.activityDefault,
       });
+      // Load any custom unpacked extensions via CDP (the only path modern Chrome
+      // allows). A bare name is confined to the managed dir (basename — no `..`
+      // escape); an absolute path loads as-is (a documented opt-in).
+      if (opts.extensions?.length) {
+        const bconn = await attachBrowser(cdpUrl);
+        for (const ext of opts.extensions) {
+          const dir = path.isAbsolute(ext) ? ext : path.join(managedExtensionsDir(), path.basename(ext));
+          await bconn.call("Extensions.loadUnpacked", { path: dir }).catch(() => {});
+        }
+        bconn.close();
+      }
     } catch (e) {
+      // Roll back EVERYTHING on any failure — otherwise the browser/container, the
+      // media (ffmpeg + screencast tick + CDP sockets), and the slot all leak, and
+      // (for the slot) eventually deadlock every future create.
+      try { media?.close(); } catch { /* ignore */ }
+      await handle?.stop().catch(() => {});
+      try { fs.rmSync(dirs.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { fs.rmSync(dirs.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
       this.releaseSlot();
       throw e;
-    }
-    // Load any custom unpacked extensions via CDP (the only path modern Chrome
-    // allows); the launch flag was set by the backend.
-    if (opts.extensions?.length) {
-      const bconn = await attachBrowser(cdpUrl);
-      // a bare name resolves to a managed extension; an absolute path loads as-is
-      for (const ext of opts.extensions) {
-        const dir = path.isAbsolute(ext) ? ext : path.join(managedExtensionsDir(), ext);
-        await bconn.call("Extensions.loadUnpacked", { path: dir }).catch(() => {});
-      }
-      bconn.close();
     }
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
     const s: Tracked = {
@@ -242,13 +289,22 @@ export class Lucarne {
   async uploadFile(id: string, hostPath: string, selector = "input[type=file]"): Promise<void> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
-    if (!fs.existsSync(hostPath)) throw new Error(`no such file: ${hostPath}`);
+    // Confine uploads to the daemon-managed workspaces (per-session scratch, global
+    // /files, or captured downloads) — an unconfined host path would let a caller
+    // exfiltrate any file the daemon can read (~/.ssh, the cred key) via a file input.
+    // Stage the file with PUT /files first if it isn't already there.
+    const resolved = path.resolve(hostPath);
+    const allowed = [s.filesDir, globalFilesDir(), s.downloadDir].map((d) => path.resolve(d) + path.sep);
+    if (!allowed.some((root) => resolved.startsWith(root))) {
+      throw new Error("lucarne: upload path must be inside the session files workspace (/files) — stage it there first");
+    }
+    if (!fs.existsSync(resolved)) throw new Error(`no such file: ${hostPath}`);
     const cdp = s.media.cdp;
     await cdp.call("DOM.enable");
     const { root } = await cdp.call("DOM.getDocument", { depth: 0 });
     const { nodeId } = await cdp.call("DOM.querySelector", { nodeId: root.nodeId, selector });
     if (!nodeId) throw new Error(`no element matching '${selector}'`);
-    await cdp.call("DOM.setFileInputFiles", { files: [hostPath], nodeId });
+    await cdp.call("DOM.setFileInputFiles", { files: [resolved], nodeId });
   }
 
   /** Files the session has downloaded (newest last), retrievable via the API. */
@@ -375,6 +431,9 @@ v.addEventListener('ended',()=>{i++;play()});play();});
   async act(id: string, a: ActAction): Promise<{ ok: true; screenshot?: string }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
+    // Agent driving counts as activity — otherwise an `inactivityMs` session being
+    // actively driven via `act` (no human porthole input) gets reaped mid-work.
+    s.lastActivityMs = Date.now();
     const m = s.media;
     switch (a.action) {
       case "click":
@@ -472,13 +531,19 @@ v.addEventListener('ended',()=>{i++;play()});play();});
   async destroy(id: string, forget = true): Promise<boolean> {
     const s = this.sessions.get(id);
     if (!s) return false;
+    // Idempotent at the SYNCHRONOUS entry: `stop()` can take seconds (Chrome flush /
+    // `docker rm -f`), and the 500ms reaper would otherwise re-enter destroy ~12× for
+    // the same session and over-release the slot. Remove + flag BEFORE the first await.
+    if (this.destroying.has(id)) return false;
+    this.destroying.add(id);
+    this.sessions.delete(id);
+    this.releaseSlot();
+    if (forget) this.forgetSpec(id);
     try { s.media.close(); } catch { /* ignore */ }
     await s.stop().catch(() => {});
     try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
     try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    this.sessions.delete(id);
-    this.releaseSlot();
-    if (forget) this.forgetSpec(id);
+    this.destroying.delete(id);
     return true;
   }
 
@@ -519,8 +584,9 @@ v.addEventListener('ended',()=>{i++;play()});play();});
 
   private tokenOk(url: string, headerAuth?: string): boolean {
     if (!this.token) return true;
-    if (new URL(url, "http://x").searchParams.get("token") === this.token) return true;
-    return headerAuth === `Bearer ${this.token}`;
+    const q = new URL(url, "http://x").searchParams.get("token");
+    if (q !== null && safeEqual(q, this.token)) return true;
+    return headerAuth !== undefined && safeEqual(headerAuth, `Bearer ${this.token}`);
   }
 
   listen(): Promise<void> {
@@ -535,6 +601,18 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           res.setHeader("access-control-allow-headers", "authorization,content-type");
           res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
           if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+        }
+        // Body-size cap (declared length) — a huge body would OOM the daemon.
+        const clen = Number(req.headers["content-length"] ?? 0);
+        if (clen > MAX_BODY_BYTES) return send(res, 413, { error: "payload too large" });
+        // DNS-rebinding / CSRF guard for the no-token (loopback) mode: a malicious web
+        // page can otherwise drive a localhost daemon. With a token the token IS the
+        // auth (and the Host is the tunnel domain), so only guard when tokenless.
+        if (!this.token) {
+          const hostHeader = (req.headers.host ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+          if (hostHeader && !isLoopbackBind(hostHeader) && hostHeader !== "127.0.0.1") return send(res, 403, { error: "forbidden host (set LUCARNE_TOKEN to allow non-loopback access)" });
+          const origin = req.headers.origin;
+          if (origin) { try { const oh = new URL(origin).hostname; if (!isLoopbackBind(oh) && oh !== "127.0.0.1") return send(res, 403, { error: "cross-origin forbidden" }); } catch { return send(res, 403, { error: "bad origin" }); } }
         }
         const pathname = new URL(req.url ?? "/", "http://x").pathname;
         if (pathname === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(openApiSpec)); return; }
@@ -756,7 +834,10 @@ v.addEventListener('ended',()=>{i++;play()});play();});
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         const cur = s.media.frames.get();
         if (cur) ws.send(cur);
-        const unsub = s.media.frames.subscribe((f) => { if (ws.readyState === ws.OPEN) ws.send(f); });
+        // Backpressure: frames are latest-wins, so DROP a frame for a slow/stalled
+        // client rather than letting the ws send buffer grow unbounded (a half-open
+        // socket would otherwise accrete JPEGs forever).
+        const unsub = s.media.frames.subscribe((f) => { if (ws.readyState === ws.OPEN && ws.bufferedAmount < 1_000_000) ws.send(f); });
         ws.on("message", (d) => { if (!interactable) return; s.lastActivityMs = Date.now(); try { s.media.onInput(JSON.parse(d.toString())); } catch { /* ignore */ } });
         ws.on("close", unsub);
         ws.on("error", unsub);

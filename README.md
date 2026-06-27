@@ -244,7 +244,7 @@ await engine.destroy(id);
 await engine.close();                           // stop API + tear down all sessions
 ```
 
-`Session = { id, backend, cdpUrl, viewUrl, createdAt }`.
+`Session = { id, backend, cdpUrl, viewUrl, createdAt, metadata? }`.
 
 HTTP control API (what the CLI talks to):
 
@@ -257,7 +257,7 @@ DELETE /sessions                          -> { released }   (release-all)
 GET    /sessions/:id                      -> Session
 GET    /sessions/:id/status               -> SessionStatus   (uptime, idle, dims, limits)
 POST   /sessions/:id/touch                -> { ok }   (reset the inactivity clock)
-GET    /sessions/:id/context              -> { cookies, localStorage, origin }   (export)
+GET    /sessions/:id/context              -> { cookies, localStorage, sessionStorage, origin }   (export)
 POST   /sessions/:id/context              {cookies?, localStorage?}  -> { ok }   (import)
 GET    /sessions/:id/tabs                 -> { active, tabs:[{id,url,title}] }
 POST   /sessions/:id/tabs/:targetId       -> { ok }   (point porthole at that tab)
@@ -295,7 +295,7 @@ GET    /files | PUT/GET/DELETE /files/:name           -> durable global workspac
 GET    /sessions/:id/files | PUT/GET/DELETE .../files/:name   -> per-session scratch workspace
 ```
 
-`Session = { id, backend, cdpUrl, viewUrl, createdAt }`. Recording is on by default
+`Session = { id, backend, cdpUrl, viewUrl, createdAt, metadata? }`. Recording is on by default
 (`record: false` or `LUCARNE_RECORD=0` to disable), a rolling buffer of `retentionMin`
 minutes (default 60) of one-minute segments.
 
@@ -303,9 +303,12 @@ minutes (default 60) of one-minute segments.
 
 `lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
 
-- **CDP is full, unauthenticated control of the browser.** It stays on loopback; never expose a `cdpUrl`. Drivers/agents run on the same host. The `docker` backend publishes container CDP with `docker run -p 127.0.0.1:<port>:9222` — explicitly bound to loopback, never the LAN (it is **not** a bare `-p 9222`).
-- **Optional token.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** the porthole (HTTP + the WebSocket). Use a long random value, e.g. `export LUCARNE_TOKEN=$(openssl rand -hex 32)`. **Required** whenever you bind off loopback.
-- **All portholes are served under the daemon** at `/sessions/:id/view` — one origin, token-gated, relative URLs — so the whole engine sits behind a single reverse proxy / tunnel cleanly, for every backend. Append `?interactable=0` for a read-only viewer (input dropped server-side), or `?controls=1` for a URL bar + back/forward/reload chrome.
+- **CDP is full, unauthenticated control of the browser.** It always binds **loopback only** — for both backends, independent of the daemon's `--host` (the `docker` backend publishes with `-p 127.0.0.1:<port>:9222`, the native backend never passes `--remote-debugging-address`). Never expose a `cdpUrl`; drivers/agents run on the same host.
+- **Token enforced off loopback.** Set `LUCARNE_TOKEN` (or `new Lucarne({ token })`) to require `Authorization: Bearer <t>` / `?token=<t>` on the control API **and** the porthole (HTTP + WebSocket). `lucarne serve` **auto-provisions and prints a token** whenever you bind off loopback (`--host` ≠ loopback, or `--tunnel`), so a remotely-reachable daemon is never unauthenticated — set your own with `export LUCARNE_TOKEN=$(openssl rand -hex 32)` to override.
+- **Loopback CSRF/DNS-rebinding guard.** In the default tokenless loopback mode the daemon rejects requests with a non-loopback `Host` or a cross-origin `Origin` (403), so a malicious web page can't drive your localhost daemon. (A token, when set, is the auth instead.)
+- **`?interactable=0`** drops input for *that* porthole connection server-side — but it is a per-connection mode, **not a capability boundary**: the same token can open an interactable socket or call `/act`. For a true read-only handoff, don't share the token. `?controls=1` adds a URL bar + back/forward/reload.
+- **`/login` is not a confidentiality boundary against the *caller*.** It injects a stored secret server-side so the agent needn't *handle* it, but a caller that can drive the browser can render the value into a page and read it back — treat API access as access to the credentials, as below.
+- **File access is confined.** Navigation refuses `file://`/`chrome://` (no host-file read via `/content`/`/screenshot`), and `/upload` only accepts paths inside the session's `/files` workspace — stage a file there first.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
 ### Exposing it (remote / from your phone)

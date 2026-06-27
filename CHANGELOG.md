@@ -4,6 +4,58 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.3.0]
+
+A hardening release from a 6-dimension adversarial review (security red-team,
+concurrency/leak deep-dive, proof-integrity skeptic, contract-drift, claims-vs-reality,
+fresh-install). Every finding below ships with a committed proof.
+
+### Security
+- **Docker CDP is now pinned to loopback** (`-p 127.0.0.1:<port>:9222`) regardless of the
+  daemon's `--host` — previously, `serve --host 0.0.0.0` published the container's
+  (un-tokened) CDP to the LAN. CDP for **both** backends is loopback-only, always.
+- **Token is enforced off-loopback, not just advised.** `serve` auto-provisions + prints a
+  token whenever it binds off loopback (`--host` ≠ loopback, or `--tunnel`), so a
+  remotely-reachable daemon is never unauthenticated.
+- **CSRF / DNS-rebinding guard** for the tokenless loopback mode: requests with a
+  non-loopback `Host` or cross-origin `Origin` are refused (403), so a malicious web page
+  can't drive your localhost daemon.
+- **Host-file read closed:** navigation refuses `file://`/`chrome://` (no read-back via
+  `/content`/`/screenshot`), `/upload` is confined to the session `/files` workspace, and
+  the `extensions` create-option is `basename`-confined (was the one un-sanitized path).
+- **Request body size cap** (413 over 128 MB) so one large upload can't OOM the daemon;
+  **timing-safe** token comparison.
+
+### Fixed (concurrency / leaks)
+- **`destroy` is now idempotent at its synchronous entry** — the 500 ms reaper no longer
+  re-enters destroy ~12× during a slow `stop()` and over-releases the concurrency slot
+  (which corrupted `maxConcurrent` accounting).
+- **`create` rolls back fully on every error path** (browser/container `stop()` + media
+  close + slot release + dir cleanup) — previously a mid-create failure (esp. with
+  `extensions`) leaked Chrome/ffmpeg and could permanently deadlock all future creates.
+- **Concurrent same-id `create`s coalesce** onto one in-flight promise (no orphaned twin
+  session). **`act()` now refreshes the idle clock** so an agent-driven `inactivityMs`
+  session isn't reaped mid-work. **ffmpeg availability is probed once + cached** (no
+  synchronous spawn per create on the event loop). Docker `restore` reclaims an orphan
+  container of the same name. Porthole WS drops frames for a stalled client (no unbounded
+  buffering).
+
+### Fixed (contract drift)
+- MCP `lucarne_act` exposes `button`/`clickCount` (right-/double-click were unreachable via
+  MCP). Python `list()` URL-encodes the metadata filter (matched the Node SDK). Python
+  `__version__` derives from package metadata (no double-hardcoded drift). OpenAPI documents
+  the bare-list routes (`/files`, `/extensions`, `/sessions/:id/files`); added
+  `client.deleteDownload()`.
+
+### Docs / tests
+- Security section rewritten to match enforced reality (incl. honest notes that
+  `?interactable=0` is a per-connection mode not a capability boundary, and `/login` is not
+  a confidentiality boundary against the caller). Fixed README staleness (`sessionStorage`
+  in context, `metadata` in `Session`). Killed two weak proofs (`theme` theater, `seed`
+  no-clobber that didn't test no-clobber) and added real coverage: the security fixes,
+  end-to-end recording through the engine, `act()`-keeps-alive, idempotent double-destroy,
+  create-rollback, and `deleteExtension`.
+
 ## [1.2.2]
 
 ### Fixed
