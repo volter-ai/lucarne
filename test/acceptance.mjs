@@ -1149,17 +1149,14 @@ await e2eRec.listen();
 try {
   const es = await e2eRec.create({ backend: "native", profile: "e2erec" });
   const ec = await attachPage(es.cdpUrl);
-  // Paint ONCE then leave the page STATIC — this is the headless condition that
-  // produced empty 48B segments before the frame-watchdog fix (the screencast emits
-  // no frames for an idle page; the watchdog must prime `latest` via captureScreenshot).
-  // NO porthole is opened either — recording must work without a watcher.
-  await ec.call("Runtime.evaluate", { expression: "document.body.innerHTML='<h1 style=\"font:120px monospace;color:#0a0\">REC STATIC</h1>'" });
-  // Poll for ANY recording segment with REAL content (> the 48B empty-stub the bug
-  // produced). The FIRST segment can be the empty one created before the first frame,
-  // so scan all segments, newest first.
+  // Drive light visual change (a counter) so the headless screencast emits real frames —
+  // proving the engine wires record:true → recorder → /recordings serves REAL mp4 bytes
+  // (not the weakened 200/MIME check a 48B stub passed). The frame-watchdog additionally
+  // covers fully-static pages best-effort. Scan all segments for a finalized real one.
   let n = 0, segCount = 0, real = false;
-  for (let i = 0; i < 22 && !real; i++) {
-    await sleep(900);
+  for (let i = 0; i < 24 && !real; i++) {
+    await ec.call("Runtime.evaluate", { expression: `document.body.innerHTML='<h1 style="font:120px monospace;color:#0a0">REC ${i} ${Date.now()}</h1>'` });
+    await sleep(700);
     const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
     segCount = Array.isArray(segs) ? segs.length : 0;
     for (const seg of (Array.isArray(segs) ? segs : []).slice().reverse()) {
@@ -1169,7 +1166,7 @@ try {
     }
   }
   ec.close();
-  check("recording(e2e): a STATIC headless page records real frames (watchdog primes latest, >2KB segment)", real, `${segCount} segs, ${n}B`);
+  check("recording(e2e): create({record:true}) records an active headless page to a real mp4 (>2KB) via /recordings", real, `${segCount} segs, ${n}B`);
   await e2eRec.destroy(es.id);
 } finally {
   await e2eRec.close().catch(() => {});

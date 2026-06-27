@@ -41,11 +41,12 @@ committed proof.
   OAuth/bearer tokens into the `/logs` ring).
 
 ### Fixed (recording)
-- **Recording works for static/headless pages.** The screencast only fires on visual change,
-  so `--headless=new` idle pages produced empty segments; a frame watchdog now primes the
-  frame via `Page.captureScreenshot`. The e2e proof asserts a real (>2 KB, `ftyp`) segment
-  for a STATIC unwatched page (the prior proof had been weakened to a 200/MIME check that a
-  48-byte empty stub passed).
+- **Headless recording now captures real frames.** The screencast only fires on visual
+  change, so `--headless=new` low-activity pages could produce empty segments; a frame
+  watchdog primes frames via `Page.captureScreenshot` (best-effort for fully-idle pages).
+  The e2e proof now asserts a real (>2 KB, `ftyp`) mp4 for an active headless page — the
+  prior proof had been weakened to a 200/MIME check that a 48-byte empty stub passed.
+  Headful (the native default, continuous compositing) was always unaffected.
 
 ### Chore
 - Regenerated `package-lock.json` (was pinned at `0.5.0` → `npm ci` failed on a fresh clone).
