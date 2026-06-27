@@ -160,7 +160,18 @@ function ensureWorktree(branch: string, worktree: string): void {
   ensureRunnerPathsIgnored();
   mkdirSync(dirname(worktree), { recursive: true });
   const branchExists = git(['rev-parse', '--verify', '--quiet', branch]).status === 0;
-  const add = branchExists ? ['worktree', 'add', worktree, branch] : ['worktree', 'add', '-b', branch, worktree, 'HEAD'];
+  // Base a NEW agent branch on the FRESHEST default branch, not the local HEAD. The local trunk goes stale as
+  // agent PRs auto-merge on the REMOTE (this loop never pulls them back), so branching from HEAD builds on
+  // outdated code and the PR conflicts with what actually merged. Fetch the trunk and branch from
+  // origin/<trunk> when a remote-tracking ref exists (a GitHub code host); fall back to HEAD for a remoteless
+  // local-git repo (where there is no such drift — the PM lands work locally).
+  let base = 'HEAD';
+  if (!branchExists) {
+    const trunk = git(['symbolic-ref', '--short', 'HEAD']).stdout.trim() || 'main';
+    git(['fetch', 'origin', trunk]); // best-effort: a no-op (non-zero) without a remote
+    if (git(['rev-parse', '--verify', '--quiet', `origin/${trunk}`]).status === 0) base = `origin/${trunk}`;
+  }
+  const add = branchExists ? ['worktree', 'add', worktree, branch] : ['worktree', 'add', '-b', branch, worktree, base];
   const r = git(add);
   if (r.status !== 0) throw new Error(`git worktree add failed for ${branch}: ${r.stderr || r.stdout}`);
   const mainNodeModules = resolve('node_modules');
