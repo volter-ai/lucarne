@@ -39,8 +39,10 @@ export function ensureTunnelToken(token: string | undefined): { token: string; g
  * that would otherwise be grabbed first.
  */
 const PRESET_PATTERN: Record<TunnelPreset, RegExp> = {
-  ngrok: /https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.(?:app|dev|io)[^\s"'`]*/i,
-  cloudflared: /https:\/\/[a-z0-9-]+\.trycloudflare\.com[^\s"'`]*/i,
+  // allow multi-label hosts (regional/reserved ngrok like name.eu.ngrok.io, or a
+  // branded *.trycloudflare.com) — the `(?:label\.)+` is still linear (no ReDoS).
+  ngrok: /https:\/\/(?:[a-z0-9-]+\.)+ngrok(?:-free)?\.(?:app|dev|io)[^\s"'`]*/i,
+  cloudflared: /https:\/\/(?:[a-z0-9-]+\.)*trycloudflare\.com[^\s"'`]*/i,
 };
 
 // Obvious non-tunnel URLs a client may print in its banner (only used for the generic
@@ -54,7 +56,12 @@ const NOISE_HOST = /(localhost|127\.0\.0\.1|0\.0\.0\.0|cloudflare\.com|developer
  */
 export function pickPublicUrl(text: string, preset?: TunnelPreset): string | null {
   const clean = (u: string): string => u.replace(/[).,]+$/, "");
-  if (preset) { const m = text.match(PRESET_PATTERN[preset]); return m ? clean(m[0]) : null; }
+  if (preset) {
+    const m = text.match(PRESET_PATTERN[preset]);
+    if (m) return clean(m[0]);
+    // preset host didn't match (an unusual/custom domain) — fall through to the
+    // generic non-noise heuristic rather than timing out on a tunnel that IS up.
+  }
   const urls = text.match(/https?:\/\/[^\s"'`]+/g);
   if (!urls) return null;
   return urls.map(clean).find((u) => !NOISE_HOST.test(u)) ?? null;
@@ -73,9 +80,25 @@ export function tunnelSpawnSpec(opts: TunnelOptions): { file: string; args: stri
 export function startTunnel(opts: TunnelOptions): Promise<TunnelHandle> {
   const spec = tunnelSpawnSpec(opts);
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  // A `--tunnel-cmd` runs under a shell; spawn it DETACHED so it leads its own
+  // process group, and tear down the whole group on stop — otherwise SIGTERM to
+  // the shell can orphan the real tunnel (a wrapper script that doesn't `exec`),
+  // leaving the public ingress open after the daemon stops.
   const child: ChildProcess = spec.shell
-    ? spawn(spec.file, { shell: true, env: { ...process.env, LUCARNE_LOCAL_URL: `http://${opts.host}:${opts.port}`, LUCARNE_PORT: String(opts.port) } })
+    ? spawn(spec.file, { shell: true, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LUCARNE_LOCAL_URL: `http://${opts.host}:${opts.port}`, LUCARNE_PORT: String(opts.port) } })
     : spawn(spec.file, spec.args, { stdio: ["ignore", "pipe", "pipe"] });
+
+  // Kill the child (and its group, for the detached shell case), SIGKILL backstop.
+  const teardown = (): void => {
+    const pid = child.pid;
+    const sig = (s: NodeJS.Signals): void => {
+      try { if (spec.shell && pid) process.kill(-pid, s); else child.kill(s); } catch { /* already gone */ }
+    };
+    sig("SIGTERM");
+    const t = setTimeout(() => sig("SIGKILL"), 3000);
+    t.unref?.();
+    child.once("exit", () => clearTimeout(t));
+  };
 
   return new Promise<TunnelHandle>((resolve, reject) => {
     let buf = "", settled = false;
@@ -83,13 +106,13 @@ export function startTunnel(opts: TunnelOptions): Promise<TunnelHandle> {
     const scan = (chunk: Buffer): void => {
       buf += chunk.toString();
       const url = pickPublicUrl(buf, opts.preset);
-      if (url) done(() => resolve({ url, stop: () => { try { child.kill(); } catch { /* gone */ } } }));
+      if (url) done(() => resolve({ url, stop: teardown }));
     };
     child.stdout?.on("data", scan);
     child.stderr?.on("data", scan);
     child.on("error", (err: NodeJS.ErrnoException) => done(() => reject(new Error(
       err.code === "ENOENT" ? `lucarne: tunnel binary not found ('${spec.file}') — install it first` : `lucarne: tunnel failed — ${err.message}`))));
     child.on("exit", (code) => done(() => reject(new Error(`lucarne: tunnel exited (${code}) before a public URL appeared`))));
-    const timer = setTimeout(() => done(() => { try { child.kill(); } catch { /* */ } reject(new Error("lucarne: tunnel timed out waiting for a public URL")); }), timeoutMs);
+    const timer = setTimeout(() => done(() => { teardown(); reject(new Error("lucarne: tunnel timed out waiting for a public URL")); }), timeoutMs);
   });
 }

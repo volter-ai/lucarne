@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.2.2]
+
+### Fixed
+- **Tunnel teardown could orphan the real tunnel process.** A `--tunnel-cmd` runs under a
+  shell; `stop()` sent SIGTERM to the shell, which (for a non-`exec` wrapper) left the
+  actual tunnel child running and the public ingress open after the daemon stopped. The
+  shell child is now spawned **detached** and `stop()` kills the whole process group with a
+  SIGKILL backstop — proven against a real non-exec grandchild.
+- **ngrok/cloudflared URL match now handles multi-label hosts** (regional/reserved domains
+  like `name.eu.ngrok.io`, branded `*.trycloudflare.com`), and a preset-pattern miss now
+  falls through to the generic non-noise heuristic instead of timing out on a live tunnel.
+
+### Note
+- The Python client (PyPI `lucarne`) is versioned to match (1.2.2) and its summary
+  corrected ("create and drive" — the thin client doesn't itself watch/record).
+
 ## [1.2.1]
 
 ### Fixed

@@ -926,6 +926,12 @@ try {
   const NG_LOG = 't=.. lvl=info msg="started tunnel" url=https://8bdfb460c7c9.ngrok.app\nt=.. addr=http://127.0.0.1:4040\nt=.. https://dashboard.ngrok.com/get-started';
   check("tunnel: ngrok preset picks the ngrok URL, not the dashboard/inspector",
     pickPublicUrl(NG_LOG, "ngrok") === "https://8bdfb460c7c9.ngrok.app");
+  // multi-label (regional/reserved) ngrok host must still match
+  check("tunnel: ngrok preset matches a multi-label regional host",
+    pickPublicUrl("url=https://myname.eu.ngrok.io done", "ngrok") === "https://myname.eu.ngrok.io");
+  // preset pattern miss → fall through to the generic non-noise heuristic (don't time out a live tunnel)
+  check("tunnel: a preset miss falls through to the generic URL (no false timeout)",
+    pickPublicUrl("addr=http://127.0.0.1:4040 url=https://custom.example.net/abc", "ngrok") === "https://custom.example.net/abc");
   const ng = tunnelSpawnSpec({ preset: "ngrok", host: "127.0.0.1", port: 7800 });
   check("tunnel: ngrok preset builds the right command", ng.file === "ngrok" && ng.args.join(" ") === "http 127.0.0.1:7800 --log stdout");
   const cf = tunnelSpawnSpec({ preset: "cloudflared", host: "127.0.0.1", port: 7800 });
@@ -936,6 +942,16 @@ try {
   const h = await startTunnel({ cmd: `node -e "console.log('https://stub.test/xyz'); setInterval(()=>{},1e9)"`, host: "127.0.0.1", port: 7800, timeoutMs: 8000 });
   check("tunnel: startTunnel spawns a --tunnel-cmd and resolves its public URL", h.url === "https://stub.test/xyz");
   h.stop();
+  // stop() must tear down the WHOLE process group — a non-exec shell wrapper has a real
+  // grandchild that SIGTERM-to-the-shell alone would orphan (leaking the public ingress).
+  const MARK = "lucarne_orphan_proof_" + process.pid;
+  const hg = await startTunnel({ cmd: `echo https://stub.test/g; sleep 60 # ${MARK}`, host: "127.0.0.1", port: 7800, timeoutMs: 6000 });
+  const aliveBefore = execFileSync("pgrep", ["-f", MARK], { encoding: "utf8" }).trim().length > 0;
+  hg.stop();
+  await sleep(1800);
+  let aliveAfter = false;
+  try { aliveAfter = execFileSync("pgrep", ["-f", MARK], { encoding: "utf8" }).trim().length > 0; } catch { aliveAfter = false; }
+  check("tunnel: stop() kills the whole process group (no orphaned tunnel)", hg.url === "https://stub.test/g" && aliveBefore && !aliveAfter);
   let terr = "";
   try { await startTunnel({ cmd: "definitely-not-a-real-binary-xyz", host: "127.0.0.1", port: 7800, timeoutMs: 5000 }); } catch (e) { terr = e.message; }
   check("tunnel: a bad tunnel command fails with a clear error", /tunnel (binary not found|exited|failed)/.test(terr));
