@@ -81,6 +81,10 @@ sh('mkdir', ['-p', runDir]);
 sh('bash', ['-c', `cp -f .agent-run/artifacts/transcript.md "${runDir}/transcript.md" 2>/dev/null || true`]);
 sh('bash', ['-c', `cp -f .agent-run/artifacts/screenshot-* "${runDir}/" 2>/dev/null || true`]);
 sh('git', ['add', '-A']);
+// The tracker's `.volter/` sync-state (world twin, event log, cursors) churns on every run but is NEVER a
+// code deliverable — and an agent edit to it would be a human-required path anyway. Drop it from the
+// proposal so it can't ride into the PR (the run transcript/evidence under `.open-autonomy/history/` stays).
+sh('git', ['reset', '-q', '--', '.volter'], { allowFail: true });
 
 // Closing keyword in the COMMIT (squash-merge carries it reliably; a PR-body keyword alone is dropped when
 // the repo squashes from the commit message) — only when the subject is an issue number.
