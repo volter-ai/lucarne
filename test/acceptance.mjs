@@ -4,6 +4,7 @@
 import { Lucarne, LucarneClient, VERSION } from "../dist/index.js";
 import { nativeBackend } from "../dist/backends/native.js";
 import { pickPublicUrl, tunnelSpawnSpec, ensureTunnelToken, startTunnel } from "../dist/tunnel.js";
+import { globalFilesDir } from "../dist/profiles.js";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -89,10 +90,13 @@ try {
   check("clipboard: paste delivers text into focused input", (await p.evaluate(() => document.getElementById("i").value)) === "pw-9f3!");
   iw.close();
 
-  // 6. FILE UPLOAD — inject a host file into <input type=file>; page sees name + bytes
+  // 6. FILE UPLOAD — inject a host file into <input type=file>; page sees name + bytes.
+  // Uploads are confined to the daemon's files workspace (security), so stage it in
+  // the global /files dir first — the documented flow.
   const upBytes = crypto.randomBytes(2048);
   const upSha = crypto.createHash("sha256").update(upBytes).digest("hex");
-  const upPath = path.join(FILES, "up.bin");
+  const upPath = path.join(globalFilesDir(), "up.bin");
+  fs.mkdirSync(globalFilesDir(), { recursive: true });
   fs.writeFileSync(upPath, upBytes);
   await p.evaluate(() => document.body.insertAdjacentHTML("beforeend", "<input id=f type=file>"));
   await engine.uploadFile(session.id, upPath);
@@ -103,6 +107,10 @@ try {
   });
   const pageSha = rep ? crypto.createHash("sha256").update(Buffer.from(rep.bytes)).digest("hex") : null;
   check("upload: file input reports matching name + sha256", !!rep && rep.name === "up.bin" && pageSha === upSha);
+  // security: an out-of-workspace host path is REFUSED (no arbitrary host-file exfil)
+  let upRej = "";
+  try { await engine.uploadFile(session.id, path.join(os.tmpdir(), "lucarne-outside-secret.bin")); } catch (e) { upRej = e.message; }
+  check("upload(security): a path outside the files workspace is refused", /inside the session files workspace/.test(upRej));
   await b.close();
 } finally {
   if (session) await engine.destroy(session.id).catch(() => {});
