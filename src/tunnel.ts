@@ -33,15 +33,31 @@ export function ensureTunnelToken(token: string | undefined): { token: string; g
 }
 
 /**
- * Extract the public URL from a tunnel client's output: the first `https?://` URL
- * that isn't loopback (ngrok also logs its local `127.0.0.1:4040` inspector). Pure
- * + testable — no spawning.
+ * Each preset prints its public URL on a recognizable host — match THAT, not just
+ * "the first https URL", because real clients also print banner/doc links (cloudflared
+ * prints a cloudflare.com terms link; ngrok prints its dashboard + a localhost inspector)
+ * that would otherwise be grabbed first.
  */
-export function pickPublicUrl(text: string): string | null {
+const PRESET_PATTERN: Record<TunnelPreset, RegExp> = {
+  ngrok: /https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.(?:app|dev|io)[^\s"'`]*/i,
+  cloudflared: /https:\/\/[a-z0-9-]+\.trycloudflare\.com[^\s"'`]*/i,
+};
+
+// Obvious non-tunnel URLs a client may print in its banner (only used for the generic
+// --tunnel-cmd heuristic, where the command ideally prints just its own URL).
+const NOISE_HOST = /(localhost|127\.0\.0\.1|0\.0\.0\.0|cloudflare\.com|developers\.cloudflare|ngrok\.com\b|dashboard\.ngrok|github\.com|cloudflarestatus)/i;
+
+/**
+ * Extract the public URL from a tunnel client's output. For a known preset, match its
+ * URL host precisely; for a generic command, take the first non-loopback, non-noise
+ * `https?://` URL. Pure + testable — no spawning.
+ */
+export function pickPublicUrl(text: string, preset?: TunnelPreset): string | null {
+  const clean = (u: string): string => u.replace(/[).,]+$/, "");
+  if (preset) { const m = text.match(PRESET_PATTERN[preset]); return m ? clean(m[0]) : null; }
   const urls = text.match(/https?:\/\/[^\s"'`]+/g);
   if (!urls) return null;
-  const clean = (u: string): string => u.replace(/[).,]+$/, "");
-  return urls.map(clean).find((u) => !/(localhost|127\.0\.0\.1|0\.0\.0\.0)/.test(u)) ?? null;
+  return urls.map(clean).find((u) => !NOISE_HOST.test(u)) ?? null;
 }
 
 /** Build the spawn spec for a preset or a raw command. */
@@ -66,7 +82,7 @@ export function startTunnel(opts: TunnelOptions): Promise<TunnelHandle> {
     const done = (fn: () => void): void => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
     const scan = (chunk: Buffer): void => {
       buf += chunk.toString();
-      const url = pickPublicUrl(buf);
+      const url = pickPublicUrl(buf, opts.preset);
       if (url) done(() => resolve({ url, stop: () => { try { child.kill(); } catch { /* gone */ } } }));
     };
     child.stdout?.on("data", scan);

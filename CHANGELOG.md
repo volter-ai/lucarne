@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.2.1]
+
+### Fixed
+- **`--tunnel cloudflared` grabbed the wrong URL.** Real cloudflared prints a
+  `cloudflare.com/website-terms` link and a `developers.cloudflare.com` docs link in its
+  startup banner *before* the actual `trycloudflare.com` tunnel URL, and the naive "first
+  non-loopback https URL" picked the banner link. Each preset now matches its real URL
+  host (`*.trycloudflare.com`, `*.ngrok[-free].{app,dev,io}`); the generic `--tunnel-cmd`
+  heuristic also skips obvious vendor/doc hosts. Verified end-to-end against **real**
+  cloudflared *and* ngrok tunnels (public URL → `/health` 200, token gate 401/200), and
+  the real banner text is now a committed regression proof.
+
 ## [1.2.0]
 
 ### Added

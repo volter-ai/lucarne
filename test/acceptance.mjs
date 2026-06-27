@@ -917,6 +917,15 @@ try {
 {
   check("tunnel: pickPublicUrl extracts the public https URL, skips the loopback inspector",
     pickPublicUrl("addr=http://127.0.0.1:4040 url=https://ab12.ngrok-free.app") === "https://ab12.ngrok-free.app");
+  // REGRESSION (caught by a real cloudflared run): its banner prints a cloudflare.com
+  // terms link + a developers.cloudflare.com docs link BEFORE the tunnel URL — the preset
+  // matcher must pick the trycloudflare URL, not the first https it sees.
+  const CF_BANNER = "INF Thank you for trying Cloudflare Tunnel. ... Terms of Use (https://www.cloudflare.com/website-terms/), ... following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps\nINF |  https://camel-shut-printing-advantages.trycloudflare.com  |";
+  check("tunnel: cloudflared preset picks the trycloudflare URL, not the banner/terms links",
+    pickPublicUrl(CF_BANNER, "cloudflared") === "https://camel-shut-printing-advantages.trycloudflare.com");
+  const NG_LOG = 't=.. lvl=info msg="started tunnel" url=https://8bdfb460c7c9.ngrok.app\nt=.. addr=http://127.0.0.1:4040\nt=.. https://dashboard.ngrok.com/get-started';
+  check("tunnel: ngrok preset picks the ngrok URL, not the dashboard/inspector",
+    pickPublicUrl(NG_LOG, "ngrok") === "https://8bdfb460c7c9.ngrok.app");
   const ng = tunnelSpawnSpec({ preset: "ngrok", host: "127.0.0.1", port: 7800 });
   check("tunnel: ngrok preset builds the right command", ng.file === "ngrok" && ng.args.join(" ") === "http 127.0.0.1:7800 --log stdout");
   const cf = tunnelSpawnSpec({ preset: "cloudflared", host: "127.0.0.1", port: 7800 });
