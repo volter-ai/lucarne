@@ -54,8 +54,12 @@ never open the PR, request review, or merge.
    cited commits exist — your commit from step 5 does). Iterate until it is green.
 8. Push the updated ACs/evidence onto the GitHub **issue body** (the evidence of record — NOT a repo file):
    `gh issue edit "$ZTRACK_ISSUE" --body-file "$ISSUE_MD"`.
-9. Stop. The substrate pushes `agent/issue-$ZTRACK_ISSUE` and opens the auto-merging PR
-   (`Closes #$ZTRACK_ISSUE`) and triggers the reviewer — do not open the PR or merge.
+9. **Leave NO background process running**, then stop. Run every check in the FOREGROUND to completion;
+   never start a watcher/dev-server/`&`-backgrounded job (`tsc --watch`, `npm run dev`, a server, a
+   `run_in_background` shell) and walk away. A lingering shell keeps your session "running" so the substrate
+   never sees you done — it won't open the PR and the issue stalls. If you backgrounded anything, kill it
+   before ending. Then the substrate pushes `agent/issue-$ZTRACK_ISSUE`, opens the auto-merging PR
+   (`Closes #$ZTRACK_ISSUE`), and triggers the reviewer — do not open the PR or merge.
 
 Honest escape (never fake green): leave the AC unchecked and end `OUTCOME: blocked <reason>`,
 descope it, or `ztrack waiver sign "$ISSUE_MD" --code <code> --reason "…"` (then re-push the body).
