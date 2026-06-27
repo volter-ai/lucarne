@@ -297,7 +297,9 @@ GET    /sessions/:id/files | PUT/GET/DELETE .../files/:name   -> per-session scr
 
 `Session = { id, backend, cdpUrl, viewUrl, createdAt, metadata? }`. Recording is on by default
 (`record: false` or `LUCARNE_RECORD=0` to disable), a rolling buffer of `retentionMin`
-minutes (default 60) of one-minute segments.
+minutes (default 60) of one-minute segments. The semantic **activity log** (the agent-readable
+`GET /sessions/:id/activity` feed) is **off** by default; set `LUCARNE_ACTIVITY=1` to capture it
+by default for new sessions (or opt in per session with `create({ activity: true })`).
 
 ## Security
 
