@@ -9,6 +9,8 @@ import json
 import urllib.request
 from typing import Any
 
+__version__ = "1.0.0"
+
 
 class LucarneClient:
     def __init__(self, base_url: str = "http://127.0.0.1:7800", token: str | None = None) -> None:

@@ -1,0 +1,29 @@
+name: pypi
+# Publishes the Python client (clients/python) to PyPI via Trusted Publishing (OIDC) —
+# no long-lived token. ONE-TIME setup on PyPI (https://pypi.org/manage/account/publishing/):
+# add a pending publisher → PyPI project: lucarne · owner: volter-ai · repo: lucarne ·
+# workflow: pypi.yml · environment: (leave blank). Then push a `py-v*` tag (or run this
+# workflow manually) and it publishes. Until then `pip install lucarne` 404s by design.
+on:
+  push:
+    tags: ["py-v*"]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write          # OIDC for trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build clients/python --outdir dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
