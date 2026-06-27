@@ -34,6 +34,7 @@ durable across stateless runs — not a local ztrack store. ztrack is the accept
 
 ## Gates
 
-`develop` and `reviewer` run `ztrack check` against the issue body (`gh issue view <n> --json body --jq .body
-> issue.md; ztrack check issue.md`) before every handoff. The reviewer cannot pass a red issue. Done is only
+`develop` and `reviewer` run `ztrack check` against the issue body in a **temp file outside the repo**
+(`F="$(mktemp)"; gh issue view <n> --json body --jq .body > "$F"; ztrack check "$F"`) before every handoff —
+never write `issue.md` into the tree (it must never enter a PR). The reviewer cannot pass a red issue. Done is only
 reached when the PR merges with all ACs passed-with-evidence and `ci` + `agent-review` both green.

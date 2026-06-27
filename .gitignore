@@ -24,3 +24,4 @@ __pycache__/
 # open-autonomy runtime
 .worktrees/
 .open-autonomy/runner-state/
+.termfleet-*

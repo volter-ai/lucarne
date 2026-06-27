@@ -23,12 +23,17 @@ The PR number arrives as `TARGET_REF`. Do not wait for the developer to finish �
 1. Fetch the PR + its checks and diff: `gh pr view "$TARGET_REF" --json number,headRefName,body,statusCheckRollup`
    and `gh pr diff "$TARGET_REF"`.
 2. Resolve the GitHub **issue number** the PR implements (the `Closes #<n>` line in the PR body, or the
-   `agent/issue-<n>` branch name). Fetch that issue's body — it carries the ACs + the developer's evidence:
-   `gh issue view <n> --json body --jq .body > issue.md`.
-3. Gate the change on `ztrack check issue.md --json`. Approve **only** when:
+   `agent/issue-<n>` branch name). Fetch that issue's body into a **temp file** (never write it into the
+   repo) — it carries the ACs + the developer's evidence:
+   `ISSUE_MD="$(mktemp)"; gh issue view <n> --json body --jq .body > "$ISSUE_MD"`.
+3. Gate the change on `ztrack check "$ISSUE_MD" --json`. Approve **only** when:
    - ztrack is green — every passed AC is backed by a cited commit + a proof (the cited commits are the
      PR's head/commits; use `--no-verify-commits` only if this CI checkout is shallow and lacks them);
-   - the PR **diff** actually implements the claimed ACs (no unrelated scope);
+   - the PR **diff** actually implements the claimed ACs (no unrelated scope). **Deterministic reject:** the
+     diff must touch ONLY the issue's subject — if it includes ANY OA harness / working file the issue is not
+     explicitly about (`issue.md`, `.volter/`, `.open-autonomy/`, `scripts/`, `scheduler/`, `standards/`,
+     `.claude/`, `.codex/`, `.github/`), that is unrelated scope → `agent-review=failure` every time (these
+     are also `human-required` paths — the loop must never auto-merge a change to its own machinery);
    - it touches no unapproved `human-required` path/topic from `risk-and-review.md`;
    - it adheres to every applicable **architecture invariant** (the check below).
    **Architecture invariants — be FASTIDIOUS; enumerate, do not sample.** This is the project's immune system

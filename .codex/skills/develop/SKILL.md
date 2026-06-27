@@ -20,11 +20,11 @@ never open the PR, request review, or merge.
 ## Procedure
 
 1. `echo "$ZTRACK_ISSUE"` — stop if missing/empty. It is a GitHub issue **number**.
-2. Read the issue: `gh issue view "$ZTRACK_ISSUE" --json number,title,body,labels > /tmp/issue.json`
-   and `gh issue view "$ZTRACK_ISSUE" --json body --jq .body > issue.md` (the ACs are in
-   `issue.md`). Implement **only** its ACs. Stop with `OUTCOME: blocked human-required`
+2. Read the issue into a **working file OUTSIDE the repo** (so it can never be committed into the PR):
+   `ISSUE_MD="$(mktemp)"; gh issue view "$ZTRACK_ISSUE" --json body --jq .body > "$ISSUE_MD"` (the ACs
+   are in `$ISSUE_MD`). Implement **only** its ACs. Stop with `OUTCOME: blocked human-required`
    if it needs a human-required path/topic from `risk-and-review.md`.
-   **EDIT `issue.md` in place — never rebuild it from scratch.** A loose-file `ztrack check` reads the
+   **EDIT `$ISSUE_MD` in place — never rebuild it from scratch.** A loose-file `ztrack check` reads the
    `Assignee: <login>` line at the top of the body as the issue's owner; drop it and `check` fails
    `issue_missing_assignee` even with perfect evidence. Preserve that line (and the existing AC ids) verbatim.
 3. Make sure your commits land on `agent/issue-$ZTRACK_ISSUE` so they become the PR. The runner may already
@@ -32,9 +32,15 @@ never open the PR, request review, or merge.
    if needed — don't fail if you're already there:
    `git checkout -b "agent/issue-$ZTRACK_ISSUE" 2>/dev/null || git checkout "agent/issue-$ZTRACK_ISSUE"`.
 4. Implement. Run the project's tests/checks; accept a check that exits 0.
-5. **Commit your implementation** — this commit's SHA is the evidence:
-   `git add -A && git commit -m "feat: <what> (#$ZTRACK_ISSUE)"`. Capture `sha="$(git rev-parse HEAD)"`.
-6. Record evidence **in `issue.md`** for each genuinely satisfied AC — check the box,
+5. **Commit your implementation — stage ONLY the files you changed for this issue, BY PATH.**
+   **NEVER `git add -A` / `git add .`** — those sweep OA's own working files (the tracker's `.volter/`
+   sync-state, any scratch, etc.) into the PR, which the reviewer will (correctly) reject as unrelated
+   scope. Add your implementation file(s) and any evidence artifact you created, explicitly:
+   `git add <path/to/changed-file> [<artifact> …] && git commit -m "feat: <what> (#$ZTRACK_ISSUE)"`.
+   Capture `sha="$(git rev-parse HEAD)"`. Then sanity-check the diff is clean — `git show --stat HEAD`
+   must list **only** your intended change (no `.volter/`, `.open-autonomy/`, `scripts/`, or other harness
+   paths).
+6. Record evidence **in `$ISSUE_MD`** for each genuinely satisfied AC — check the box,
    set `status: passed`, cite the commit + a proof (see `standards/issue-and-evidence.md`):
    ```
    - [x] dev/01 v1 <text>
@@ -42,18 +48,17 @@ never open the PR, request review, or merge.
      - evidence ev1: commit=<sha> acv=1
      - proof: "how the commit shows this AC is met" -> ev1
    ```
-   For an artifact, commit the file and add `image=<path>` to the evidence line. A
-   checked/passed AC with no real evidence fails `check` — never fabricate one.
-7. **Gate locally:** `ztrack check issue.md` (it validates the AC structure and that the
+   For an artifact, commit the file (stage it by path in step 5) and add `image=<path>` to the evidence
+   line. A checked/passed AC with no real evidence fails `check` — never fabricate one.
+7. **Gate locally:** `ztrack check "$ISSUE_MD"` (it validates the AC structure and that the
    cited commits exist — your commit from step 5 does). Iterate until it is green.
-8. Push the updated ACs/evidence onto the GitHub issue so the reviewer + history see it:
-   `gh issue edit "$ZTRACK_ISSUE" --body-file issue.md`. If you committed `issue.md`/artifacts
-   into the repo, that's fine; the evidence of record is the issue body.
+8. Push the updated ACs/evidence onto the GitHub **issue body** (the evidence of record — NOT a repo file):
+   `gh issue edit "$ZTRACK_ISSUE" --body-file "$ISSUE_MD"`.
 9. Stop. The substrate pushes `agent/issue-$ZTRACK_ISSUE` and opens the auto-merging PR
    (`Closes #$ZTRACK_ISSUE`) and triggers the reviewer — do not open the PR or merge.
 
 Honest escape (never fake green): leave the AC unchecked and end `OUTCOME: blocked <reason>`,
-descope it, or `ztrack waiver sign issue.md --code <code> --reason "…"` (then re-push the body).
+descope it, or `ztrack waiver sign "$ISSUE_MD" --code <code> --reason "…"` (then re-push the body).
 
 End with `OUTCOME: ready-for-review` (branch committed; PR will open) or `OUTCOME: blocked <reason>`.
 Never merge — the boundary is `ci` + the reviewer's `agent-review`, landed by native auto-merge.
