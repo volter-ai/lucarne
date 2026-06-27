@@ -99,6 +99,32 @@ function positiveOption(name: string, value: number): number {
   return value;
 }
 
+/**
+ * Reject a numeric option that is NaN/non-finite or outside [min, max] with a clear
+ * message naming the field + its constraint (lucarne's fail-closed ethos), rather than
+ * forwarding it straight to CDP where Chrome silently clamps/ignores it.
+ */
+function rangeOption(name: string, value: number, min: number, max: number): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`lucarne: ${name} must be between ${min} and ${max} (got ${value})`);
+  }
+}
+
+/**
+ * Validate per-session `create()` inputs BEFORE any session is spawned — `quality`
+ * and `geo` are otherwise passed straight to CDP (Page.startScreencast /
+ * Emulation.setGeolocationOverride) unchecked, so an out-of-range/NaN value is
+ * silently sent to Chrome instead of failing closed. Omitted values are untouched
+ * (defaults still apply downstream).
+ */
+function validateCreateOptions(opts: CreateSessionOptions): void {
+  if (opts.quality !== undefined) rangeOption("quality", opts.quality, 1, 100);
+  if (opts.geo !== undefined) {
+    rangeOption("geo.latitude", opts.geo.latitude, -90, 90);
+    rangeOption("geo.longitude", opts.geo.longitude, -180, 180);
+  }
+}
+
 /** Constant-time string equality (length-independent) — for token comparison. */
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a), bb = Buffer.from(b);
@@ -212,6 +238,9 @@ export class Lucarne {
   }
 
   async create(opts: CreateSessionOptions = {}): Promise<Session> {
+    // Fail closed on invalid per-session inputs before spawning anything — an
+    // out-of-range/NaN `quality` or `geo` would otherwise reach CDP unchecked.
+    validateCreateOptions(opts);
     const id = (opts.profile ?? "s" + Date.now().toString(36)).replace(/[^a-z0-9_-]/gi, "");
     const live = this.sessions.get(id);
     if (live) return pub(live);
