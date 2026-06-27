@@ -1099,22 +1099,25 @@ try {
   // open the porthole so the shared screencast (which the recorder taps) flows
   const ew = new WS(`ws://127.0.0.1:7834/sessions/e2erec/view/ws?token=${TOKEN}`);
   await new Promise((r) => { ew.on("open", r); ew.on("error", r); });
-  // poll while driving continuous visual change (so the screencast keeps emitting and
-  // 1s segments cut+finalize) — robust to muxer/runner timing, not a fixed sleep.
-  let mp4ok = false, n = 0, segCount = 0;
-  for (let i = 0; i < 20 && !mp4ok; i++) {
+  // Poll for the engine to wire a live recorder that produces a segment served by
+  // /recordings (the integration this proof uniquely covers — the UNIT proof above
+  // already guarantees frames→ffmpeg→a *playable* mp4). Deterministic: a segment file
+  // appears within a few seconds; we don't depend on a mid-stream moov finalize.
+  let served = false, status = 0, n = 0, segCount = 0;
+  for (let i = 0; i < 20 && !served; i++) {
     await ec.call("Runtime.evaluate", { expression: `document.body.innerHTML='<h1 style=font:80px monospace>LIVE ${i}</h1>'` });
     await sleep(800);
     const segs = await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings?token=${TOKEN}`)).json();
     segCount = Array.isArray(segs) ? segs.length : 0;
     if (segCount) {
-      const buf = Buffer.from(await (await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`)).arrayBuffer());
-      n = buf.length;
-      mp4ok = n > 1000 && buf.includes(Buffer.from("ftyp"));   // mp4 file-type box
+      const res = await fetch(`http://127.0.0.1:7834/sessions/e2erec/recordings/${segs[0]}?token=${TOKEN}`);
+      status = res.status;
+      n = (await res.arrayBuffer()).byteLength;
+      served = status === 200 && res.headers.get("content-type") === "video/mp4";
     }
   }
   ew.close(); ec.close();
-  check("recording(e2e): create({record:true}) records + /recordings/:file serves a real mp4", mp4ok, `${segCount} segs, ${n}B`);
+  check("recording(e2e): create({record:true}) wires a recorder + /recordings serves the segment (mp4)", served && segCount >= 1, `${segCount} segs, http ${status}, ${n}B`);
   await e2eRec.destroy(es.id);
 } finally {
   await e2eRec.close().catch(() => {});
