@@ -118,17 +118,14 @@ Concrete jobs, each a runnable example in [`examples/`](./examples):
 ## Use it from Python
 
 The daemon is a Node CLI, but you only ever talk to it over **HTTP + CDP**, so the
-language you drive from is your choice. There's a **stdlib-only** Python client.
-**There is no PyPI package — `pip install lucarne` will not find it.** It's a single
-file you vendor (or read straight from the shipped npm tarball):
+language you drive from is your choice. There's a **stdlib-only** Python client on PyPI:
 
 ```sh
 npm install -g lucarne && lucarne serve          # the daemon (Node ≥ 22), once
-curl -O https://raw.githubusercontent.com/volter-ai/lucarne/main/clients/python/lucarne.py
-pip install playwright                            # to drive the cdpUrl from Python
+pip install lucarne playwright                   # the client + Playwright to drive cdpUrl
 ```
 ```python
-from lucarne import LucarneClient                 # the vendored file
+from lucarne import LucarneClient
 from playwright.sync_api import sync_playwright
 
 luc = LucarneClient("http://127.0.0.1:7800")
