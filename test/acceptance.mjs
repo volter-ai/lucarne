@@ -932,6 +932,24 @@ try {
   check("docker: unsupported proxy is rejected, not silently dropped", /does not support `proxy`/.test(proxyErr));
   check("docker: unsupported extensions are rejected, not silently dropped", /does not support custom `extensions`/.test(extErr));
 
+  // config validation: a non-positive / NaN numeric option is REJECTED at engine
+  // construction with a clear message naming the option (fail-closed), not silently
+  // used and surfaced later as a broken capture/recording.
+  let fpsErr = "", vpErr = "", retErr = "";
+  try { new Lucarne({ port: 7860, record: false, fps: 0 }); } catch (e) { fpsErr = e.message; }
+  try { new Lucarne({ port: 7860, record: false, viewport: { width: -1, height: 720 } }); } catch (e) { vpErr = e.message; }
+  try { new Lucarne({ port: 7860, record: false, retentionMin: NaN }); } catch (e) { retErr = e.message; }
+  // a valid/default construction is unaffected (no false positive)
+  let okCtor = true;
+  try { (new Lucarne({ port: 7860, record: false, fps: 4, segmentSeconds: 60 })); } catch { okCtor = false; }
+  check("config: a non-positive `fps` is rejected at construction with a clear message",
+    /fps must be a positive number/.test(fpsErr), fpsErr);
+  check("config: a non-positive `viewport.width` is rejected with a clear message",
+    /viewport\.width must be a positive number/.test(vpErr), vpErr);
+  check("config: a NaN `retentionMin` is rejected with a clear message",
+    /retentionMin must be a positive number/.test(retErr), retErr);
+  check("config: a valid/default construction is unaffected", okCtor);
+
   // backend-registration seam: with no backends registered, an unknown backend is rejected
   const bareEngine = new Lucarne({ port: 7841, token: TOKEN, record: false, backends: [] });
   await bareEngine.listen();
