@@ -19,6 +19,7 @@ import { startSessionMedia, type ActivityEvent, type ActivityNow, type LogEntry,
 import type { ActAction, CreateSessionOptions, EngineOptions, Session, SessionStatus } from "./types.js";
 
 interface Tracked extends Session {
+  cdpPort: number;
   recDir: string;
   downloadDir: string;
   filesDir: string;
@@ -136,6 +137,10 @@ export class Lucarne {
   private readonly retentionMin: number;
   private readonly segmentSeconds: number;
   private nextCdp: number;
+  /** CDP ports reclaimed on destroy — reused before incrementing `nextCdp`, so a
+   *  long-lived daemon with create/destroy churn never marches past 65535 (~56k
+   *  creates) and starts spawning on invalid ports. */
+  private readonly cdpFreeList: number[] = [];
   private readonly sessions = new Map<string, Tracked>();
   /** In-flight `create`s keyed by id, so concurrent same-id creates coalesce. */
   private readonly creating = new Map<string, Promise<Session>>();
@@ -220,11 +225,11 @@ export class Lucarne {
     // never overwriting an established profile.
     if (persist && !profileExists(dirs.profileDir)) {
       const source = opts.seedFromChrome ? realChromeUserDataDir() : opts.seedFrom;
-      if (source) seedProfile(source, dirs.profileDir);
+      if (source) await seedProfile(source, dirs.profileDir);
     }
     fs.mkdirSync(dirs.downloadDir, { recursive: true });
     fs.mkdirSync(dirs.filesDir, { recursive: true });
-    const cdp = this.nextCdp++;
+    const cdp = this.cdpFreeList.pop() ?? this.nextCdp++;
     const cdpUrl = `http://${CDP_HOST}:${cdp}`;
     await this.acquireSlot();
     let handle: BackendHandle | undefined, media: SessionMedia | undefined;
@@ -258,12 +263,13 @@ export class Lucarne {
       await handle?.stop().catch(() => {});
       try { fs.rmSync(dirs.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
       try { fs.rmSync(dirs.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      this.cdpFreeList.push(cdp);
       this.releaseSlot();
       throw e;
     }
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
     const s: Tracked = {
-      id, backend: backend.kind, cdpUrl,
+      id, backend: backend.kind, cdpUrl, cdpPort: cdp,
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
       recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, stop: handle.stop,
@@ -357,9 +363,14 @@ export class Lucarne {
     const s = this.sessions.get(id);
     if (!s) return [];
     try {
+      // Decorate-once: stat each file a SINGLE time, not inside the comparator (which
+      // re-stat'd 2·N·logN times per request — a synchronous loop stall at a few hundred
+      // files, the same failure mode that once took down /health).
       return fs.readdirSync(s.downloadDir)
         .filter((f) => !f.endsWith(".crdownload") && !f.startsWith("."))
-        .sort((a, b) => fs.statSync(path.join(s.downloadDir, a)).mtimeMs - fs.statSync(path.join(s.downloadDir, b)).mtimeMs);
+        .map((f) => ({ f, m: fs.statSync(path.join(s.downloadDir, f)).mtimeMs }))
+        .sort((a, b) => a.m - b.m)
+        .map((o) => o.f);
     } catch { return []; }
   }
 
@@ -582,11 +593,19 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     if (this.destroying.has(id)) return false;
     this.sessions.delete(id);
     this.releaseSlot();
+    this.cdpFreeList.push(s.cdpPort);   // reclaim the port for reuse
     if (forget) this.forgetSpec(id);
     // Store the teardown promise so a same-id `create` can await it (no clobber race).
     const teardown = (async (): Promise<void> => {
       try { s.media.close(); } catch { /* ignore */ }
-      await s.stop().catch(() => {});
+      // Bound stop(): a wedged `docker rm -f` (no timeout in the docker backend) would
+      // otherwise hang teardown forever → `destroying` never drains → every future same-id
+      // create awaits it forever. Cap it so teardown always settles; a truly-wedged
+      // container is reclaimed by the next run's `docker rm -f` orphan sweep.
+      await Promise.race([
+        s.stop().catch(() => {}),
+        new Promise<void>((r) => { const t = setTimeout(r, 12_000); t.unref?.(); }),
+      ]);
       try { fs.rmSync(s.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
       try { fs.rmSync(s.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
     })().finally(() => this.destroying.delete(id));

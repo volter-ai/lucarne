@@ -99,9 +99,9 @@ export function realChromeUserDataDir(): string | null {
 // SQLite write lock — close it (or accept a slightly stale copy) for a clean seed.
 const SEED_ENTRIES = ["Cookies", "Network", "Local Storage", "IndexedDB", "Login Data", "Web Data", "Preferences"];
 
-function cpIfExists(src: string, dest: string): void {
+async function cpIfExists(src: string, dest: string): Promise<void> {
   try {
-    if (fs.existsSync(src)) fs.cpSync(src, dest, { recursive: true });
+    if (fs.existsSync(src)) await fs.promises.cp(src, dest, { recursive: true });
   } catch { /* best-effort: a locked/partial file is skipped, not fatal */ }
 }
 
@@ -109,12 +109,15 @@ function cpIfExists(src: string, dest: string): void {
  * Seed a fresh profile's `Default` from a source Chrome user-data-dir's
  * `Default`, plus the user-data-dir-level `Local State`. Used to start a profile
  * already authenticated — `seedFromChrome` points this at your real Chrome.
+ *
+ * Async: a real Chrome profile is hundreds of MB, and a sync `cpSync` here blocked
+ * the event loop for the whole copy on every seeded create.
  */
-export function seedProfile(sourceUserDataDir: string, destProfileDir: string): void {
+export async function seedProfile(sourceUserDataDir: string, destProfileDir: string): Promise<void> {
   const srcDefault = path.join(sourceUserDataDir, "Default");
   if (!fs.existsSync(srcDefault)) throw new Error(`lucarne: seed source has no Default profile: ${sourceUserDataDir}`);
   const destDefault = path.join(destProfileDir, "Default");
-  fs.mkdirSync(destDefault, { recursive: true });
-  for (const entry of SEED_ENTRIES) cpIfExists(path.join(srcDefault, entry), path.join(destDefault, entry));
-  cpIfExists(path.join(sourceUserDataDir, "Local State"), path.join(destProfileDir, "Local State"));
+  await fs.promises.mkdir(destDefault, { recursive: true });
+  for (const entry of SEED_ENTRIES) await cpIfExists(path.join(srcDefault, entry), path.join(destDefault, entry));
+  await cpIfExists(path.join(sourceUserDataDir, "Local State"), path.join(destProfileDir, "Local State"));
 }

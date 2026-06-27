@@ -64,16 +64,23 @@ export function startRecorder(opts: {
     if (f && ff.stdin?.writable) ff.stdin.write(f);
   }, Math.max(1, Math.round(1000 / opts.fps)));
 
-  // ring buffer: drop segments older than retention
+  // ring buffer: drop segments older than retention. Async FS so a high `retentionMin`
+  // (thousands of segment files per session) doesn't stall the loop with a synchronous
+  // readdir+stat+unlink storm every 30s across N recording sessions.
   const prune = setInterval(() => {
-    try {
-      const now = Date.now();
-      for (const name of fs.readdirSync(opts.recDir)) {
-        if (!name.startsWith("seg_") || !name.endsWith(".mp4")) continue;
-        const fp = path.join(opts.recDir, name);
-        if (now - fs.statSync(fp).mtimeMs > opts.retentionMin * 60_000) fs.unlinkSync(fp);
-      }
-    } catch { /* ignore */ }
+    void (async (): Promise<void> => {
+      try {
+        const now = Date.now();
+        for (const name of await fs.promises.readdir(opts.recDir)) {
+          if (!name.startsWith("seg_") || !name.endsWith(".mp4")) continue;
+          const fp = path.join(opts.recDir, name);
+          try {
+            const st = await fs.promises.stat(fp);
+            if (now - st.mtimeMs > opts.retentionMin * 60_000) await fs.promises.unlink(fp);
+          } catch { /* segment vanished mid-prune — ignore */ }
+        }
+      } catch { /* ignore */ }
+    })();
   }, 30_000);
 
   return {

@@ -8,10 +8,11 @@ import { isWebNavUrl } from "../dist/session-media.js";
 import { globalFilesDir } from "../dist/profiles.js";
 import net from "node:net";
 import { attachPage, attachBrowser } from "../dist/cdp.js";
+import { virtualKeyCode } from "../dist/keymap.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
 import { chromium } from "playwright";
-import WS from "ws";
+import WS, { WebSocketServer } from "ws";
 import http from "node:http";
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -1053,6 +1054,75 @@ try {
   check("security/leak: a failed create rolls back its slot (next create isn't deadlocked)", !!firstErr && second !== "HUNG");
 }
 
+// ── keymap (round-3): shifted symbols + numpad operators (were resolving to vk 0) ──
+// A shifted symbol arrives as code "Semicolon" / key ":" — keying NAMED by the unshifted
+// char missed it → vk 0 (the page's keyCode handlers + browser shortcuts never fired).
+{
+  const vk = (key, code) => virtualKeyCode(key, code);
+  check("keymap: shifted symbols resolve to the correct vk, not 0",
+    vk(":", "Semicolon") === 186 && vk("?", "Slash") === 191 && vk("{", "BracketLeft") === 219 &&
+    vk("+", "Equal") === 187 && vk("~", "Backquote") === 192 && vk("_", "Minus") === 189 && vk('"', "Quote") === 222);
+  check("keymap: numpad operators resolve by code (Add/Subtract/Multiply/Divide/Decimal)",
+    vk("+", "NumpadAdd") === 107 && vk("-", "NumpadSubtract") === 109 && vk("*", "NumpadMultiply") === 106 &&
+    vk("/", "NumpadDivide") === 111 && vk(".", "NumpadDecimal") === 110);
+  check("keymap: alphanumerics + named keys + key-only fallback still map (regression guard)",
+    vk("a", "KeyA") === 65 && vk("5", "Digit5") === 53 && vk("Enter", "Enter") === 13 &&
+    vk("Tab", "Tab") === 9 && vk(";", undefined) === 186 && virtualKeyCode(undefined, "Numpad3") === 99);
+}
+
+// ── cdp.ts robustness (round-3): a malformed frame / throwing handler must not crash the
+// reader, and close() must DRAIN in-flight calls (reject fast, not hang the 15s timeout) ──
+{
+  let PORT = 0;
+  const wss = new WebSocketServer({ noServer: true });
+  const srv = http.createServer((req, res) => {
+    if (req.url === "/json") {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify([{ type: "page", id: "pg", url: "about:blank", title: "t",
+        webSocketDebuggerUrl: `ws://127.0.0.1:${PORT}/devtools/page/pg` }]));
+    } else { res.statusCode = 404; res.end(); }
+  });
+  srv.on("upgrade", (req, sock, head) => wss.handleUpgrade(req, sock, head, (ws) => wss.emit("connection", ws)));
+  wss.on("connection", (ws) => {
+    ws.send("this is not valid json {{{");                    // malformed frame on connect (must be ignored)
+    ws.on("message", (m) => {
+      let d; try { d = JSON.parse(m.toString()); } catch { return; }
+      if (d.method === "Never.answer") return;                // ignore → exercises drain-on-close
+      if (d.method === "Emit.event") ws.send(JSON.stringify({ method: "Test.event", params: {} })); // → throwing handler
+      ws.send(JSON.stringify({ id: d.id, result: { echoed: d.method } }));
+    });
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  PORT = srv.address().port;
+  const conn = await attachPage(`http://127.0.0.1:${PORT}`);
+  conn.on("Test.event", () => { throw new Error("boom — a subscriber that throws must not kill the reader"); });
+  await conn.call("Emit.event").catch(() => {});              // emits the event (handler throws) then replies
+  const okCall = await conn.call("Echo.ping").catch(() => null);
+  check("cdp: a malformed frame + a throwing event handler don't kill the reader (a later call still works)",
+    !!okCall && okCall.echoed === "Echo.ping");
+  const neverP = conn.call("Never.answer").then(() => "resolved", (e) => "rejected:" + e.message);
+  conn.close();                                               // must drain the in-flight call immediately
+  const drained = await Promise.race([neverP, new Promise((r) => setTimeout(() => r("HUNG"), 2000))]);
+  check("cdp: close() drains an in-flight call (rejects fast, no 15s hang)", typeof drained === "string" && drained.startsWith("rejected"));
+  srv.close(); wss.close();
+}
+
+// ── engine (round-3): CDP ports are RECLAIMED, not monotonically exhausted ──
+// `nextCdp++` forever crossed 65535 after ~56k create/destroy cycles → invalid ports.
+// A freed port (here via the create-rollback path) must be reused by the next create.
+{
+  const flEngine = new Lucarne({ port: 7865, record: false, backends: [] });
+  const got = [];
+  // CDP never comes up (no real backend), so startSessionMedia throws → create rolls back
+  // and returns the port to the free-list. The next create must pop that same port.
+  flEngine.registerBackend({ kind: "fake", start: async (_id, ports) => { got.push(ports.cdp); return { async stop() {} }; } });
+  await flEngine.listen();
+  for (const p of ["fl1", "fl2", "fl3"]) { try { await flEngine.create({ backend: "fake", profile: p }); } catch { /* expected */ } }
+  await flEngine.close().catch(() => {});
+  check("engine: a CDP port freed by a rolled-back create is REUSED (no monotonic exhaustion)",
+    got.length === 3 && got[0] === got[1] && got[1] === got[2]);
+}
+
 // ── Tunnel seam: expose via a tunnel you already have (no network needed here) ──
 // Proven deterministically with a stub --tunnel-cmd (a node one-liner that prints a
 // fake public URL), so ngrok/cloudflared aren't required in CI.
@@ -1195,6 +1265,36 @@ try {
   await rdEngine.destroy(rd.id);
 } finally {
   await rdEngine.close().catch(() => {});
+}
+
+// ── Redaction (round-3 regression): a cross-field Tab into a password leaks no plaintext ──
+// Type into a NON-secret username field, Tab to the password field, type the password within
+// the coalesce window. 1.4.0 captured secrecy only at type-START, and Tab did NOT flush — so
+// "alice<Tab>hunter2" coalesced into ONE run classified by the username field and the
+// password leaked UNredacted. Fix: flush on Tab/Enter + union flush-time secrecy.
+const xfEngine = new Lucarne({ port: 7937, token: TOKEN, record: false, activity: true });
+await xfEngine.listen();
+try {
+  const xf = await xfEngine.create({ backend: "native", profile: "xredact" });
+  const xfc = await attachPage(xf.cdpUrl);
+  await xfc.call("Runtime.evaluate", { expression: "document.body.innerHTML='<input id=u name=username><input id=pw type=password name=login_pw>';document.getElementById('u').focus()" });
+  const xfw = new WS(`ws://127.0.0.1:${7937}/sessions/xredact/view/ws?token=${TOKEN}`);
+  await new Promise((r, j) => { xfw.on("open", r); xfw.on("error", j); });
+  const tap = (key, code) => { xfw.send(JSON.stringify({ t: "keydown", key, code })); xfw.send(JSON.stringify({ t: "keyup", key, code })); };
+  for (const k of ["a", "l", "i", "c", "e"]) tap(k, "Key" + k.toUpperCase());  // username (non-secret)
+  await sleep(150);
+  tap("Tab", "Tab");                                                            // flush username + move focus → #pw
+  await sleep(150);
+  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password, same coalesce window
+  await sleep(1200);                                                            // coalesce + flush
+  xfw.close(); xfc.close();
+  const types = xfEngine.sessionActivity("xredact").filter((a) => a.kind === "type");
+  const blob = JSON.stringify(types);
+  check("activity(P0): a password typed AFTER a Tab from a non-secret field is NOT leaked (cross-field)",
+    types.length > 0 && blob.indexOf("hunter2") === -1 && blob.indexOf("alice") !== -1);
+  await xfEngine.destroy(xf.id);
+} finally {
+  await xfEngine.close().catch(() => {});
 }
 
 // ── Headful path (the real default for users) — gated so local runs stay focus-free ──

@@ -140,8 +140,13 @@ export async function startSessionMedia(opts: {
   const flushType = async (): Promise<void> => {
     const buf = typeBuf; typeBuf = null;
     if (!buf || !buf.text) return;
-    const { secret, field } = await buf.secretP;
-    pushAct({ ts: Date.now(), actor: buf.actor, kind: "type", field, value: secret ? "‹redacted›" : buf.text });
+    // Redact if EITHER the at-type-START read OR a flush-time re-read says secret
+    // (fail-closed UNION). Start-read alone missed a Tab INTO a password field mid-run
+    // (classified by the prior non-secret field); flush-read alone missed a submit that
+    // blurred the field. Union closes both.
+    const [start, end] = await Promise.all([buf.secretP, readSecrecy()]);
+    const secret = start.secret || end.secret;
+    pushAct({ ts: Date.now(), actor: buf.actor, kind: "type", field: start.field ?? end.field, value: secret ? "‹redacted›" : buf.text });
   };
   const appendType = (actor: "human" | "agent", text: string): void => {
     if (!opts.activity) return;
@@ -209,21 +214,33 @@ export async function startSessionMedia(opts: {
 
   // Frame watchdog: `Page.screencastFrame` only fires on visual CHANGE, and headless
   // Chrome composites no frames for a static/idle page — so `latest` could stay null
-  // and recording (which replays `latest`) would write an empty file. When no frame
-  // has arrived recently, force a render via Page.captureScreenshot to seed `latest`.
-  // Bounded to ~1/sec when idle; unref'd so it never holds the process open.
-  const FRAME_IDLE_MS = 1200;
-  const watchdog = setInterval(() => {
-    if (Date.now() - lastFrameMs < FRAME_IDLE_MS) return;   // live frames flowing — skip
+  // and recording (which replays `latest`) would write an empty file. Force a render via
+  // Page.captureScreenshot to seed `latest`.
+  // GATED: only when someone needs sub-threshold frames — a live porthole viewer
+  // (`subs.size`) or recording that hasn't been seeded yet (`record && latest===null`).
+  // This keeps idle, unwatched, unrecorded sessions fully dormant (no per-session 1Hz
+  // captureScreenshot waste). The error is LOGGED, not swallowed, so a stalled
+  // captureScreenshot is diagnosable.
+  const captureFrame = (why: string): void => {
     page.call("Page.captureScreenshot", { format: "jpeg", quality: opts.quality ?? 60 })
       .then((r: { data?: string }) => {
-        if (!r?.data) return;
+        if (!r?.data) { pushLog({ kind: "log", level: "warning", text: `lucarne: ${why} captureScreenshot returned no data`, ts: Date.now() }); return; }
         latest = Buffer.from(r.data, "base64");
         lastFrameMs = Date.now();
         frameCount++; streamedBytes += latest.length;
         for (const cb of subs) cb(latest);
       })
-      .catch(() => { /* page busy/navigating — try next tick */ });
+      .catch((e: Error) => { pushLog({ kind: "log", level: "warning", text: `lucarne: ${why} captureScreenshot failed — ${e?.message ?? e}`, ts: Date.now() }); });
+  };
+  // Prime ONCE shortly after startScreencast — a freshly-loaded page is painting at this
+  // moment, the likeliest time a capture succeeds — so `latest` is seeded even if the page
+  // then goes fully static and the screencast emits nothing further.
+  if (opts.record) { const t = setTimeout(() => captureFrame("prime"), 300); t.unref?.(); }
+  const FRAME_IDLE_MS = 1200;
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastFrameMs < FRAME_IDLE_MS) return;            // live frames flowing — skip
+    if (subs.size === 0 && !(opts.record && latest === null)) return; // nobody needs a frame
+    captureFrame("watchdog");
   }, 1000);
   watchdog.unref?.();
 
@@ -238,6 +255,10 @@ export async function startSessionMedia(opts: {
     if (ev.t === "down") { void flushType(); void enrichClick(actor, ev.x, ev.y); }
     else if (ev.t === "paste" && typeof ev.text === "string") appendType(actor, ev.text);
     else if (ev.t === "ime" && ev.phase === "commit" && ev.text) appendType(actor, ev.text);
+    // A focus-changing key (Tab/Enter/Escape) must FLUSH the buffer so a field change
+    // starts a fresh, separately-classified run — else "username<Tab>password" coalesces
+    // into one event classified by the username field and the password leaks unredacted.
+    else if (ev.t === "keydown" && (ev.key === "Tab" || ev.key === "Enter" || ev.key === "Escape")) void flushType();
     else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);
     if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
       page.send("Input.dispatchMouseEvent", {

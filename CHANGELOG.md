@@ -4,6 +4,64 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.4.1]
+
+A **third** adversarial review round (6 skeptics aimed at the 1.4.0 diff — "a hardening
+pass is itself new code") found that BOTH of 1.4.0's flagship fixes shipped follow-on
+defects, plus robustness/perf/honesty issues. All fixed, the no-Chrome ones each with a
+committed proof.
+
+### Fixed (privacy — a 1.4.0 regression)
+- **A password typed AFTER Tabbing from a non-secret field is no longer leaked.** 1.4.0
+  captured field secrecy only at type-START and Tab did not flush, so `username<Tab>password`
+  coalesced into one run classified by the *username* field → the password logged
+  UNredacted (a textbook login flow). Now Tab/Enter/Escape flush the buffer and secrecy is
+  the fail-closed UNION of the type-start read and a flush-time re-read. Proven by a
+  cross-field e2e (the password value never appears in the activity feed).
+
+### Fixed (robustness — cdp.ts, the least-reviewed module)
+- **A malformed CDP frame or a throwing event handler no longer crashes the daemon** — the
+  raw socket reader guards `JSON.parse` and each handler dispatch.
+- **A dropped CDP socket is no longer silent** — an `onclose` rejects every in-flight call
+  (was: hung until the 15s timeout) and marks the connection closed so later calls fail
+  fast instead of going quietly dead.
+- **`close()` drains in-flight calls** (clear timers + reject) so it can't leave a non-`unref`'d
+  15s timer pinning the loop. Both proven with a fake CDP server.
+
+### Fixed (lifecycle — a 1.4.0 regression)
+- **`create` can no longer hang forever after a wedged teardown.** A `docker rm -f` with no
+  timeout could leave `destroying` un-drained, hanging every future same-id create; the
+  teardown's `stop()` is now bounded (12s) so it always settles.
+
+### Performance
+- **`downloads()` stats each file once** (was: `statSync` *inside* the sort comparator —
+  O(N·logN) sync stats, ~146 ms at 1000 files, blocking the loop). Proof: decorate-once.
+- **The frame watchdog is gated** on `record || a live viewer` and seeds once — idle,
+  unwatched, unrecorded sessions are now fully dormant (was: a `captureScreenshot` every
+  second per session, defeating Chrome's idle throttling). Its errors are now LOGGED, not
+  swallowed.
+- **CDP ports are reclaimed** via a free-list (was: `nextCdp++` forever → invalid ports
+  after ~56k create/destroy cycles). Proof: a freed port is reused by the next create.
+- **The recorder retention prune and profile seeding are async** (were sync FS storms on
+  the event loop at high retention / large profiles).
+
+### Fixed (input)
+- **Shifted symbols and numpad operators map to the correct virtual key code** (`:` `?` `{`
+  `+` `~` `_` `"`, NumpadAdd/Subtract/…) — they were keyed by the unshifted char and
+  resolved to vk `0`, so the page's keyCode handlers and browser shortcuts never fired.
+  Proof: a keymap table assertion.
+
+### Honesty
+- **Retracted a 1.4.0 over-claim.** The 1.4.0 CHANGELOG said the watchdog primed frames for
+  "fully-idle pages"; round 3 proved it primed ZERO frames on a static headless page and
+  the active-page proof never exercised that path. The fully-idle headless recording path
+  remains **unverified** (it needs a real headless Chrome the local env can't run without
+  focus-stealing); the watchdog now logs failures so the stall is diagnosable, and the
+  claim is corrected rather than left standing.
+
+### Packaging
+- Removed a stray `__pycache__/*.pyc` from the npm tarball.
+
 ## [1.4.0]
 
 A second adversarial review round (6 skeptics — regression-on-the-1.3.0-diff, security
@@ -41,12 +99,13 @@ committed proof.
   OAuth/bearer tokens into the `/logs` ring).
 
 ### Fixed (recording)
-- **Headless recording now captures real frames.** The screencast only fires on visual
-  change, so `--headless=new` low-activity pages could produce empty segments; a frame
-  watchdog primes frames via `Page.captureScreenshot` (best-effort for fully-idle pages).
-  The e2e proof now asserts a real (>2 KB, `ftyp`) mp4 for an active headless page — the
-  prior proof had been weakened to a 200/MIME check that a 48-byte empty stub passed.
-  Headful (the native default, continuous compositing) was always unaffected.
+- **An ACTIVE headless page now records real frames**, proven by a committed e2e that
+  asserts a real (>2 KB, `ftyp`) mp4 — the prior proof had been weakened to a 200/MIME
+  check that a 48-byte empty stub passed. A frame watchdog attempts to seed frames for
+  low-activity pages via `Page.captureScreenshot`. **Honesty note (corrected in 1.4.1):**
+  the 1.4.0 watchdog did NOT actually prime a *fully-idle* headless page — that path
+  stayed unverified; see 1.4.1. Headful (the native default, continuous compositing) was
+  always unaffected.
 
 ### Chore
 - Regenerated `package-lock.json` (was pinned at `0.5.0` → `npm ci` failed on a fresh clone).

@@ -15,7 +15,7 @@ try:  # single source of truth — the installed package metadata (pyproject ver
 
     __version__ = _pkg_version("lucarne")
 except Exception:  # not installed (vendored single file) — fall back to a literal
-    __version__ = "1.4.0"
+    __version__ = "1.4.1"
 
 
 class LucarneClient:
