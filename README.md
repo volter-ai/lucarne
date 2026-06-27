@@ -299,6 +299,10 @@ GET    /sessions/:id/files | PUT/GET/DELETE .../files/:name   -> per-session scr
 (`record: false` or `LUCARNE_RECORD=0` to disable), a rolling buffer of `retentionMin`
 minutes (default 60) of one-minute segments.
 
+The semantic **activity log** (`GET /sessions/:id/activity` — what the human/agent did) is
+**off** by default; set `LUCARNE_ACTIVITY=1` (or per session `create({ activity: true })`) to make
+sessions capture it by default.
+
 ## Security
 
 `lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
