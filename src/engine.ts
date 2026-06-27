@@ -584,16 +584,26 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     return true;
   }
 
-  /** Rich status: uptime, idle time, dims, configured lifecycle limits. */
-  status(id: string): SessionStatus | undefined {
+  /** Rich status: uptime, idle time, dims, active page (url/title), configured lifecycle limits. */
+  async status(id: string): Promise<SessionStatus | undefined> {
     const s = this.sessions.get(id);
     if (!s) return undefined;
     const now = Date.now();
     const { frames, streamedBytes } = s.media.stats();
+    // Where the session actually is: the active tab's url + title. Degrade to ""
+    // if the page/CDP is gone so status never crashes on a dead session.
+    let url = "", title = "";
+    try {
+      const activeId = s.media.activeTabId();
+      const tabs = (await s.media.tabs()).map((t) => ({ id: t.id, url: t.url, title: t.title }));
+      const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
+      if (active) { url = active.url; title = active.title; }
+    } catch { /* page gone — leave url/title empty */ }
     return {
       ...pub(s),
       uptimeMs: now - s.createdAtMs,
       idleMs: now - s.lastActivityMs,
+      url, title,
       viewport: this.viewport,
       frames, streamedBytes,
       ...(s.maxLifetimeMs !== undefined ? { maxLifetimeMs: s.maxLifetimeMs } : {}),
@@ -834,7 +844,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
         const st = pathname.match(/^\/sessions\/([^/]+)\/(status|touch)$/);
         if (st) {
           const [, id, kind] = st;
-          if (kind === "status") { const s = this.status(id!); return s ? send(res, 200, s) : send(res, 404, { error: "no such session" }); }
+          if (kind === "status") { const s = await this.status(id!); return s ? send(res, 200, s) : send(res, 404, { error: "no such session" }); }
           if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
           return send(res, 200, { ok: this.touch(id!) });
         }

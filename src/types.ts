@@ -82,6 +82,10 @@ export interface CreateSessionOptions {
 export interface SessionStatus extends Session {
   uptimeMs: number;
   idleMs: number;
+  /** The active tab's current URL ("" when no active page). */
+  url: string;
+  /** The active tab's document title ("" when unavailable). */
+  title: string;
   viewport: { width: number; height: number };
   /** screencast frames served so far (porthole "pressure" signal). */
   frames: number;

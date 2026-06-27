@@ -248,8 +248,16 @@ await lEngine.listen();
 try {
   // rich status
   const ls = await lEngine.create({ backend: "native", profile: "life", inactivityMs: 700 });
-  const st = lEngine.status(ls.id);
+  const st = await lEngine.status(ls.id);
   check("status: rich object (uptime + dims)", !!st && st.uptimeMs >= 0 && st.viewport.width === 1280 && st.viewport.height === 720 && typeof st.idleMs === "number");
+
+  // dev/02: status reports the ACTIVE page's url after a real navigation
+  const sp = await chromium.connectOverCDP(ls.cdpUrl);
+  const spg = sp.contexts()[0].pages()[0] ?? await sp.contexts()[0].newPage();
+  await spg.goto("https://example.com/", { waitUntil: "domcontentloaded" });
+  await sp.close();
+  const st2 = await lEngine.status(ls.id);
+  check("status: url + title reflect the active page after navigation", !!st2 && st2.url.includes("example.com") && /example/i.test(st2.title));
 
   // activity resets the idle clock: touch through the window, stays alive past it
   for (let i = 0; i < 6; i++) { await sleep(200); lEngine.touch(ls.id); }    // ~1.2s of touches, deadline 700ms
@@ -400,7 +408,7 @@ try {
   const nw = new WS(`ws://127.0.0.1:7819/sessions/nav/view/ws?token=${TOKEN}`);
   await new Promise((r, j) => { nw.on("open", r); nw.on("error", j); });
   await sleep(1100);                                            // let screencast frames flow
-  const st = nEngine.status(ns.id);
+  const st = await nEngine.status(ns.id);
   check("stats: status reports frames + streamed bytes", st.frames > 0 && st.streamedBytes > 0);
 
   const href = async () => (await nc.call("Runtime.evaluate", { expression: "location.href", returnByValue: true })).result.value;
