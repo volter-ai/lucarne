@@ -506,7 +506,7 @@ try {
 const lgEngine = new Lucarne({ port: 7824, token: TOKEN, record: false });
 await lgEngine.listen();
 try {
-  const ls = await lgEngine.create({ backend: "native", profile: "logs", metadata: { purpose: "test", tier: "p2" } });
+  const ls = await lgEngine.create({ backend: "native", profile: "logs", metadata: { purpose: "test", tier: "p2", count: 5 } });
   const lc = await attachPage(ls.cdpUrl);
   // SSE: subscribe (raw http for predictable streaming), then generate a console
   // line, and assert it arrives over the stream.
@@ -542,6 +542,14 @@ try {
   const tagged = lgEngine.list({ purpose: "test" });
   const none = lgEngine.list({ purpose: "nope" });
   check("metadata: list filters by user tags + echoes them", tagged.some((s) => s.id === ls.id && s.metadata?.tier === "p2") && none.length === 0);
+
+  // dev/02: a NUMERIC metadata value matches its stringified query over the real
+  // HTTP path (`?meta.count=5`). The stored value is the number 5; the query value
+  // is the string "5" — before the fix this never matched and the session was missed.
+  const numHit = await (await fetch(`http://127.0.0.1:7824/sessions?meta.count=5`, { headers: { authorization: `Bearer ${TOKEN}` } })).json();
+  const numMiss = await (await fetch(`http://127.0.0.1:7824/sessions?meta.count=6`, { headers: { authorization: `Bearer ${TOKEN}` } })).json();
+  check("metadata: numeric tag matches stringified query (?meta.count=5); non-matching excluded",
+    numHit.some((s) => s.id === ls.id) && numMiss.every((s) => s.id !== ls.id));
   lc.close();
 } finally {
   await lgEngine.close().catch(() => {});

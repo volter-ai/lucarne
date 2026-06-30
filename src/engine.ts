@@ -400,7 +400,16 @@ export class Lucarne {
   list(filter?: Record<string, string>): Session[] {
     let arr = [...this.sessions.values()];
     if (filter && Object.keys(filter).length) {
-      arr = arr.filter((s) => Object.entries(filter).every(([k, v]) => s.metadata?.[k] === v));
+      // The query value is always a string (HTTP searchParams), but a stored
+      // metadata value can be any JSON (`metadata: { count: 5 }` keeps a number).
+      // Compare the query string against the STRINGIFIED stored value so a numeric
+      // or boolean tag still matches `?meta.count=5`; a missing key never matches.
+      arr = arr.filter((s) =>
+        Object.entries(filter).every(([k, v]) => {
+          const mv = s.metadata?.[k];
+          return mv !== undefined && String(mv) === v;
+        }),
+      );
     }
     return arr.map(pub);
   }
