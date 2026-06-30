@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer } from "ws";
 import type { Backend, BackendHandle } from "./backends/types.js";
+import { attachBackend } from "./backends/attach.js";
 import { dockerBackend } from "./backends/docker.js";
 import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
@@ -20,6 +21,10 @@ import type { ActAction, CreateSessionOptions, EngineOptions, Session, SessionSt
 
 interface Tracked extends Session {
   cdpPort: number;
+  /** True when `cdpPort` is a FOREIGN endpoint we attached to (not engine-allocated) —
+   *  so destroy must NOT reclaim it into the free list (a later native/docker spawn
+   *  would collide with the still-live foreign browser). */
+  attached: boolean;
   recDir: string;
   downloadDir: string;
   filesDir: string;
@@ -29,6 +34,26 @@ interface Tracked extends Session {
   maxLifetimeMs?: number;
   inactivityMs?: number;
   stop(): Promise<void>;
+}
+
+/**
+ * Parse + validate an `attach` target into the loopback port the engine drives. A
+ * CDP endpoint is full unauthenticated browser control, so attach is LOOPBACK ONLY
+ * (a remote target would be an SSRF footgun, and lucarne connects to the reflected
+ * 127.0.0.1 ws verbatim — a non-loopback host wouldn't be reachable that way). Throws
+ * a clear error on a non-http / non-loopback / portless target.
+ */
+function parseAttachPort(target: string): number {
+  let u: URL;
+  try { u = new URL(target); } catch { throw new Error(`lucarne: attach target is not a URL: ${target}`); }
+  if (u.protocol !== "http:") throw new Error(`lucarne: attach target must be http:// (got ${u.protocol}//) — CDP /json is plain HTTP`);
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (host !== "localhost" && host !== "::1" && !/^127(?:\.\d{1,3}){3}$/.test(host)) {
+    throw new Error(`lucarne: attach target must be loopback (127.0.0.1/localhost) — refusing ${host} (a CDP endpoint is full browser control)`);
+  }
+  const port = Number(u.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`lucarne: attach target needs an explicit port (got '${u.port}') e.g. http://127.0.0.1:9222`);
+  return port;
 }
 
 // Per-platform candidate paths, first existing one wins (a single hardcoded path
@@ -224,7 +249,7 @@ export class Lucarne {
     this.credentialsService = new CredentialsService(this.credentials);
     this.globalServices = [this.credentialsService, new WorkspaceService(), new ExtensionsService()];
     // A backend is registered, not hard-coded — add one without editing the engine.
-    for (const b of opts.backends ?? [dockerBackend, nativeBackend]) this.registerBackend(b);
+    for (const b of opts.backends ?? [dockerBackend, nativeBackend, attachBackend]) this.registerBackend(b);
     // The lifecycle reaper runs whether or not the HTTP API is listening (embedded
     // use too); unref'd so it never keeps the process alive on its own.
     this.reaper = setInterval(() => this.reap(), opts.reapIntervalMs ?? 500);
@@ -260,9 +285,19 @@ export class Lucarne {
     // new session's freshly-created workspace dirs (a confirmed race).
     const teardown = this.destroying.get(id);
     if (teardown) await teardown.catch(() => {});
-    const backend = this.backends[opts.backend ?? "docker"];
+    // `attach` mirrors a FOREIGN browser: it implies backend "attach", is never
+    // persisted (the endpoint may be gone after a restart — re-attaching a stale
+    // port is wrong), uses the discovered endpoint's port as the drive surface
+    // (no engine port allocation), and runs a view-only media plane (no
+    // browser-global download/emulation mutation, no extension loading) so it never
+    // clobbers the foreign browser's owner or a co-driving agent.
+    const attaching = opts.attach !== undefined;
+    if (attaching && opts.backend && opts.backend !== "attach") {
+      throw new Error(`lucarne: attach implies backend "attach" — remove backend:"${opts.backend}"`);
+    }
+    const backend = this.backends[attaching ? "attach" : (opts.backend ?? "docker")];
     if (!backend) throw new Error(`lucarne: unknown backend '${opts.backend}'`);
-    const persist = opts.persist ?? !!opts.profile;
+    const persist = attaching ? false : (opts.persist ?? !!opts.profile);
     const dirs = sessionDirs(id, persist);
     // Seed an authenticated starting point — only on a profile's FIRST creation,
     // never overwriting an established profile.
@@ -272,7 +307,9 @@ export class Lucarne {
     }
     fs.mkdirSync(dirs.downloadDir, { recursive: true });
     fs.mkdirSync(dirs.filesDir, { recursive: true });
-    const cdp = this.cdpFreeList.pop() ?? this.nextCdp++;
+    // Owned sessions get an engine-allocated loopback port; an attached session
+    // drives the foreign endpoint's own port directly (so cdpUrl IS that endpoint).
+    const cdp = attaching ? parseAttachPort(opts.attach!) : (this.cdpFreeList.pop() ?? this.nextCdp++);
     const cdpUrl = `http://${CDP_HOST}:${cdp}`;
     await this.acquireSlot();
     let handle: BackendHandle | undefined, media: SessionMedia | undefined;
@@ -284,13 +321,16 @@ export class Lucarne {
       });
       media = await startSessionMedia({
         cdpUrl, recDir: dirs.recDir, downloadDir: dirs.downloadDir, viewport: this.viewport,
-        record: this.record, fps: this.fps, retentionMin: this.retentionMin, segmentSeconds: this.segmentSeconds, mobile: opts.mobile, quality: opts.quality, geo: opts.geo,
-        activity: opts.activity ?? this.activityDefault,
+        record: this.record, fps: this.fps, retentionMin: this.retentionMin, segmentSeconds: this.segmentSeconds,
+        // Suppress page-mutating emulation when mirroring a foreign browser.
+        mobile: attaching ? undefined : opts.mobile, quality: opts.quality, geo: attaching ? undefined : opts.geo,
+        activity: opts.activity ?? this.activityDefault, viewOnly: attaching,
       });
       // Load any custom unpacked extensions via CDP (the only path modern Chrome
       // allows). A bare name is confined to the managed dir (basename — no `..`
-      // escape); an absolute path loads as-is (a documented opt-in).
-      if (opts.extensions?.length) {
+      // escape); an absolute path loads as-is (a documented opt-in). Never on an
+      // attached foreign browser (loading an extension into it is a mutation).
+      if (!attaching && opts.extensions?.length) {
         const bconn = await attachBrowser(cdpUrl);
         for (const ext of opts.extensions) {
           const dir = path.isAbsolute(ext) ? ext : path.join(managedExtensionsDir(), path.basename(ext));
@@ -306,13 +346,13 @@ export class Lucarne {
       await handle?.stop().catch(() => {});
       try { fs.rmSync(dirs.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
       try { fs.rmSync(dirs.filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      this.cdpFreeList.push(cdp);
+      if (!attaching) this.cdpFreeList.push(cdp);   // a foreign port is not ours to reclaim
       this.releaseSlot();
       throw e;
     }
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
     const s: Tracked = {
-      id, backend: backend.kind, cdpUrl, cdpPort: cdp,
+      id, backend: backend.kind, cdpUrl, cdpPort: cdp, attached: attaching,
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
       recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, stop: handle.stop,
@@ -646,7 +686,10 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     if (this.destroying.has(id)) return false;
     this.sessions.delete(id);
     this.releaseSlot();
-    this.cdpFreeList.push(s.cdpPort);   // reclaim the port for reuse
+    // Reclaim only ENGINE-allocated ports. A foreign endpoint's port (attached
+    // session) belongs to the browser we mirrored — reusing it would later spawn an
+    // owned Chrome onto a port the still-live foreign browser holds.
+    if (!s.attached) this.cdpFreeList.push(s.cdpPort);
     if (forget) this.forgetSpec(id);
     // Store the teardown promise so a same-id `create` can await it (no clobber race).
     const teardown = (async (): Promise<void> => {

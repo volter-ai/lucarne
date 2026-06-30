@@ -1,8 +1,8 @@
 import type { Backend } from "./backends/types.js";
 import type { CredentialProvider } from "./credentials.js";
 
-/** Which engine spawns the browser behind a session. */
-export type BackendKind = "docker" | "native";
+/** Which engine spawns the browser behind a session. `attach` spawns nothing — it mirrors a foreign browser. */
+export type BackendKind = "attach" | "docker" | "native";
 
 /** A single computer-use action (one shared shape across the engine, SDK, and MCP). */
 export interface ActAction {
@@ -40,6 +40,16 @@ export interface CreateSessionOptions {
   profile?: string;
   /** "native" (real local Chrome, real fingerprint) or "docker" (isolated container). */
   backend?: BackendKind;
+  /**
+   * Attach to an EXTERNAL, already-running CDP endpoint (e.g. `http://127.0.0.1:9222`)
+   * instead of spawning a browser. The session VIEWS + (via the porthole) drives that
+   * foreign browser; destroying the session DETACHES — it never kills the foreign
+   * browser. Loopback only (a CDP endpoint is full unauthenticated browser control;
+   * a remote one would be an SSRF footgun, and lucarne uses the endpoint's reflected
+   * 127.0.0.1 ws verbatim). Implies `backend:"attach"`, `persist:false`, and a
+   * view-only media plane (no auto download-behavior / emulation mutation on attach).
+   */
+  attach?: string;
   /**
    * Keep the profile across sessions (cookies, logins, storage). Defaults to
    * true when `profile` is named, false for an anonymous one-off session.

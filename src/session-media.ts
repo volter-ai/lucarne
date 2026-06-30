@@ -75,6 +75,13 @@ export async function startSessionMedia(opts: {
   quality?: number;
   geo?: { latitude: number; longitude: number; accuracy?: number };
   activity?: boolean;
+  /**
+   * View-only: the CDP target belongs to a FOREIGN browser we attached to (not one
+   * we own), so do NOT apply browser-global mutations that would clobber its owner's
+   * policy. Skips `Browser.setDownloadBehavior`. The screencast tap + observational
+   * domains still run, so the porthole still mirrors the page.
+   */
+  viewOnly?: boolean;
 }): Promise<SessionMedia> {
   // The active-tab page conn is MUTABLE: switchTab re-taps a different target so
   // the porthole/screencast + input follow it. `page` is the live reference all
@@ -86,7 +93,10 @@ export async function startSessionMedia(opts: {
   // MUST be browser-level + kept open: a page-session setting only scopes to that
   // session, so a download from any other page/driver would escape it.
   const browserConn = await attachBrowser(opts.cdpUrl);
-  browserConn.call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: opts.downloadDir, eventsEnabled: true }).catch(() => {});
+  // Skip this browser-GLOBAL mutation when mirroring a foreign browser — it would
+  // clobber the owner's (or a co-driving agent's) download policy. Owned sessions
+  // (native/docker) still get it so their downloads land in the retrievable dir.
+  if (!opts.viewOnly) browserConn.call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: opts.downloadDir, eventsEnabled: true }).catch(() => {});
   // Geolocation override needs the permission granted browser-wide + the override
   // re-applied per page (it's page-session-scoped, like mobile emulation).
   if (opts.geo) browserConn.call("Browser.grantPermissions", { permissions: ["geolocation"] }).catch(() => {});
