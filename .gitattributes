@@ -1,0 +1,12 @@
+# This tree is edited from both WSL and Windows: without a repo-level ending
+# policy, a Windows-side git (core.autocrlf=true by default) rewrites every
+# text file to CRLF and the whole tree shows as modified, and byte-sensitive
+# tools (hash pins, freshness gates) false-positive on EOL alone. Pin LF
+# everywhere; text=auto still leaves binaries alone.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
