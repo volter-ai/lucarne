@@ -200,6 +200,11 @@ export interface WireSensorHandle {
  */
 export async function startWireSensor(conn: RecallConnection, opts: WireSensorOptions): Promise<WireSensorHandle> {
   const attachedPages = new WeakSet<Page>();
+  // Every per-page `Network`-enabled CDP session this sensor opened, tracked so `stop()` can tear
+  // them down under STANDALONE use (when there's no outer `startRecall.stop()`→`conn.close()` to
+  // close the whole connection for us). Held as a plain array (not a WeakMap) precisely because
+  // `stop()` needs to iterate them — the pages themselves are still referenced by the connection.
+  const openedSessions: CDPSession[] = [];
   let stopped = false;
 
   const attach = async (page: Page): Promise<void> => {
@@ -212,6 +217,7 @@ export async function startWireSensor(conn: RecallConnection, opts: WireSensorOp
       return; // the page closed (or the session couldn't attach) mid-discovery — never fatal
     }
     if (stopped) return;
+    openedSessions.push(cdp);
 
     // requestId -> the matched response's OWN url, held only long enough to bridge
     // responseReceived -> loadingFinished for a response at least one adapter cares about.
@@ -222,6 +228,14 @@ export async function startWireSensor(conn: RecallConnection, opts: WireSensorOp
       if (url && opts.adapters.some((a) => a.match(url))) {
         pendingByRequestId.set(e.requestId, url);
       }
+    });
+
+    // A matched request that ERRORS or is CANCELLED mid-flight (navigating away before its body
+    // lands) fires `loadingFailed`, never `loadingFinished` — without this its `pendingByRequestId`
+    // entry would leak for the life of the always-on recorder. This is a `.on` LISTENER, not a
+    // `.send` (it issues no request; it only frees a map slot), and never throws.
+    cdp.on("Network.loadingFailed", (e: { requestId: string }) => {
+      pendingByRequestId.delete(e.requestId);
     });
 
     cdp.on("Network.loadingFinished", (e: { requestId: string }) => {
@@ -282,6 +296,13 @@ export async function startWireSensor(conn: RecallConnection, opts: WireSensorOp
     async stop(): Promise<void> {
       stopped = true;
       clearInterval(timer);
+      // Best-effort teardown of the per-page `Network`-enabled sessions this sensor opened, so a
+      // STANDALONE `startWireSensor` user isn't left leaking enabled sessions. `Network.disable`
+      // is domain `Network` (still within the capture allowlist — it stops observing, never issues
+      // a request); each is fire-and-forget and never throws. In the INTEGRATED path this runs just
+      // before `startRecall.stop()`'s `conn.close()` tears the whole connection down anyway, so it
+      // changes no capture behavior there — it only makes the standalone path self-contained.
+      await Promise.allSettled(openedSessions.map((cdp) => cdp.send("Network.disable")));
     },
   };
 }
