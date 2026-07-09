@@ -277,6 +277,41 @@ Safety-law gates: `grep -rn "/eval" src/recall` and
 `grep -REn "pbs\.twimg|fetch\(.*http" src/recall` both return zero hits
 (`test/recall-readonly-gates.mjs`).
 
+## Recall status + summary (`lucarne-interact/status`, LS-14)
+
+The recording-state contract is FIVE ORTHOGONAL LAYERS (control, liveness,
+observability, activity, events), never one flat enum, composed into a
+single view-facing label by `displayState(status, now)`. The load-bearing
+property is the **staleness law**: a stale or absent snapshot can *only*
+ever report `DISPLAY.OFFLINE` — a wedged/dead recorder must never claim it
+is live, even if the last thing it published was `activity:
+'recording_video'`.
+
+```ts
+import { displayState, DISPLAY, RecallStatusHolder } from "lucarne-interact/status";
+
+const status = new RecallStatusHolder();
+// ... status.publish({ observe: "ok", activity: "idle" }) on every recall tick ...
+const { state, live, progress } = displayState(status.snapshot(), Date.now());
+```
+
+`status.ts` is deliberately dependency-free (no `node:fs`/`node:child_process`
+import) so it has its own package subpath — a consumer (a widget bundle, a
+CLI) can import just the contract without pulling in the rest of `recall/`
+(playwright-core, CDP, the wire sensor). **Both sensors are covered**: the
+screen sensor (LS-13) publishes its own L3/L4 transitions directly from its
+loop; the wire sensor (LS-13W) has no such loop, so its capture counts/
+last-activity are threaded in via `RecallStatusHolder#recordSignal`, called
+once from `index.ts`'s single observer chokepoint for every `RecallSignal`
+(capture/video/wire alike) — `wire.ts` itself never imports `status.ts`.
+
+`recallSummary(signals, opts?)` (exported from `lucarne-interact/recall`)
+turns a collected `RecallSignal[]` stream into the small "what have the
+sensors seen" shape a view renders: counts (`captures`/`videos`/
+`wireCaptures`) + a recent, de-duplicated, thumbnailed timeline covering all
+three signal kinds. Thumbnails use **ffmpeg** (`thumbDataUri`/`videoPoster`)
+cross-platform; macOS `sips` is used only as a `darwin` fast path.
+
 ## CLI
 
 ```sh

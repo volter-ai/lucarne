@@ -4,7 +4,7 @@
 import type { Capture, Entity } from "lucarne-records";
 
 /**
- * A per-site extractor PLUGIN — cadence passes LS-05's X ARIA extractor
+ * A per-site extractor PLUGIN — the origin app passes LS-05's X ARIA extractor
  * (`lucarne-records/sites`'s `xAriaExtractor`) as one of these. `match` decides whether this
  * extractor understands a given page url; `extract` is PURE (text in, records out — no
  * filesystem/network/DOM access of its own; see `lucarne-records/sites/x-aria.ts`'s header).
@@ -17,7 +17,7 @@ export interface RecallExtractor {
 /** Who was driving the session when a capture happened (LS-12's `attributeActor` output). */
 export type RecallActor = "agent" | "human";
 
-/** Why a static capture fired — cadence's `captureStatic`/change-classification categories (recall.ts:392-397). */
+/** Why a static capture fired — the origin app's `captureStatic`/change-classification categories (recall.ts:392-397). */
 export type RecallCaptureReason = "initial" | "navigated" | "new-content" | "scrolled" | "changed";
 
 /** Why a watched-video recording stopped (recall.ts:219-236's `reason`). */
@@ -62,9 +62,9 @@ export type RecallSignal =
 
 export type RecallObserverFn = (signal: RecallSignal) => void;
 
-/** Caller-supplied read of the DELIBERATE on/off toggle (cadence's widget switch, e.g.). Recall
+/** Caller-supplied read of the DELIBERATE on/off toggle (the origin app's widget switch, e.g.). Recall
  *  never turns itself off — this is only ever a caller's own external state recall OBEYS. Absent
- *  `isEnabled` (or no `toggles` at all) means "always enabled", matching cadence's default-ON law. */
+ *  `isEnabled` (or no `toggles` at all) means "always enabled", matching the origin app's default-ON law. */
 export interface RecallToggles {
   isEnabled?(): boolean;
   /** Same contract as `isEnabled`, scoped to the WIRE sensor (LS-13W) alone — a caller that wants

@@ -23,7 +23,7 @@ export function isSubmitGesture(g: SendGesture): g is SendGestureSubmit {
   return typeof (g as SendGestureSubmit).submit === "string";
 }
 
-/** Caller-supplied policy: computes the guardrail decision for this draft. Cadence passes `enforce()` + sourcing/assess; this package never computes content rules itself. */
+/** Caller-supplied policy: computes the guardrail decision for this draft. The origin app passes `enforce()` + sourcing/assess; this package never computes content rules itself. */
 export type SendPolicy = (text: string, ctx: Record<string, unknown>) => GuardrailResult | Promise<GuardrailResult>;
 
 /** The public approval shape (`send()`'s API) — `mode` is narrowed to the two real values; structurally assignable into `DecideSendApproval`. */
@@ -37,7 +37,7 @@ export interface SendFlowOptions {
   gesture: SendGesture;
   policy: SendPolicy;
   approval: SendApproval;
-  /** Opaque bag passed through to `policy(text, ctx)` verbatim (e.g. cadence's platform/kind/candidate id). This package never reads or interprets it. */
+  /** Opaque bag passed through to `policy(text, ctx)` verbatim (e.g. the origin app's platform/kind/candidate id). This package never reads or interprets it. */
   ctx?: Record<string, unknown>;
 }
 

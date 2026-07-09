@@ -1,4 +1,4 @@
-// Watched-video recording — the observe-plane's video sensor. Ported from cadence's
+// Watched-video recording — the observe-plane's video sensor. Ported from the origin app's
 // `recordWatchedVideo` (`recall.ts:196-244`): record the WATCHED segment of a currently-playing
 // video, ONE pass, stopping on end / loop / look-away / the hard cap. PASSIVE: never modifies the
 // video (no seeking, no `loop=false`) — loop/end are detected purely by WATCHING `currentTime`.
@@ -13,13 +13,13 @@
 import { assembleMp4FromFrames, cleanupFramesDir, startScreencastToFrames, type CDPLike, type ScreencastOptions } from "../video/assembler.js";
 import type { RecallVideoStopReason } from "./types.js";
 
-/** One poll's read of the video's playback state (cadence's `recall.ts:223-225`). */
+/** One poll's read of the video's playback state (the origin app's `recall.ts:223-225`). */
 export interface VideoPollSample {
   ct: number;
   dur: number | null;
   paused: boolean;
   focus: boolean;
-  /** The page/video disappeared (context gone, `<video>` removed) — cadence's `{gone:true}` (`recall.ts:226`). */
+  /** The page/video disappeared (context gone, `<video>` removed) — the origin app's `{gone:true}` (`recall.ts:226`). */
   gone?: boolean;
 }
 
@@ -30,7 +30,7 @@ export interface StopDecision {
 
 /**
  * The pure stop-rule: given the PREVIOUS `currentTime` and this poll's sample, decide whether (and
- * why) to stop. Ported verbatim from cadence's break conditions (`recall.ts:226-230`), in the same
+ * why) to stop. Ported verbatim from the origin app's break conditions (`recall.ts:226-230`), in the same
  * priority order: gone → looked-away → paused → ended → looped. The hard 5-minute CAP is the
  * caller's outer loop condition, not a per-sample check (see `runVideoWatchLoop`).
  */
@@ -57,11 +57,11 @@ export interface VideoWatchLoopResult {
 }
 
 /**
- * Poll every `pollIntervalMs` until either `decideStop` fires or `capMs` elapses (cadence's
+ * Poll every `pollIntervalMs` until either `decideStop` fires or `capMs` elapses (the origin app's
  * `while (Date.now() - t0 < 5*60*1000)`, `recall.ts:221` — the DEFAULT stop reason is `'cap'`,
- * exactly cadence's `let ... reason = 'cap'` initializer, `recall.ts:219`, only overwritten by an
+ * exactly the origin app's `let ... reason = 'cap'` initializer, `recall.ts:219`, only overwritten by an
  * actual `decideStop` break). `onProgress` fires once immediately (before the first poll, so a long
- * recording's heartbeat is fresh from frame one — cadence's `recall.ts:220`) and again each poll.
+ * recording's heartbeat is fresh from frame one — the origin app's `recall.ts:220`) and again each poll.
  */
 export async function runVideoWatchLoop(startCt: number, capMs: number, pollIntervalMs: number, deps: VideoWatchLoopDeps): Promise<VideoWatchLoopResult> {
   const now = deps.now ?? Date.now;
@@ -100,7 +100,7 @@ export async function runVideoWatchLoop(startCt: number, capMs: number, pollInte
   return { stopReason: reason, startCt, maxCt };
 }
 
-// cadence's screencast throttle (`recall.ts:211-215`): everyNthFrame:6 + smaller/cheaper frames —
+// the origin app's screencast throttle (`recall.ts:211-215`): everyNthFrame:6 + smaller/cheaper frames —
 // at everyNthFrame:1 a single autoplaying video pinned the event loop and dumped thousands of JPGs
 // to disk. ~6-10fps is plenty to recall "what was watched"; the mp4 fps is derived from the actual
 // frame count over wall-time, so playback stays real-time.
@@ -110,9 +110,9 @@ export interface RecordWatchedVideoOptions {
   framesDir: string;
   outPath: string;
   startCt: number;
-  /** Hard ceiling, ms. Default 5 minutes (cadence's `recall.ts:221`). */
+  /** Hard ceiling, ms. Default 5 minutes (the origin app's `recall.ts:221`). */
   capMs?: number;
-  /** Poll cadence, ms. Default 400 (cadence's `recall.ts:222`: `await sleep(400)`). */
+  /** Poll interval, ms. Default 400 (the origin app's `recall.ts:222`: `await sleep(400)`). */
   pollIntervalMs?: number;
   screencastOptions?: ScreencastOptions;
 }
@@ -139,11 +139,11 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 
 /**
  * Record the watched segment to completion: start the shared screencast tap, run the stop-rule
- * loop, stop the tap, and assemble the frames into ONE mp4 via the shared assembler — cadence's
+ * loop, stop the tap, and assemble the frames into ONE mp4 via the shared assembler — the origin app's
  * `recall.ts:200-244`, restructured onto `startScreencastToFrames`/`assembleMp4FromFrames` (never a
  * second ffmpeg invocation of its own). Zero frames (the tap never produced anything, e.g. the tab
  * died instantly) or a failed assembly both report `ok:false` and clean up the scratch dir —
- * mirroring cadence's `if (!frames) { rmSync(...); return; }` (`recall.ts:236`).
+ * mirroring the origin app's `if (!frames) { rmSync(...); return; }` (`recall.ts:236`).
  */
 export async function recordWatchedVideo(deps: RecordWatchedVideoDeps, opts: RecordWatchedVideoOptions): Promise<RecordWatchedVideoResult> {
   const capMs = opts.capMs ?? 5 * 60 * 1000;

@@ -1,6 +1,6 @@
 // yield.ts — the PUBLIC surface for "is a human present right now", consumed by
 // `InteractSession#type` (session.ts, via type-loop.ts) to yield the keyboard the moment a live
-// human appears to grab it back (cadence's `typeHuman`, browser.ts:184-195).
+// human appears to grab it back (the origin app's `typeHuman`, browser.ts:184-195).
 //
 // LS-12 moved the actual decision logic into `presence.ts` — the package-internal module that is
 // now the SINGLE HOME for "is a human present + which target is agent-driven" (the other half of

@@ -1,4 +1,4 @@
-// PER-POST IMAGES, WITHOUT THE CDN. Ported from cadence's `capturedMedia`/`mediaInfo`
+// PER-POST IMAGES, WITHOUT THE CDN. Ported from the origin app's `capturedMedia`/`mediaInfo`
 // maps + `cropMedia` (`recall.ts:107-157`): the image is already IN the screenshot the screen
 // sensor just took (the screen, in-session) — so we crop each on-screen post's image OUT of that
 // PNG (via the shared assembler's `cropImageFromScreenshot`, `video/assembler.ts`) rather than
@@ -22,7 +22,7 @@ export type CropBackend = (shotPath: string, outPath: string, box: { x: number; 
  * PERSISTENT across captures (one instance per `startRecall` run): `capturedMedia` (sid → was this
  * crop FULLY visible?) drives the dedup/upgrade decision; `mediaInfo` (sid → {image, alt}) is what
  * every later capture of that post attaches its crop from, regardless of which capture actually
- * made it — this is the fix for orphaned crops cadence's own comment (`recall.ts:186-188`)
+ * made it — this is the fix for orphaned crops the origin app's own comment (`recall.ts:186-188`)
  * describes: an image cropped on capture N must still attach on capture N+5 that re-records the
  * same post.
  */
@@ -49,7 +49,7 @@ export class MediaCropTracker {
 
   /**
    * Crop any newly-visible (or newly-FULL) images out of `shotPath` for the given boxes. Returns
-   * the crops made THIS call (cadence's return value is unused by its own caller — attach reads
+   * the crops made THIS call (the origin app's return value is unused by its own caller — attach reads
    * `mediaInfo`/`infoFor` instead, which is what makes cropping-then-attaching order-independent).
    */
   crop(shotPath: string, boxes: readonly MediaBox[]): Record<string, MediaCropInfo> {

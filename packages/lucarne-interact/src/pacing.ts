@@ -1,5 +1,5 @@
 // Enforced human pacing — a normal-distribution dwell AFTER every act verb (you can't go bot-fast).
-// Ported (mechanism only) from cadence's `PACE`/`pace()` at browser.ts:150-154, applied at :573-577.
+// Ported (mechanism only) from the origin app's `PACE`/`pace()` at browser.ts:150-154, applied at :573-577.
 //
 // The floor is ALWAYS positive: `resolvePacing` throws if a caller tries to configure a `min` of 0
 // (or negative) for any pacing kind. There is no escape hatch that turns pacing off — that would
@@ -19,7 +19,7 @@ export type PaceKind = "nav" | "scroll" | "read" | "act";
 /** Caller-supplied overrides, per kind — any field omitted falls back to the default for that kind. */
 export type PacingConfig = Partial<Record<PaceKind, Partial<PaceProfile>>>;
 
-// Verbatim from cadence/src/browser.ts:151-152.
+// Verbatim from browser.ts:151-152.
 export const DEFAULT_PACING: Readonly<Record<PaceKind, PaceProfile>> = Object.freeze({
   nav: Object.freeze({ mean: 2600, sd: 1000, min: 800 }),
   scroll: Object.freeze({ mean: 1100, sd: 450, min: 350 }),
@@ -27,7 +27,7 @@ export const DEFAULT_PACING: Readonly<Record<PaceKind, PaceProfile>> = Object.fr
   act: Object.freeze({ mean: 1800, sd: 700, min: 500 }),
 });
 
-/** Standard-normal sample via Box-Muller — same generator as cadence's `randn` (browser.ts:153). */
+/** Standard-normal sample via Box-Muller — same generator as the origin app's `randn` (browser.ts:153). */
 export function randn(): number {
   let u = 0,
     v = 0;

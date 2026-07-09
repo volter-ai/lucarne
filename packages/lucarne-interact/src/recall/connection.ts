@@ -1,5 +1,5 @@
 // Recall's OWN `playwright-core` connection over the session `cdpUrl` — the replacement for
-// cadence's retired arbitrary-code HTTP endpoint + cross-eval `globalThis` state (`recall.ts:53-59`'s
+// the origin app's retired arbitrary-code HTTP endpoint + cross-eval `globalThis` state (`recall.ts:53-59`'s
 // `read()`). This is a
 // SECOND, independent client of the same CDP endpoint the act half (`InteractSession`, session.ts)
 // connects to — the engine's own tap-sharing design (`lucarne`'s `cdp.ts:1-3`) is precedent that

@@ -1,4 +1,4 @@
-// The humanized typing model — PURE, Chrome-free. Ported from cadence's `browser.ts:132-183`
+// The humanized typing model — PURE, Chrome-free. Ported from the origin app's `browser.ts:132-183`
 // (`KEYMAP`, `keyDelay`, `humanDelays`, `typingStats`). Inter-keystroke interval depends on the
 // BIGRAM class (same-finger slow, same-hand medium, alternating-hand fast), sampled log-normal
 // (right-skewed, like real typing), plus cognitive pauses at sentence/word boundaries.
@@ -13,7 +13,7 @@ interface KeyInfo {
   finger: number;
 }
 
-// Verbatim from cadence/src/browser.ts:136-145 — QWERTY home-row-relative finger assignment.
+// Verbatim from browser.ts:136-145 — QWERTY home-row-relative finger assignment.
 const KEYMAP: Readonly<Record<string, KeyInfo>> = (() => {
   const rows: Record<"L" | "R", Record<string, number>> = {
     L: { q: 1, a: 1, z: 1, w: 2, s: 2, x: 2, e: 3, d: 3, c: 3, r: 4, f: 4, v: 4, t: 4, g: 4, b: 4, "1": 1, "2": 2, "3": 3, "4": 4, "5": 4 },
@@ -39,14 +39,14 @@ function keyInfo(ch: string): (KeyInfo & { shift: boolean }) | null {
 
 /**
  * Delay (ms) BEFORE typing `cur`, given the previously typed char `prev` (`""` for the first char).
- * Verbatim model from cadence's `keyDelay` (browser.ts:160-174):
+ * Verbatim model from the origin app's `keyDelay` (browser.ts:160-174):
  *   1. sentence-final think pause (prev is `.`/`!`/`?`)
  *   2. word boundary — space bar, with a ~12% chance of an extra "thinking" pause
  *   3. start of a word (prev was a space)
  *   4. slight pause before punctuation
  *   5. bigram class: same-finger (slowest) > same-hand (medium) > alternating-hand (fastest)
  * `rng`/`coinFlip` are injectable ONLY for deterministic testing — real typing uses `Math.random`-backed
- * defaults, same as cadence.
+ * defaults, same as the origin app's model.
  */
 export function keyDelay(prev: string, cur: string, rng: () => number = randn, coinFlip: () => number = Math.random): number {
   if (prev && ".!?".includes(prev)) return logn(650, 0.5, rng) + 120; // sentence-final think pause

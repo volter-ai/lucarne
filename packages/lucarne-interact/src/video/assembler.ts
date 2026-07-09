@@ -1,6 +1,6 @@
 // The shared screencast → JPG → ffmpeg assembler — INTERNAL module.
 //
-// cadence had this exact machinery duplicated byte-for-byte in two places (`browser.ts:378-379`'s
+// the origin app had this exact machinery duplicated byte-for-byte in two places (`browser.ts:378-379`'s
 // `clip` verb and `recall.ts:239`'s watched-video capture). This module is the ONE copy: `clip`
 // (this package, LS-09) uses it, and recall's screen sensor (LS-13, `../recall/video-watch.ts`)
 // imports the same `startScreencastToFrames`/`assembleMp4FromFrames` functions instead of
@@ -8,7 +8,7 @@
 // `assembleMp4FromFrames` below is it (its encoder-argument gate, test/policy-free-gate.mjs).
 //
 // `cropImageFromScreenshot` (LS-13) is a SECOND, distinct ffmpeg invocation — a crop, not an
-// encode — ported from cadence's `cropMedia` (`recall.ts:144-157`): recall's per-post image crops
+// encode — ported from the origin app's `cropMedia` (`recall.ts:144-157`): recall's per-post image crops
 // come OUT OF the in-session screenshot PNG this package's `capture()`/screencast path already
 // produced, never a CDN fetch (the read-only law's media half). It lives HERE, in the shared
 // assembler, rather than as a second spawn site in `recall/`, so "ffmpeg is only ever spawned from
@@ -55,7 +55,7 @@ interface ScreencastFrameEvent {
 /**
  * Start a CDP `Page.startScreencast`, writing each frame as a JPEG into `framesDir`
  * (`f-000000.jpg`, `f-000001.jpg`, …), ack'ing every frame so the browser keeps sending them.
- * Ported (mechanism only) from cadence's `clip` verb (browser.ts:333-347).
+ * Ported (mechanism only) from the origin app's `clip` verb (browser.ts:333-347).
  */
 export async function startScreencastToFrames(
   cdp: CDPLike,
@@ -100,7 +100,7 @@ export interface AssembleResult {
 
 /**
  * Assemble a directory of `f-%06d.jpg` frames into an mp4 via ffmpeg. This is the ONE ffmpeg
- * arg-list in the package — ported verbatim from cadence's `clip` verb (browser.ts:378-379).
+ * arg-list in the package — ported verbatim from the origin app's `clip` verb (browser.ts:378-379).
  */
 export function assembleMp4FromFrames(framesDir: string, mp4Path: string, { fps }: AssembleOptions): AssembleResult {
   const safeFps = Math.max(1, Math.round(fps));
@@ -130,7 +130,7 @@ export function assembleMp4FromFrames(framesDir: string, mp4Path: string, { fps 
   return { ok: true, mp4: mp4Path };
 }
 
-/** Remove a frames working directory (best-effort, mirrors cadence's `rmSync(dir,{recursive,force})`). */
+/** Remove a frames working directory (best-effort, mirrors the origin app's `rmSync(dir,{recursive,force})`). */
 export function cleanupFramesDir(framesDir: string): void {
   rmSync(framesDir, { recursive: true, force: true });
 }
@@ -151,7 +151,7 @@ export interface CropResult {
 
 /**
  * Crop a rectangle OUT OF an already-saved screenshot PNG via ffmpeg — pure `node:fs` + a local
- * process, no page access, no network. Ported from cadence's `cropMedia` (`recall.ts:144-157`):
+ * process, no page access, no network. Ported from the origin app's `cropMedia` (`recall.ts:144-157`):
  * recall's per-post image crops come out of the in-session screenshot the screen sensor already
  * captured, never a CDN fetch (`pbs.twimg.com`) — that's the read-only law's media half. This is
  * the ONE other ffmpeg invocation in the package, kept beside `assembleMp4FromFrames` so there is

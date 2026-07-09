@@ -93,7 +93,7 @@ export interface WireSiteAdapter {
 
 /**
  * x's wire adapter — the operationName -> pure-parser dispatch table named in
- * CADENCE-SPLIT-TASKSPEC.md §2 LS-13W / preserved in `x-graphql.ts`'s header:
+ * the split task spec, §2 LS-13W / preserved in `x-graphql.ts`'s header:
  *   `UserByScreenName`/`UserByRestId` -> `userResultToProfile(dig(payload,['data','user','result']))`
  *   `TweetResultByRestId`             -> `tweetToPost(dig(payload,['data','tweetResult','result']))`
  *   `TweetDetail`                     -> `parseTweetDetail(payload)`

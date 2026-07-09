@@ -1,6 +1,6 @@
 // The two IN-PAGE probes recall's screen sensor evaluates alongside every screenshot — ported
 // verbatim (as real, type-checked functions, not template-string blobs — there is no more
-// eval-server HTTP boundary to serialize across) from cadence's `MEDIA_PROBE` (`recall.ts:112-126`)
+// eval-server HTTP boundary to serialize across) from the origin app's `MEDIA_PROBE` (`recall.ts:112-126`)
 // and `VISIBLE_PROBE` (`recall.ts:132-139`).
 //
 // Both are READ-ONLY DOM reads (`getBoundingClientRect`, `querySelectorAll`, attribute reads) —
@@ -12,7 +12,7 @@
 // source lines — because that's the concrete site the split spec ported this behavior FROM;
 // generalizing to a per-extractor viewport probe is a natural follow-on, not required by LS-13.
 
-/** One on-screen media element's clamped bounding box (cadence's `recall.ts:112-126`). */
+/** One on-screen media element's clamped bounding box (the origin app's `recall.ts:112-126`). */
 export interface MediaBox {
   sid: string;
   alt: string;
@@ -88,7 +88,7 @@ export function visibleProbe(): string[] {
   return ids;
 }
 
-/** The generic per-tab visibility/focus/skip probe (cadence's `recall.ts:71-72`). NON-http(s) tabs
+/** The generic per-tab visibility/focus/skip probe (the origin app's `recall.ts:71-72`). NON-http(s) tabs
  *  (about:blank, chrome://, our own file://data: surfaces) are SKIPPED so recall never records its
  *  own viz/widget surfaces, only real sites. */
 export function tabVisibilityProbe(): { vis: boolean; foc: boolean; skip: boolean } {
@@ -99,8 +99,9 @@ export function tabVisibilityProbe(): { vis: boolean; foc: boolean; skip: boolea
   };
 }
 
-/** The winning tab's own signature read (cadence's `recall.ts:89-96`, minus the `window.__cadence`
- *  intent-bus fields — NOT ported; see LS-13's `observers` hook + the task spec's §2 LS-13 note). */
+/** The winning tab's own signature read (the origin app's `recall.ts:89-96`, minus its retired
+ *  cross-eval intent-bus global's fields — NOT ported; see LS-13's `observers` hook + the task
+ *  spec's §2 LS-13 note). */
 export function tabSignatureProbe(): {
   url: string;
   title: string;

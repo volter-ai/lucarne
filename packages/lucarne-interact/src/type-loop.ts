@@ -36,7 +36,7 @@ export interface TypeLoopOptions {
  * Type `text` one code point at a time, sleeping the model's per-keystroke delay after each, and —
  * every `yieldCheckEvery` characters — checking whether a live human has taken the keyboard. If so,
  * ABORT immediately and report `{ yielded: true }` with however many chars were typed. Ported from
- * cadence's `typeHuman` (browser.ts:184-195), with the two probe paths delegated to `checkHumanYield`.
+ * the origin app's `typeHuman` (browser.ts:184-195), with the two probe paths delegated to `checkHumanYield`.
  */
 export async function runTypeLoop(text: string, opts: TypeLoopOptions, deps: TypeLoopDeps): Promise<TypeLoopResult> {
   const now = deps.now ?? Date.now;

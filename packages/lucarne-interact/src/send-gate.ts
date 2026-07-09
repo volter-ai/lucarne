@@ -1,23 +1,23 @@
 // send-gate.ts — the FINAL send decision: default-refuse, only an explicit approval or yolo sends.
 //
 // `decideSend` is ported BYTE-IDENTICAL (function signature through closing brace, verbatim) from
-// cadence's `src/guardrails/enforce.ts:124-132` — the load-bearing safety-law-2 mechanism ("never
-// send without approval", cadence CLAUDE.md). `test/decide-send-provenance.mjs` proves the span
+// the origin app's `src/guardrails/enforce.ts:124-132` — the load-bearing safety-law-2 mechanism ("never
+// send without approval", the origin app's CLAUDE.md). `test/decide-send-provenance.mjs` proves the span
 // between the BEGIN/END markers below is character-for-character identical to a frozen copy of the
 // original (so this file's own drift would fail that test, not just a human's eyeball diff).
 //
 // Everything ELSE here — the `GuardrailResult` shape, `DecideSendApproval` — is NEW glue this
-// package needs to expose `decideSend` as a typed export; it carries no cadence POLICY. All content
+// package needs to expose `decideSend` as a typed export; it carries no origin-app POLICY. All content
 // rules (banned words, link allow-list, rate limits, sourcing/assess, the approvals ledger) are the
 // CALLER's `policy(text, ctx)` function (see send-flow.ts) — this module only knows the two fields
 // `decideSend` actually reads off the policy result: `blocked` and `mustAsk`.
 
 /**
  * The minimal shape `decideSend` reads off a computed guardrail/policy result. Mirrors the real
- * shape cadence's `enforce()` returns (`{ ok, blocked, mustAsk, violations }`,
- * `cadence/src/guardrails/enforce.ts:104-107`) — but `decideSend` itself only ever consumes
+ * shape the origin app's `enforce()` returns (`{ ok, blocked, mustAsk, violations }`,
+ * `guardrails/enforce.ts:104-107`) — but `decideSend` itself only ever consumes
  * `blocked`/`mustAsk` (see the verbatim function below); `ok`/`violations` are accepted here too
- * (structurally, so a caller's richer result — e.g. cadence's `enforce()` return plus its own
+ * (structurally, so a caller's richer result — e.g. the origin app's `enforce()` return plus its own
  * sourcing/assess additions — passes straight through) but are NOT read by this module. Content
  * rules, rate limits, sourcing, and the approvals ledger that PRODUCE this result are all
  * caller-supplied policy, not this package's concern.
@@ -33,7 +33,7 @@ export interface GuardrailResult {
   violations?: unknown[];
 }
 
-// ---8<--- BEGIN VERBATIM PORT: cadence/src/guardrails/enforce.ts:124-132 (decideSend) ---8<---
+// ---8<--- BEGIN VERBATIM PORT: guardrails/enforce.ts:124-132 (decideSend) ---8<---
 export function decideSend(e: { blocked?: boolean; mustAsk?: boolean } = {}, { mode = 'ask', approved = false, ack = false }: { mode?: string; approved?: boolean; ack?: boolean } = {}) {
   const isApproved = approved || ack;   // acknowledging an always-ask topic (--ack) is itself an approval
   if (e.blocked) return { send: false, action: 'blocked', reason: 'guardrails block this draft' };
