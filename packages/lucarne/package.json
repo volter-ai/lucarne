@@ -1,0 +1,74 @@
+{
+  "name": "lucarne",
+  "version": "1.5.2",
+  "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aaron Volter",
+  "homepage": "https://github.com/volter-ai/lucarne#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/volter-ai/lucarne.git"
+  },
+  "bugs": {
+    "url": "https://github.com/volter-ai/lucarne/issues"
+  },
+  "keywords": [
+    "browser",
+    "playwright",
+    "cdp",
+    "chrome-devtools-protocol",
+    "automation",
+    "remote-browser",
+    "screencast",
+    "headful",
+    "chrome",
+    "agent",
+    "browser-automation"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "lucarne": "dist/cli.js",
+    "lucarne-mcp": "dist/mcp.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "clients",
+    "dist",
+    "docker",
+    "examples",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build",
+    "build:image": "docker build -t lucarne-browser:latest docker",
+    "test": "npm run build && node test/acceptance.mjs",
+    "test:acceptance": "node test/acceptance.mjs",
+    "test:docker": "node test/docker-smoke.mjs",
+    "prepack": "rm -rf clients examples LICENSE README.md && cp -R ../../clients clients && cp -R ../../examples examples && cp ../../LICENSE LICENSE && cp ../../README.md README.md",
+    "postpack": "rm -rf clients examples LICENSE README.md && ln -s ../../clients clients && ln -s ../../examples examples && ln -s ../../LICENSE LICENSE && ln -s ../../README.md README.md"
+  },
+  "dependencies": {
+    "termfleet": "^0.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "playwright": "^1.49.0",
+    "typescript": "^5.7.0",
+    "ztrack": "^0.34.1"
+  }
+}
