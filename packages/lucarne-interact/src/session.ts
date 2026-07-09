@@ -15,7 +15,7 @@ import { dirname, resolve } from "node:path";
 import type { Browser, CDPSession, Page } from "playwright-core";
 import { assembleMp4FromFrames, cleanupFramesDir, startScreencastToFrames } from "./video/assembler.js";
 import { type PaceKind, type PaceProfile, type PacingConfig, pace as paceOnce, resolvePacing } from "./pacing.js";
-import { type ActivityProbe } from "./yield.js";
+import { type ActivityProbe, PresenceTracker } from "./presence.js";
 import { runTypeLoop } from "./type-loop.js";
 import { type SendFlowOptions, type SendFlowResult, runSendFlow } from "./send-flow.js";
 
@@ -181,6 +181,12 @@ export class InteractSession extends EventEmitter {
   readonly #clipMaxMs: number;
   readonly #pacing: Record<PaceKind, PaceProfile>;
   readonly #activityProbe: ActivityProbe | undefined;
+  // The presence contract's ACT-half writer (LS-12, presence.ts) — every verb that resolves/acts
+  // on a page records the driven target here (single writer per session; see #markDriven below).
+  readonly #presence = new PresenceTracker();
+  // Per-Page cache of the browser's own CDP `Target.targetId` — resolved once per Page object
+  // (identity-stable within one playwright-core connection) rather than re-queried on every verb.
+  readonly #targetIds = new WeakMap<Page, Promise<string>>();
   #browser: Browser | undefined;
   #connecting: Promise<Browser> | undefined;
 
@@ -215,7 +221,43 @@ export class InteractSession extends EventEmitter {
   async #page(): Promise<Page> {
     const b = await this.#connect();
     const ctx = b.contexts()[0] ?? (await b.newContext());
-    return ctx.pages()[0] ?? (await ctx.newPage());
+    const p = ctx.pages()[0] ?? (await ctx.newPage());
+    await this.#markDriven(p);
+    return p;
+  }
+
+  /**
+   * The presence contract's write side (LS-12): record that a verb just acted on `p`, keyed by the
+   * browser's own CDP `Target.targetId` (stable across separate connections — unlike a `Page`
+   * object's identity, which only holds within ONE playwright connection; see presence.ts's doc
+   * header). Every verb goes through `#page()` (or, for `open()`, marks explicitly) so this is a
+   * single, central writer. Best-effort: a presence-marking failure must never break a verb.
+   */
+  async #markDriven(p: Page): Promise<void> {
+    try {
+      const targetId = await this.#targetIdFor(p);
+      this.#presence.record(targetId);
+    } catch {
+      // presence is an observability aid, not a correctness dependency — never let it break a verb
+    }
+  }
+
+  /** Resolve (and cache, per Page object) the browser's own CDP `Target.targetId` for `p`. */
+  async #targetIdFor(p: Page): Promise<string> {
+    let cached = this.#targetIds.get(p);
+    if (!cached) {
+      cached = (async () => {
+        const cdp = await p.context().newCDPSession(p);
+        try {
+          const info = await cdp.send("Target.getTargetInfo");
+          return info.targetInfo.targetId;
+        } finally {
+          await cdp.detach().catch(() => {});
+        }
+      })();
+      this.#targetIds.set(p, cached);
+    }
+    return cached;
   }
 
   /** Run one verb, always emitting `action` and always paying the enforced post-verb pace — success or failure. */
@@ -255,6 +297,7 @@ export class InteractSession extends EventEmitter {
       const b = await this.#connect();
       const ctx = b.contexts()[0] ?? (await b.newContext());
       const p = ctx.pages()[0] ?? (await ctx.newPage());
+      await this.#markDriven(p);
       await p.goto(url, { timeout: this.#timeoutMs, waitUntil: "domcontentloaded" });
       return { url: p.url() };
     });

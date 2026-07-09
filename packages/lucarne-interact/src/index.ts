@@ -2,9 +2,13 @@
 // LS-09 scaffolded open/snap/scroll/activate/back/capture/video.* + pacing + the shared video
 // assembler. LS-10 added humanized `type()` (stages only, never Enter) + offline `typingStats` +
 // yield-to-human. LS-11 adds the GATED `send()` — the only code path that presses Enter/submits,
-// default-refuse (byte-identical `decideSend` + the composer-verification safety check). Presence
-// (LS-12) and recall (LS-13+) land in later issues under this same package (recall as the
-// `lucarne-interact/recall` subpath).
+// default-refuse (byte-identical `decideSend` + the composer-verification safety check). LS-12
+// adds the presence contract (`src/presence.ts`): the ACT half's per-session driven-target marker
+// (written by every verb) and the OBSERVE half's actor-attribution / tab-tie-break read — it is
+// package-INTERNAL and deliberately NOT re-exported here (see test/presence-export-map.mjs);
+// `checkHumanYield` below is unchanged as this package's public surface, now implemented there.
+// Recall (LS-13+) lands in a later issue under this same package (as the `lucarne-interact/recall`
+// subpath), and will import `./presence.js` directly, same as session.ts does.
 export {
   InteractSession,
   type ActionEvent,
