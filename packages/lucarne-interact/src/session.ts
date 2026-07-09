@@ -15,7 +15,12 @@ import { dirname, resolve } from "node:path";
 import type { Browser, CDPSession, Page } from "playwright-core";
 import { assembleMp4FromFrames, cleanupFramesDir, startScreencastToFrames } from "./video/assembler.js";
 import { type PaceKind, type PaceProfile, type PacingConfig, pace as paceOnce, resolvePacing } from "./pacing.js";
-import { type ActivityProbe, PresenceTracker } from "./presence.js";
+import { type ActivityProbe, type PresenceMarker, PresenceTracker } from "./presence.js";
+// Re-exported (the DATA SHAPE only, not the mechanism) so `presenceSnapshot()`'s return type is
+// nameable from the package root without index.ts importing FROM presence.ts itself (the module
+// specifier stays "./session.js" — see test/presence-export-map.mjs, which greps for the literal
+// "./presence" specifier, not transitive type references).
+export type { PresenceMarker } from "./presence.js";
 import { runTypeLoop } from "./type-loop.js";
 import { type SendFlowOptions, type SendFlowResult, runSendFlow } from "./send-flow.js";
 
@@ -280,6 +285,24 @@ export class InteractSession extends EventEmitter {
       const pacedMs = await paceOnce(kind, this.#pacing);
       this.emit("action", { verb, args, ok, result, error, actionMs, pacedMs, paceKind: kind });
     }
+  }
+
+  /** The `cdpUrl` this session was constructed with — lets a sibling consumer (recall, LS-13) open its OWN, separate connection to the SAME session. */
+  get cdpUrl(): string {
+    return this.#cdpUrl;
+  }
+
+  /**
+   * The presence contract's READ accessor (LS-12/LS-13): the current driven-target marker, or
+   * `null` before any verb has acted on a page. This is how recall — running on its OWN CDP
+   * connection (a different `playwright-core` connection means DIFFERENT `Page` object identities
+   * for the same tab, see presence.ts's doc header) — reads this session's marker WITHOUT reaching
+   * into private state (`#presence`). `startRecall` duck-types for this method: pass an
+   * `InteractSession` instance directly and its capture attribution (`by:'agent'|'human'`) is wired
+   * automatically; `attributeActor(null, ...)` already handles the case where no verb has acted yet.
+   */
+  presenceSnapshot(): PresenceMarker | null {
+    return this.#presence.marker;
   }
 
   /** Close the underlying playwright-core connection (does not destroy the lucarne session). */

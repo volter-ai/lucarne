@@ -2,13 +2,22 @@
 //
 // cadence had this exact machinery duplicated byte-for-byte in two places (`browser.ts:378-379`'s
 // `clip` verb and `recall.ts:239`'s watched-video capture). This module is the ONE copy: `clip`
-// (this package, LS-09) uses it now; recall's screen sensor (LS-13) will import the same functions
-// instead of re-implementing them. There must be exactly one ffmpeg encoder arg-list in this
-// package — `assembleMp4FromFrames` below is it.
+// (this package, LS-09) uses it, and recall's screen sensor (LS-13, `../recall/video-watch.ts`)
+// imports the same `startScreencastToFrames`/`assembleMp4FromFrames` functions instead of
+// re-implementing them. There must be exactly one ffmpeg ENCODER arg-list in this package —
+// `assembleMp4FromFrames` below is it (its encoder-argument gate, test/policy-free-gate.mjs).
+//
+// `cropImageFromScreenshot` (LS-13) is a SECOND, distinct ffmpeg invocation — a crop, not an
+// encode — ported from cadence's `cropMedia` (`recall.ts:144-157`): recall's per-post image crops
+// come OUT OF the in-session screenshot PNG this package's `capture()`/screencast path already
+// produced, never a CDN fetch (the read-only law's media half). It lives HERE, in the shared
+// assembler, rather than as a second spawn site in `recall/`, so "ffmpeg is only ever spawned from
+// video/assembler.ts" (test/policy-free-gate.mjs) stays true even after recall lands.
 //
 // `CDPLike` is a minimal duck-type (send/on/off) matched by Playwright's `CDPSession` — this module
 // doesn't import playwright-core itself, so it stays trivially reusable by any CDP client shape.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 
 export interface CDPLike {
@@ -124,4 +133,48 @@ export function assembleMp4FromFrames(framesDir: string, mp4Path: string, { fps 
 /** Remove a frames working directory (best-effort, mirrors cadence's `rmSync(dir,{recursive,force})`). */
 export function cleanupFramesDir(framesDir: string): void {
   rmSync(framesDir, { recursive: true, force: true });
+}
+
+/** A clamped, device-pixel-scaled crop box, in the SAME coordinate space as the source screenshot. */
+export interface CropBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface CropResult {
+  ok: boolean;
+  path: string;
+  stderr?: string;
+}
+
+/**
+ * Crop a rectangle OUT OF an already-saved screenshot PNG via ffmpeg — pure `node:fs` + a local
+ * process, no page access, no network. Ported from cadence's `cropMedia` (`recall.ts:144-157`):
+ * recall's per-post image crops come out of the in-session screenshot the screen sensor already
+ * captured, never a CDN fetch (`pbs.twimg.com`) — that's the read-only law's media half. This is
+ * the ONE other ffmpeg invocation in the package, kept beside `assembleMp4FromFrames` so there is
+ * still exactly one spawn SITE (`test/policy-free-gate.mjs`), even though it's a crop, not an
+ * encode (its own arg-list has no h.264 codec flag — the single-encoder-arg-list gate stays
+ * satisfied too).
+ */
+export function cropImageFromScreenshot(shotPath: string, outPath: string, box: CropBox): CropResult {
+  if (!existsSync(shotPath)) {
+    return { ok: false, path: outPath, stderr: `source screenshot missing: ${shotPath}` };
+  }
+  mkdirSync(dirname(outPath), { recursive: true });
+  const w = Math.max(1, Math.round(box.w));
+  const h = Math.max(1, Math.round(box.h));
+  const x = Math.max(0, Math.round(box.x));
+  const y = Math.max(0, Math.round(box.y));
+  const ff = spawnSync(
+    "ffmpeg",
+    ["-y", "-loglevel", "error", "-i", shotPath, "-vf", `crop=${w}:${h}:${x}:${y}`, outPath],
+    { encoding: "utf8" },
+  );
+  if (ff.status !== 0 || !existsSync(outPath)) {
+    return { ok: false, path: outPath, stderr: (ff.stderr || "").split("\n").slice(-8).join("\n") };
+  }
+  return { ok: true, path: outPath };
 }

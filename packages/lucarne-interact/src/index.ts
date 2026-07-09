@@ -7,8 +7,11 @@
 // (written by every verb) and the OBSERVE half's actor-attribution / tab-tie-break read — it is
 // package-INTERNAL and deliberately NOT re-exported here (see test/presence-export-map.mjs);
 // `checkHumanYield` below is unchanged as this package's public surface, now implemented there.
-// Recall (LS-13+) lands in a later issue under this same package (as the `lucarne-interact/recall`
-// subpath), and will import `./presence.js` directly, same as session.ts does.
+// Recall (LS-13) lands under this same package at the `lucarne-interact/recall` subpath (see
+// `src/recall/index.ts`) — a SEPARATE entry point, not re-exported from this root barrel. It
+// imports `./presence.js` directly, same as session.ts does (the single shared module, LS-12
+// dev/02's proof); `InteractSession#presenceSnapshot()` below is how a caller wires an existing
+// session's presence marker into `startRecall`'s attribution.
 export {
   InteractSession,
   type ActionEvent,
@@ -21,6 +24,7 @@ export {
   type ClipResult,
   type InteractSessionOptions,
   type OpenResult,
+  type PresenceMarker,
   type ScrollResult,
   type SendOptions,
   type SendResult,
@@ -86,10 +90,13 @@ export {
 export {
   assembleMp4FromFrames,
   cleanupFramesDir,
+  cropImageFromScreenshot,
   startScreencastToFrames,
   type AssembleOptions,
   type AssembleResult,
   type CDPLike,
+  type CropBox,
+  type CropResult,
   type ScreencastHandle,
   type ScreencastOptions,
 } from "./video/assembler.js";
