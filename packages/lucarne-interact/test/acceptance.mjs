@@ -113,12 +113,19 @@ try {
   const snap2 = await s.snap("body", 50);
   check("activate(): keyboard Enter on the link actually navigated the real page", /Next Page/.test(snap2), snap2.slice(0, 120));
 
-  // 5. back() — returns to the prior page (in-app selector absent here -> browser history path)
+  // 5. back() — returns to the prior page (in-app selector absent here -> browser history path).
+  //    Regression proof for the real-Chrome CI TimeoutError (`goBack` under the default `'load'`
+  //    `waitUntil`, which does not reliably refire on a back navigation): assert the call resolves
+  //    FAST (well under the old 8s history timeout) as well as that it actually navigated back.
+  const backT0 = Date.now();
   const backRes = await s.back();
+  const backMs = Date.now() - backT0;
   await new Promise((r) => setTimeout(r, 300));
   const snap3 = await s.snap("body", 50);
   check("back(): via 'history' (no in-app Back control on this fixture)", backRes.via === "history", backRes.via);
+  check("back(): reports navigated:true (a history entry existed)", backRes.navigated === true, JSON.stringify(backRes));
   check("back(): the real page is back on the home fixture", /Interact Acceptance Home/.test(snap3), snap3.slice(0, 120));
+  check("back(): completes fast, not by hitting the history timeout (well under 8000ms)", backMs < 4000, `${backMs}ms`);
 
   // 6. capture() — element screenshot via CDP lands a real, non-trivial PNG on disk (caller-supplied path)
   const capPath = path.join(WORK, "cap.png");
