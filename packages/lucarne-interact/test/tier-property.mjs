@@ -37,9 +37,10 @@ check(
 );
 
 // ── every listed ACT verb exists, as a callable, on the class/instance surface ──
-// 'type' (LS-10) IS a legitimate verb and belongs on this list — it stages humanized keystrokes
-// but never presses Enter (that's the gated `send`, LS-11, which still does not exist here).
-const REQUIRED_VERBS = ["open", "snap", "scroll", "activate", "back", "capture", "type", "close"];
+// 'type' (LS-10) stages humanized keystrokes but never presses Enter. 'send' (LS-11) IS the
+// gated verb that commits a staged draft — it belongs on this list now that it has landed; see
+// test/send-gate.mjs for its default-refuse decision-table proof.
+const REQUIRED_VERBS = ["open", "snap", "scroll", "activate", "back", "capture", "type", "send", "close"];
 for (const verb of REQUIRED_VERBS) {
   check(`InteractSession.prototype.${verb} is a function`, typeof InteractSession.prototype[verb] === "function");
 }
@@ -66,11 +67,11 @@ for (const banned of BANNED) {
   assert.equal(prototypeNames.includes(banned), false, `InteractSession.prototype must not have '${banned}'`);
 }
 
-// `send` is LS-11's gated verb — it must NOT exist yet (typing only STAGES; sending is a separate,
-// not-yet-landed issue). Kept as its own assertion (distinct from the permanently-BANNED list above)
-// so this line naturally goes away/gets replaced when LS-11 lands `send` for real.
-check("InteractSession.prototype has NO 'send' member yet (LS-11)", !prototypeNames.includes("send"));
-check("session.send is undefined (LS-11 not yet landed)", session["send"] === undefined);
+// `send` is LS-11's gated verb — it now exists, as a legitimate ACT verb (covered by REQUIRED_VERBS
+// above). Kept as its own explicit assertion (distinct from the generic loop) so the tier-property
+// story is legible in the test output: send is present, but click/goto/eval are still impossible.
+check("InteractSession.prototype has a 'send' member (LS-11 landed)", prototypeNames.includes("send"));
+check("session.send is a function", typeof session["send"] === "function");
 
 // ── the CLI rejects the banned words as commands (spawn it as a real subprocess) ──
 import { execFileSync } from "node:child_process";

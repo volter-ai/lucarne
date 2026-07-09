@@ -1,8 +1,10 @@
 // lucarne-interact — the non-bot-like interaction plane (act verbs + enforced pacing).
 // LS-09 scaffolded open/snap/scroll/activate/back/capture/video.* + pacing + the shared video
-// assembler. LS-10 adds humanized `type()` (stages only, never Enter) + offline `typingStats` +
-// yield-to-human. Send (LS-11), presence (LS-12), and recall (LS-13+) land in later issues under
-// this same package (recall as the `lucarne-interact/recall` subpath).
+// assembler. LS-10 added humanized `type()` (stages only, never Enter) + offline `typingStats` +
+// yield-to-human. LS-11 adds the GATED `send()` — the only code path that presses Enter/submits,
+// default-refuse (byte-identical `decideSend` + the composer-verification safety check). Presence
+// (LS-12) and recall (LS-13+) land in later issues under this same package (recall as the
+// `lucarne-interact/recall` subpath).
 export {
   InteractSession,
   type ActionEvent,
@@ -16,6 +18,8 @@ export {
   type InteractSessionOptions,
   type OpenResult,
   type ScrollResult,
+  type SendOptions,
+  type SendResult,
   type StoryboardFrame,
   type StoryboardOptions,
   type StoryboardResult,
@@ -23,6 +27,32 @@ export {
   type TypeResult,
   type VideoVerbs,
 } from "./session.js";
+export {
+  type DecideSendApproval,
+  type DecideSendResult,
+  type GuardrailResult,
+  decideSend,
+} from "./send-gate.js";
+export {
+  type SendAction,
+  type SendApproval,
+  type SendFlowDeps,
+  type SendFlowOptions,
+  type SendFlowResult,
+  type SendGesture,
+  type SendGestureKey,
+  type SendGestureSubmit,
+  type SendPolicy,
+  isSubmitGesture,
+  runSendFlow,
+} from "./send-flow.js";
+export {
+  type ComposerCheckReason,
+  type ComposerCheckResult,
+  type ComposerProbeResult,
+  checkComposerHoldsDraft,
+  normalizeComposerText,
+} from "./composer-check.js";
 export {
   DEFAULT_PACING,
   type PaceKind,
