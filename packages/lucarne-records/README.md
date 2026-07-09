@@ -16,6 +16,12 @@ weight.
   `Page<T>` and their supporting types. Ported from
   `claude-socials/packages/shared/src/schema.ts`. Every entity carries
   `provenance` — structural, not advisory (see `validate.ts`).
+  `Provenance.via` is `'internal-api'` (a passively CDP-captured wire
+  response) | `'dom'` | `'screen'` (a passive ARIA capture — LS-04); `Post`/
+  `Comment` carry an optional SCREEN-sensor `capture` pointer (ported from
+  `cadence/src/types.ts:17-24`'s `Capture`), and `Post` carries an explicit
+  `stub?: boolean` — the authoritative real/stub signal `store.ts`'s
+  `mergeEntity` reads for its stub-never-degrades invariant.
 - **`cursor.ts`** — `encodeCursor`/`decodeCursor`: opaque base64-of-JSON
   pagination tokens. Ported verbatim from
   `claude-socials/packages/shared/src/cursor.ts`.
@@ -33,7 +39,7 @@ weight.
     a stub for the same identity. Cadence decided this from an explicit
     `Unit.stub` flag, never from text length (an image/video-only post is real
     with empty text). So an explicit stub signal is honored first — a top-level
-    `stub:boolean` or `raw.stub`, which LS-04's `unitToRecord` will set — and
+    `stub:boolean` or `raw.stub`, which `unitToRecord` (LS-04) always sets — and
     when present it is authoritative with real-ness **sticky** (a known-real
     record never loses to a stub, even when the real one is text-less). Only
     when no explicit signal exists does the merge fall back to a structural
@@ -44,6 +50,16 @@ weight.
   shape); `queryRecords` is the paginated list op (`get_comments`/`search`/
   `get_timeline`'s shape), always returning a `Page<T>`. Neither fetches
   anything — a miss is just an empty result or `undefined`.
+- **`unit-to-record.ts`** (LS-04) — `unitToRecord()`: maps cadence's fact-unit
+  shape (`Unit = Post | Comment | StubPost`, `cadence/src/types.ts:42-69`) onto
+  this package's `Entity` schema, with `provenance.via: 'screen'`. This is the
+  seam recall's screen sensor (LS-13) writes through: `id:'x:<sid>'` splits
+  into `provenance.{source,id}`, `permalink`→`canonicalUrl`, `handle`→
+  `author.handle`, a comment's `parent`→its thread linkage (`parentUrl`/
+  `threadRootUrl`), and a stub `Unit` maps to an honest `text:''` record with
+  the explicit `stub` signal set (see `store.ts`'s stub-never-degrades above)
+  — always set explicitly, on both real and stub units, so a real text-less
+  post (e.g. image-only) is never later mistaken for a stub.
 
 ## On-disk format
 
@@ -79,10 +95,10 @@ contract callers must uphold.
 
 `appendRecords` preserves any line that parses as JSON and is record-shaped
 (carries a `provenance` object) even when it fails the *current* validator —
-e.g. a future `via:'screen'` record written by a newer package. Such lines are
-carried through the rewrite untouched rather than dropped, so an older
-`appendRecords` never silently deletes records it doesn't yet understand. Only
-non-JSON garbage is discarded.
+e.g. a hypothetical future `via` value from a schema version newer than this
+one understands. Such lines are carried through the rewrite untouched rather
+than dropped, so an older `appendRecords` never silently deletes records it
+doesn't yet understand. Only non-JSON garbage is discarded.
 
 ## API
 
@@ -92,17 +108,18 @@ import {
   getRecord, queryRecords,
   isEntity, assertEntity,
   encodeCursor, decodeCursor,
+  unitToRecord, unitsToRecords,
 } from "lucarne-records";
 
 // appendRecords(dir: string, entities: readonly Entity[]): number   -- count of NEW identities added
 // loadRecords(dir: string): Entity[]                                -- every currently-merged record
 // getRecord(dir: string, ref: RecordRef): Entity | undefined
 // queryRecords(dir: string, q: RecordQuery): Page<Entity>
+// unitToRecord(unit: Unit): Post | Comment                          -- cadence Unit -> a via:'screen' record
 ```
 
 ## Out of scope here (later tasks)
 
-- `Provenance.via:'screen'` + the `capture` pointer, and `unitToRecord` — LS-04.
 - Per-site parsers (`lucarne-records/sites`) — LS-05.
 - An MCP bin over this store — LS-06.
 

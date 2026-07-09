@@ -176,17 +176,22 @@ const post = (id, text, metrics, over = {}) => ({
 }
 
 // ── review-fix #3: forward-schema records survive an append cycle ────────────
-// An LS-04-era record (e.g. via:'screen', which THIS version's validator rejects)
-// is record-shaped (has a provenance object) but not currently valid. An LS-03
+// A record from a schema version newer than THIS validator understands (e.g. a
+// hypothetical future `via` beyond LS-04's 'internal-api'|'dom'|'screen') is
+// record-shaped (has a provenance object) but not currently valid. An
 // appendRecords must NOT delete it on rewrite — only garbage is dropped.
+// (LS-04 itself added `via:'screen'` — now VALID, so it no longer serves as
+// the "forward" fixture here; that migration is exercised positively in
+// `schema-shape.mjs` instead. This test now uses a still-unsupported via to
+// keep proving the forward-compatibility MECHANISM itself.)
 {
   const FWD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-fwd-test-"));
   const file = path.join(FWD_DIR, "records.jsonl");
   const forwardRecord = {
     kind: "post",
-    provenance: { source: "x", id: "future1", canonicalUrl: "https://x.com/i/status/future1", fetchedAt: "2026-07-09T00:00:00.000Z", via: "screen" },
+    provenance: { source: "x", id: "future1", canonicalUrl: "https://x.com/i/status/future1", fetchedAt: "2026-07-09T00:00:00.000Z", via: "future-sensor" },
     author: { handle: "future", profileUrl: "https://x.com/future" },
-    text: "captured by a newer package via the screen sensor",
+    text: "captured by a not-yet-invented sensor",
     metrics: { score: 3 },
     capture: { from: "aria/2026-07-09.txt", by: "human" },
   };
@@ -195,14 +200,14 @@ const post = (id, text, metrics, over = {}) => ({
   fs.mkdirSync(FWD_DIR, { recursive: true });
   fs.writeFileSync(file, [JSON.stringify(post("known1", "a normal record", { score: 1 })), JSON.stringify(forwardRecord), garbage].join("\n") + "\n");
   // sanity: the current validator does reject the forward record (so this test is meaningful)
-  check("forward-schema: the via:'screen' record IS rejected by the current validator (test is meaningful)", !isEntity(forwardRecord));
+  check("forward-schema: the via:'future-sensor' record IS rejected by the current validator (test is meaningful)", !isEntity(forwardRecord));
   // now run an append cycle
   appendRecords(FWD_DIR, [post("known2", "another normal record", { score: 2 })]);
   const raw = fs.readFileSync(file, "utf8");
   const lines = raw.split("\n").filter((l) => l.trim());
   const parsed = lines.map((l) => JSON.parse(l));
   const survivedForward = parsed.find((p) => p.provenance && p.provenance.id === "future1");
-  check("forward-schema: the unknown-but-record-shaped line survives the append cycle", !!survivedForward && survivedForward.provenance.via === "screen");
+  check("forward-schema: the unknown-but-record-shaped line survives the append cycle", !!survivedForward && survivedForward.provenance.via === "future-sensor");
   check("forward-schema: the forward record is preserved byte-faithfully (capture pointer intact)", !!survivedForward && survivedForward.capture && survivedForward.capture.by === "human");
   check("forward-schema: the garbage line is dropped", !raw.includes("not json at all"));
   check("forward-schema: valid records are still present alongside it", parsed.some((p) => p.provenance.id === "known1") && parsed.some((p) => p.provenance.id === "known2"));

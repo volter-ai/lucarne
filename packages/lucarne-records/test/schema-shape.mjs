@@ -128,11 +128,64 @@ const comment = {
   const commentBadSource = { ...comment, provenance: { ...comment.provenance, source: "not-a-real-site" } };
   check("validation: a Comment with an invalid provenance.source fails isEntity", !isEntity(commentBadSource));
 
-  const commentBadVia = { ...comment, provenance: { ...comment.provenance, via: "screen" } };
-  check("validation: via:'screen' is NOT valid on this (un-extended) schema — that's LS-04's job", !isEntity(commentBadVia));
+  const commentViaScreen = { ...comment, provenance: { ...comment.provenance, via: "screen" } };
+  check("validation: via:'screen' IS valid now that LS-04 extended the schema", isEntity(commentViaScreen));
+
+  const commentBadVia = { ...comment, provenance: { ...comment.provenance, via: "replayed-fetch" } };
+  check("validation: an unrecognized via value still fails isEntity (VIA list is a closed set)", !isEntity(commentBadVia));
 
   check("validation: a bare object with no kind/provenance fails isEntity", !isEntity({ foo: "bar" }));
   check("validation: null/undefined fail isEntity without throwing", !isEntity(null) && !isEntity(undefined));
+}
+
+// ── LS-04 dev/01 — all three `via` values + the `capture` pointer ────────────
+{
+  // all three via values validate on an otherwise-identical Post fixture.
+  for (const via of ["internal-api", "dom", "screen"]) {
+    const p = { ...post, provenance: { ...post.provenance, via } };
+    check(`LS-04: via:'${via}' validates`, isEntity(p));
+  }
+
+  // a via:'screen' record carrying a FULL capture pointer — every field from
+  // cadence/src/types.ts:17-24 (from, screenshot, ts, reason, by, page).
+  const fullCapture = {
+    from: ".social/recall/aria/2026-07-08T12-00-00.txt",
+    screenshot: ".social/recall/shots/2026-07-08T12-00-00.png",
+    ts: "2026-07-08T12:00:00.000Z",
+    reason: "scrolled",
+    by: "human",
+    page: "https://x.com/paulg/status/1234567890123456789",
+  };
+  const screenPost = {
+    ...post,
+    provenance: { ...post.provenance, via: "screen" },
+    capture: fullCapture,
+  };
+  check("LS-04: a via:'screen' record with a full capture pointer validates", isEntity(screenPost));
+  const rt = roundTrip(screenPost);
+  check("LS-04: the capture pointer round-trips through JSON with every field intact", JSON.stringify(rt.capture) === JSON.stringify(fullCapture));
+  check("LS-04: the capture pointer's individual fields are all present", rt.capture.from === fullCapture.from && rt.capture.screenshot === fullCapture.screenshot && rt.capture.ts === fullCapture.ts && rt.capture.reason === fullCapture.reason && rt.capture.by === fullCapture.by && rt.capture.page === fullCapture.page);
+
+  // capture is optional and structural-only — present-but-not-an-object fails,
+  // absent is fine, an empty object is fine (every field inside is optional).
+  const badCapture = { ...post, capture: "not-an-object" };
+  check("LS-04: a non-object `capture` fails isEntity", !isEntity(badCapture));
+  const emptyCapture = { ...post, capture: {} };
+  check("LS-04: an empty `capture` object still validates (every field inside is optional)", isEntity(emptyCapture));
+
+  // a Comment can carry a capture pointer too.
+  const screenComment = { ...comment, provenance: { ...comment.provenance, via: "screen" }, capture: fullCapture };
+  check("LS-04: a Comment with via:'screen' + a capture pointer validates", isEntity(screenComment));
+
+  // the explicit `stub` signal (Post only) — must be a real boolean when present.
+  const realStubFalse = { ...post, stub: false };
+  check("LS-04: an explicit stub:false Post validates", isEntity(realStubFalse));
+  const mintedStubTrue = { ...post, text: "", metrics: {}, stub: true };
+  check("LS-04: an explicit stub:true Post (a minted placeholder) validates", isEntity(mintedStubTrue));
+  const badStub = { ...post, stub: "yes" };
+  check("LS-04: a non-boolean `stub` fails isEntity", !isEntity(badStub));
+  const rtStub = roundTrip(mintedStubTrue);
+  check("LS-04: `stub` round-trips through JSON intact", rtStub.stub === true);
 }
 
 const failed = results.filter((r) => !r.pass);

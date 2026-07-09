@@ -15,8 +15,17 @@
  *
  * NOT ported: the extension<->bridge wire protocol (`shared/src/protocol.ts`) —
  * no bridge exists in this design (see CADENCE-SPLIT-TASKSPEC.md §1.3a/§1.4).
- * The schema is intentionally left AS-IS from claude-socials here; extending it
- * with `via:'screen'` + the `capture` pointer is LS-04's job, not this one's.
+ *
+ * LS-04 EXTENSION: `Provenance.via` gains `'screen'` (a passive ARIA capture,
+ * cadence's ONLY sensor today) alongside `'internal-api'` (which now denotes a
+ * passively CDP-captured wire response, not a replayed fetch — see §1.3a) and
+ * `'dom'`. It also adds an optional `capture` pointer — ported faithfully from
+ * `cadence/src/types.ts:17-24`'s `Capture` interface — so a screen-sensor record
+ * can cite exactly which recorded ARIA snapshot/screenshot/moment it came from,
+ * and an explicit `stub` signal on `Post` so a minted placeholder (cadence's
+ * `Unit.stub`, `cadence/src/types.ts:52`) is never mistaken for a real capture
+ * by `store.ts`'s `mergeEntity` (see that file's stub-never-degrades doc). The
+ * `Unit → record` mapping itself lives in `unit-to-record.ts`.
  */
 
 export type Source = "x" | "reddit" | "hackernews";
@@ -37,8 +46,40 @@ export interface Provenance {
   canonicalUrl: string;
   /** ISO-8601 time the data was fetched from the site. */
   fetchedAt: string;
-  /** How it was obtained: replayed the site's JSON API, or scraped DOM. */
-  via: "internal-api" | "dom";
+  /**
+   * How it was obtained:
+   *  - `'internal-api'` — a passively CDP-captured wire response (the site's
+   *    own JSON/GraphQL, observed via the `Network` domain on a session
+   *    lucarne already owns — never a replayed/synthetic request; see
+   *    CADENCE-SPLIT-TASKSPEC.md §1.3/§1.3a).
+   *  - `'dom'` — scraped from the rendered page.
+   *  - `'screen'` — a passive ARIA capture (cadence's recall sensor,
+   *    `unitToRecord`'s output — LS-04).
+   */
+  via: "internal-api" | "dom" | "screen";
+}
+
+/**
+ * Provenance for a SCREEN-sensor (ARIA) capture: a pointer back to the exact
+ * recorded moment a record's fields were observed from. Ported faithfully from
+ * `cadence/src/types.ts:17-24`'s `Capture` interface (LS-04) — kept as
+ * nullable-optional exactly as cadence wrote it, since the ARIA capture
+ * plumbing this feeds (`cadence/src/units.ts`) already produces `null` (not
+ * just `undefined`) for an unknown field.
+ */
+export interface Capture {
+  /** The raw ARIA snapshot file this record was parsed out of. */
+  from?: string | null;
+  /** The in-session screenshot it was cropped/observed from. */
+  screenshot?: string | null;
+  /** ISO-8601 time of the capture. */
+  ts?: string | null;
+  /** Why recall fired (navigated · scrolled · new-content · …). */
+  reason?: string | null;
+  /** Who was driving the session when the capture happened. */
+  by?: "agent" | "human" | null;
+  /** The url the capture was taken on. */
+  page?: string | null;
 }
 
 /** An author/account on any of the three sites. */
@@ -92,6 +133,24 @@ export interface Post {
   metrics: EngagementMetrics;
   /** Container the post lives in (subreddit, HN front page, etc.). */
   container?: Container;
+  /**
+   * SCREEN-sensor provenance (LS-04): the ARIA/screenshot capture this
+   * record's fields were observed from. Present on `via:'screen'` records
+   * (`unitToRecord`'s output); absent for wire/DOM-sourced posts.
+   */
+  capture?: Capture;
+  /**
+   * EXPLICIT real/stub signal (LS-04), ported from cadence's `Unit.stub`
+   * (`cadence/src/types.ts:52`): `true` for a minted placeholder (id+handle
+   * known from a comment's thread, content not yet observed), `false` for a
+   * genuine capture — including a text-less one (e.g. an image-only post).
+   * When present this is AUTHORITATIVE for `store.ts`'s `mergeEntity`
+   * stub-never-degrades invariant: real-ness is sticky and is NEVER inferred
+   * from "is `text` empty?" alone. `unitToRecord` always sets this explicitly
+   * (never leaves it `undefined`) so a real text-less post can never be
+   * mistaken for a stub by the structural fallback heuristic.
+   */
+  stub?: boolean;
   raw?: Record<string, unknown>;
 }
 
@@ -111,6 +170,12 @@ export interface Comment {
   depth: number;
   /** Child comment ids, present when fetched with depth > 0. */
   replyIds?: string[];
+  /**
+   * SCREEN-sensor provenance (LS-04): see `Post.capture`. Comments are never
+   * stubs in cadence's model (`Unit`'s `Comment.stub` is typed `never` —
+   * `cadence/src/types.ts:60`), so there is no `stub` field here.
+   */
+  capture?: Capture;
   raw?: Record<string, unknown>;
 }
 

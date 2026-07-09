@@ -13,7 +13,10 @@
 import type { AuthorRef, Container, Entity, EntityKind, Provenance, Source } from "./schema.js";
 
 const SOURCES: readonly Source[] = ["x", "reddit", "hackernews"];
-const VIA: readonly Provenance["via"][] = ["internal-api", "dom"];
+// LS-04: 'screen' added alongside 'internal-api'/'dom' — kept in lockstep with
+// `schema.ts`'s `Provenance.via` union (the LS-03 reviewer flagged these two
+// lists as a place that must never drift apart).
+const VIA: readonly Provenance["via"][] = ["internal-api", "dom", "screen"];
 const KINDS: readonly EntityKind[] = ["profile", "post", "comment"];
 
 function isRecordObject(v: unknown): v is Record<string, unknown> {
@@ -55,6 +58,16 @@ function isContainer(v: unknown): v is Container {
   return isRecordObject(v) && isNonEmptyString(v.name) && isNonEmptyString(v.url);
 }
 
+/**
+ * LS-04: the optional SCREEN-sensor `capture` pointer, when present, must be
+ * an object (its own fields — `from`/`screenshot`/`ts`/`reason`/`by`/`page` —
+ * are all individually optional/nullable per `schema.ts`'s `Capture`, so
+ * there's nothing further to require here beyond "it's a record, not garbage").
+ */
+function isCaptureShape(v: unknown): boolean {
+  return v === undefined || isRecordObject(v);
+}
+
 function isProfileShape(v: Record<string, unknown>): boolean {
   return v.kind === "profile" && isNonEmptyString(v.handle) && isRecordObject(v.metrics);
 }
@@ -65,7 +78,12 @@ function isPostShape(v: Record<string, unknown>): boolean {
     isAuthorRef(v.author) &&
     typeof v.text === "string" &&
     isRecordObject(v.metrics) &&
-    (v.container === undefined || isContainer(v.container))
+    (v.container === undefined || isContainer(v.container)) &&
+    isCaptureShape(v.capture) &&
+    // LS-04: the explicit stub signal, when present, must be a real boolean —
+    // this is the field `store.ts`'s `mergeEntity` reads as authoritative, so
+    // a malformed value here must not silently validate.
+    (v.stub === undefined || typeof v.stub === "boolean")
   );
 }
 
@@ -77,7 +95,8 @@ function isCommentShape(v: Record<string, unknown>): boolean {
     isRecordObject(v.metrics) &&
     isNonEmptyString(v.parentUrl) &&
     isNonEmptyString(v.threadRootUrl) &&
-    typeof v.depth === "number"
+    typeof v.depth === "number" &&
+    isCaptureShape(v.capture)
   );
 }
 
