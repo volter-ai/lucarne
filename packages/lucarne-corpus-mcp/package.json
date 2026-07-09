@@ -1,0 +1,58 @@
+{
+  "name": "lucarne-corpus-mcp",
+  "version": "0.1.0",
+  "description": "Optional thin stdio MCP bin: read-only queries over a lucarne-records store. Never fetches, replays, or opens a browser — a miss returns a structured not_captured result telling the agent to browse to it in-session.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aaron Volter",
+  "homepage": "https://github.com/volter-ai/lucarne#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/volter-ai/lucarne.git",
+    "directory": "packages/lucarne-corpus-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/volter-ai/lucarne/issues"
+  },
+  "keywords": [
+    "mcp",
+    "read-only",
+    "corpus",
+    "records",
+    "provenance"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "lucarne-corpus-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node test/config.mjs && node test/queries.mjs && node test/no-egress.mjs && node test/mcp-tools.mjs"
+  },
+  "dependencies": {
+    "lucarne-records": "^0.1.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
