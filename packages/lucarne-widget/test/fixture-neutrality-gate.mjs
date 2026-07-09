@@ -24,8 +24,11 @@ const check = (name, pass, detail = "") => {
 const EXCLUDE_DIRS = new Set(["node_modules", "dist", ".git"]);
 // Files this gate deliberately does not scan: a real CHANGELOG/migration doc is explicitly exempt per the
 // AC ("0 hits outside CHANGELOG/migration docs") — this package ships neither today, but the exemption is
-// wired in so adding one later doesn't require touching this gate.
-const EXEMPT_BASENAMES = new Set(["CHANGELOG.md"]);
+// wired in so adding one later doesn't require touching this gate. `no-legacy-global-literal-gate.mjs` (LS-17
+// dev/01) is also exempt for the SAME reason this file excludes itself below (`SELF`): its entire job is to
+// assert a zero count of a specific legacy literal elsewhere in the package, which means its own source
+// necessarily spells that literal (in a regex/comment) — that is the gate doing its job, not a regression.
+const EXEMPT_BASENAMES = new Set(["CHANGELOG.md", "no-legacy-global-literal-gate.mjs"]);
 const SCAN_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".md", ".json"]);
 
 function walk(dir) {
