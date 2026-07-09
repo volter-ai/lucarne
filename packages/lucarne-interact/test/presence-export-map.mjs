@@ -2,9 +2,14 @@
 // package's public export map (index.ts / dist/index.js), even though it IS a real module the
 // verbs (session.ts) import directly — a single shared module, not a duplicated/forked one.
 //
-// NOTE (per the task spec): at LS-12 time only the VERBS are proven to import presence.ts. Recall
-// (LS-13) doesn't exist yet in this package — its import is validated when LS-13 lands, not faked
-// here.
+// LS-13 UPDATE: recall (`src/recall/index.ts`) now ALSO imports presence.ts directly — the OBSERVE
+// half reading the SAME shared module the ACT half (session.ts) writes through, exactly the
+// single-shared-module proof the split spec asks for ("recall + verbs both import it"). Recall's
+// own subpath entry (`lucarne-interact/recall`) is a SEPARATE public export map from the package
+// ROOT (`lucarne-interact`) — it is allowed (expected) to re-export `attributeActor`/
+// `presenceTieBreakBonus`/`PresenceMarker` on ITS OWN surface (a caller wiring `startRecall` needs
+// them); this file's export-map assertions are scoped to the package ROOT's `index.ts`/`dist/index.js`
+// only, which still must not carry the presence internals.
 //
 // Run with `node test/presence-export-map.mjs` (after `npm run build`; also greps src/, no build
 // needed for that half).
@@ -69,6 +74,13 @@ check("exactly one presence.ts file exists under src/", presenceFiles.length ===
 // side-channel duplicate.
 check("yield.ts re-exports from the same presence.ts (thin public shim)", grep('from "\\./presence\\.js"', path.join(SRC, "yield.ts")).length >= 1);
 check("type-loop.ts consumes the same presence.ts", grep('from "\\./presence\\.js"', path.join(SRC, "type-loop.ts")).length >= 1);
+
+// ── 4. LS-13: recall (the OBSERVE half) ALSO imports the SAME shared presence.ts — from its own
+//    directory, "../presence.js" (one level up from src/recall/), never a copy under src/recall/. ──
+const recallIndexSrc = readFileSync(path.join(SRC, "recall", "index.ts"), "utf8");
+check("recall/index.ts imports presence.ts directly (the observe half's single shared module)", /from\s*["']\.\.\/presence\.js["']/.test(recallIndexSrc), recallIndexSrc.match(/from\s*["'][^"']*presence[^"']*["']/)?.[0]);
+const recallPresenceFiles = execFileSync("find", [path.join(SRC, "recall"), "-name", "presence.ts"], { encoding: "utf8" }).split("\n").filter(Boolean);
+check("no duplicated/forked presence.ts exists under src/recall/ (recall imports the ONE copy)", recallPresenceFiles.length === 0, recallPresenceFiles.join(","));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);

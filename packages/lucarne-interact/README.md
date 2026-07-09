@@ -217,11 +217,65 @@ package root's stable surface — it's re-exported from `index.ts` for
 this issue's public API contract): a CDP screencast → JPEG-frames-on-disk →
 `ffmpeg` mp4 assembler. cadence had this exact machinery duplicated
 byte-for-byte in `browser.ts:378-379` (the `clip` verb) and `recall.ts:239`
-(watched-video capture). This package holds **one** copy —
-`startScreencastToFrames` + `assembleMp4FromFrames` — and `video.clip` is its
-only caller so far. Recall's screen sensor (LS-13) will import the same two
-functions instead of re-implementing the ffmpeg arg-list. There is exactly
-one `libx264` reference in this package's `src/`.
+(watched-video capture), and its per-post image crop (`recall.ts:144-157`)
+was a THIRD ffmpeg call. This package holds **one** copy of each kind:
+`startScreencastToFrames`/`assembleMp4FromFrames` (the one ffmpeg *encoder*
+arg-list — `video.clip` and recall's watched-video sensor both call it) and
+`cropImageFromScreenshot` (a still-image crop, not an encode — recall's
+per-post media crops call this one). There is exactly one `libx264`
+reference in this package's `src/`, and ffmpeg is spawned from nowhere else.
+
+## Recall — the OBSERVE half (`lucarne-interact/recall`, LS-13)
+
+A passive, read-only SCREEN sensor: `startRecall(sessionOrCdpUrl, { dataDir,
+extractors, observers, toggles })` runs on its **own** `playwright-core`
+connection over a session's `cdpUrl` — a second, independent client of the
+same CDP endpoint the ACT half connects to (the engine's own tap-sharing
+design, `lucarne`'s `cdp.ts:1-3`, is precedent that concurrent CDP consumers
+of one target coexist). It never drives the page — no clicks, no
+navigation, no typing — only reads: ARIA snapshots, screenshots, DOM
+visibility probes, and (for a playing video) its own CDP screencast tap.
+
+```ts
+import { InteractSession } from "lucarne-interact";
+import { startRecall } from "lucarne-interact/recall";
+import { xAriaExtractor } from "lucarne-records/sites";
+
+const interact = new InteractSession(session);
+const recall = await startRecall(interact, {
+  dataDir: "/path/to/store",
+  extractors: [xAriaExtractor], // { match(url), extract(aria, capture) => records }
+  observers: [(signal) => console.log(signal.kind, signal)],
+});
+// ... drive/observe the session ...
+await recall.stop();
+```
+
+- **Extractors are plugins** (`{ match(url), extract(aria, capture) =>
+  records }`) — cadence passes the X ARIA extractor from
+  `lucarne-records/sites`. Recall dispatches every matching extractor and
+  writes the resulting records through `lucarne-records`'s `appendRecords`.
+- **Observers are consumer hooks** — `(signal) => void`, fired for every
+  capture/video event. Cadence's intent-bus polling (`window.__cadence`
+  picks/approvals/draft-requests, `recall.ts:337-367`) is **not** ported
+  here; a caller wanting that reads its own page state separately.
+- **Presence/attribution** — pass an `InteractSession` directly (or any
+  `{ cdpUrl, presenceSnapshot? }`-shaped object) and every capture is
+  stamped `by: 'agent'|'human'` via `presenceSnapshot()` + LS-12's
+  `attributeActor`. `InteractSession#presenceSnapshot()` is the read
+  accessor recall uses — it never reaches into the session's private state.
+- **Viewport honesty** — a virtualized feed's off-screen DOM buffer is
+  filtered out; the thread root always survives so no comment is ever
+  orphaned.
+- **Media crops, never a CDN** — per-post images are cropped out of the
+  session's own screenshot (`cropImageFromScreenshot`, above), never
+  fetched from a media host.
+- **Watched video** — stops on end / loop / look-away / a 5-minute cap,
+  assembled to mp4 by the same shared assembler `video.clip` uses.
+
+Safety-law gates: `grep -rn "/eval" src/recall` and
+`grep -REn "pbs\.twimg|fetch\(.*http" src/recall` both return zero hits
+(`test/recall-readonly-gates.mjs`).
 
 ## CLI
 
