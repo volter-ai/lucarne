@@ -15,16 +15,22 @@ import { dirname, resolve } from "node:path";
 import type { Browser, CDPSession, Page } from "playwright-core";
 import { assembleMp4FromFrames, cleanupFramesDir, startScreencastToFrames } from "./video/assembler.js";
 import { type PaceKind, type PaceProfile, type PacingConfig, pace as paceOnce, resolvePacing } from "./pacing.js";
+import { type ActivityProbe } from "./yield.js";
+import { runTypeLoop } from "./type-loop.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 const DEFAULT_TIMEOUT_MS = 15000; // cadence's `PW` (browser.ts:23) — generous per-call timeout for real remote sites
 const DEFAULT_CLIP_MAX_MS = 5 * 60 * 1000; // the hard 5-minute clip ceiling (browser.ts:345)
+// `typeHuman`'s yield-check cadence + threshold (browser.ts:187,189): probe every 12 chars, yield
+// if the last detected human input landed under 1500ms ago.
+const DEFAULT_YIELD_CHECK_EVERY_CHARS = 12;
+const DEFAULT_YIELD_THRESHOLD_MS = 1500;
 // The two in-app "Back" affordances cadence recognized (browser.ts:270-271) — generic ARIA/testid
 // patterns, not a per-site policy; callers can override entirely via `back({ inAppSelectors })`.
 const DEFAULT_BACK_SELECTORS = ['button[aria-label="Back"]', '[data-testid="app-bar-back"]'];
 
-export type CdpUrlSource = string | { cdpUrl: string };
+export type CdpUrlSource = string | { cdpUrl: string; activity?: ActivityProbe };
 
 export interface InteractSessionOptions {
   /** Per-kind pacing overrides (see pacing.ts). Unset fields fall back to cadence's defaults. */
@@ -33,6 +39,14 @@ export interface InteractSessionOptions {
   timeoutMs?: number;
   /** Hard ceiling for `video.clip`, ms. Default 5 minutes (browser.ts:345). */
   clipMaxMs?: number;
+  /**
+   * Accessor for lucarne's actor-tagged activity (`now.lastHumanActionMsAgo`) — the PREFERRED
+   * yield-to-human probe for `type()` (see yield.ts). Duck-typed so this package never imports
+   * `lucarne`: pass e.g. `() => client.activity(session.id)`. Also accepted on the `{ cdpUrl,
+   * activity }` object form of the constructor's first argument. When absent, `type()` falls back
+   * to the in-page `window.__lastInputAt` probe.
+   */
+  activity?: ActivityProbe;
 }
 
 export interface OpenResult {
@@ -58,6 +72,22 @@ export interface BackResult {
 
 export interface CaptureResult {
   path: string;
+}
+
+export interface TypeOptions {
+  /** Probe for a human takeover every N characters. Default 12 (browser.ts:187). */
+  yieldCheckEvery?: number;
+  /** ms since the last detected human input under which `type()` yields. Default 1500 (browser.ts:189). */
+  yieldThresholdMs?: number;
+}
+
+export interface TypeResult {
+  /** Total characters in the requested text. */
+  chars: number;
+  /** Characters actually typed before completion (or before yielding). */
+  typed: number;
+  /** True if typing was aborted mid-way because a live human appeared to take the keyboard. */
+  yielded: boolean;
 }
 
 export interface StoryboardOptions {
@@ -138,6 +168,7 @@ export class InteractSession extends EventEmitter {
   readonly #timeoutMs: number;
   readonly #clipMaxMs: number;
   readonly #pacing: Record<PaceKind, PaceProfile>;
+  readonly #activityProbe: ActivityProbe | undefined;
   #browser: Browser | undefined;
   #connecting: Promise<Browser> | undefined;
 
@@ -149,6 +180,8 @@ export class InteractSession extends EventEmitter {
     this.#timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#clipMaxMs = opts.clipMaxMs ?? DEFAULT_CLIP_MAX_MS;
     this.#pacing = resolvePacing(opts.pacing);
+    // PREFERRED yield-to-human probe (yield.ts) — from opts, or duck-typed off the session object.
+    this.#activityProbe = opts.activity ?? (typeof cdpUrlOrSession === "object" ? cdpUrlOrSession.activity : undefined);
     this.video = {
       storyboard: (selector, videoOpts) => this.#storyboard(selector, videoOpts),
       clip: (selector, outPath) => this.#clip(selector, outPath),
@@ -273,6 +306,71 @@ export class InteractSession extends EventEmitter {
       await p.locator(selector).first().screenshot({ path: outPath, timeout: 12000 });
       return { path: outPath };
     });
+  }
+
+  /**
+   * STAGE text via humanized per-keystroke typing (browser.ts:184-195) — NEVER presses Enter/submits.
+   * Sending an approved, staged draft is `send()` (LS-11); this verb only enters text into whatever
+   * is focused. Yields (aborts) the moment a live human appears to be typing — see yield.ts for the
+   * two probe paths (lucarne's actor-tagged activity, preferred; the in-page `__lastInputAt` probe,
+   * fallback) — checked every `yieldCheckEvery` characters (default 12, browser.ts:187).
+   */
+  async type(text: string, opts: TypeOptions = {}): Promise<TypeResult> {
+    return this.#act("type", [text, opts], "act", async () => {
+      const p = await this.#page();
+      await this.#ensureInputProbeInstalled(p);
+      // The drive loop is a browser-free unit (type-loop.ts) with injected I/O — here we hand it the
+      // real page-backed callbacks. It only ever dispatches the characters of `text` (never Enter).
+      return runTypeLoop(
+        text,
+        {
+          yieldCheckEvery: opts.yieldCheckEvery ?? DEFAULT_YIELD_CHECK_EVERY_CHARS,
+          yieldThresholdMs: opts.yieldThresholdMs ?? DEFAULT_YIELD_THRESHOLD_MS,
+        },
+        {
+          typeChar: (ch) => p.keyboard.type(ch, { delay: 0 }),
+          sleep,
+          activityProbe: this.#activityProbe,
+          inPageProbe: () => this.#readLastInputAt(p),
+        },
+      );
+    });
+  }
+
+  /**
+   * Best-effort setter for the FALLBACK yield probe's `window.__lastInputAt` (browser.ts:186-190
+   * only ever READS this global — cadence never wired a setter, which left the probe permanently
+   * inert; this installs one). Idempotent (a page-level flag guards re-installation), and failures
+   * are swallowed — the fallback probe degrades to "no signal" rather than breaking `type()`.
+   */
+  async #ensureInputProbeInstalled(p: Page): Promise<void> {
+    try {
+      await p.evaluate(() => {
+        const w = window as unknown as { __lucarneInteractProbeInstalled?: boolean; __lastInputAt?: number };
+        if (w.__lucarneInteractProbeInstalled) return;
+        w.__lucarneInteractProbeInstalled = true;
+        const mark = () => {
+          w.__lastInputAt = Date.now();
+        };
+        window.addEventListener("keydown", mark, true);
+        window.addEventListener("pointerdown", mark, true);
+        window.addEventListener("touchstart", mark, true);
+      });
+    } catch {
+      // best-effort only — see doc comment above
+    }
+  }
+
+  /** Read the raw `window.__lastInputAt` timestamp (epoch ms), or null if unset/unreadable. */
+  async #readLastInputAt(p: Page): Promise<number | null> {
+    try {
+      return await p.evaluate(() => {
+        const v = (window as unknown as { __lastInputAt?: number }).__lastInputAt;
+        return typeof v === "number" ? v : null;
+      });
+    } catch {
+      return null;
+    }
   }
 
   // ── video.* (browser.ts:294-401) ────────────────────────────────────────────────────────────

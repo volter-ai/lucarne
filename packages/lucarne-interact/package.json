@@ -47,7 +47,7 @@
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "npm run build && node test/tier-property.mjs && node test/pacing.mjs && node test/policy-free-gate.mjs && node test/cli-rejection.mjs",
+    "test:unit": "npm run build && node test/tier-property.mjs && node test/pacing.mjs && node test/typing.mjs && node test/yield.mjs && node test/policy-free-gate.mjs && node test/cli-rejection.mjs",
     "test:acceptance": "npm run build && node test/acceptance.mjs"
   },
   "peerDependencies": {

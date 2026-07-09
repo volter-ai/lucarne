@@ -8,6 +8,7 @@
 // package used ONLY to mint the real session this test drives; lucarne-interact's shipped src/
 // still never imports it (dev/03's grep gate + the README's dep-graph note cover that).
 import { Lucarne } from "lucarne";
+import { chromium } from "playwright-core";
 import { InteractSession } from "../dist/index.js";
 import http from "node:http";
 import fs from "node:fs";
@@ -39,6 +40,18 @@ const HOME_HTML = `<!doctype html><html><body>
   <video id="v" src="/sample.mp4" muted playsinline width="64" height="64"></video>
 </body></html>`;
 const NEXT_HTML = `<!doctype html><html><body><h1 id="hdr">Next Page</h1></body></html>`;
+// A form whose submit is instrumented: if Enter/submit ever fires, window.__submitted flips true
+// (preventDefault keeps the page put so the input stays inspectable). The input is autofocused so
+// type() lands text without any click/activate (which would press Enter and defeat the "no submit"
+// assertion). This is how the acceptance proves `type` STAGES ONLY.
+const FORM_HTML = `<!doctype html><html><body>
+  <h1 id="hdr">Form Page</h1>
+  <form id="f" onsubmit="window.__submitted=true;return false;">
+    <input id="inp" name="q" autofocus>
+    <button id="go" type="submit">go</button>
+  </form>
+  <script>window.__submitted=false;</script>
+</body></html>`;
 
 const server = http.createServer((req, res) => {
   if (req.url === "/" || req.url === "/index.html") {
@@ -47,6 +60,9 @@ const server = http.createServer((req, res) => {
   } else if (req.url === "/next") {
     res.writeHead(200, { "content-type": "text/html" });
     res.end(NEXT_HTML);
+  } else if (req.url === "/form") {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(FORM_HTML);
   } else if (req.url === "/sample.mp4" && haveSampleVideo) {
     res.writeHead(200, { "content-type": "video/mp4" });
     res.end(fs.readFileSync(SAMPLE_MP4));
@@ -128,8 +144,53 @@ try {
     check("video.* proofs skipped: local ffmpeg could not generate the fixture mp4 (environment issue, not a product defect)", false, gen.stderr?.slice(-300));
   }
 
+  // 7b. type() — humanized typing STAGES text into a real input and NEVER presses Enter (LS-10).
+  //     An independent read-only playwright connection is the ground-truth observer (input.value +
+  //     the form's __submitted flag) — the test harness inspecting reality, not the product's API.
+  {
+    const insp = await chromium.connectOverCDP(session.cdpUrl);
+    const inspCtx = insp.contexts()[0];
+    const inspPage = inspCtx.pages()[0];
+    try {
+      await s.open(BASE + "/form");
+      await inspPage.waitForSelector("#inp");
+      await inspPage.locator("#inp").focus(); // deterministic focus setup (autofocus backstop)
+
+      // (i) a full type() lands the exact text and fires NO submit.
+      const draft = "hello world from the human paced typist";
+      const typeRes = await s.type(draft);
+      const landed = await inspPage.locator("#inp").inputValue();
+      const submittedAfterType = await inspPage.evaluate(() => window.__submitted);
+      check("type(): the exact staged text landed in the focused input", landed === draft, JSON.stringify(landed));
+      check("type(): typed all chars, did not yield (no human present)", typeRes.yielded === false && typeRes.typed === [...draft].length);
+      check("type(): STAGES ONLY — the form was NOT submitted (no Enter pressed)", submittedAfterType === false);
+
+      // (ii) a simulated human mid-type ABORTS with { yielded:true } (PREFERRED activity path). The
+      //      InteractSession is given an `activity` accessor that reports a fresh human action once
+      //      typing is underway — the real page keystrokes stop partway; the input holds only the
+      //      partial text; still no submit.
+      await inspPage.locator("#inp").fill("");
+      await inspPage.locator("#inp").focus();
+      let probeCalls = 0;
+      const yielding = new InteractSession(
+        { cdpUrl: session.cdpUrl, activity: async () => ({ now: { lastHumanActionMsAgo: ++probeCalls >= 2 ? 120 : 9000 } }) },
+        { pacing: FAST_PACING },
+      );
+      const yieldRes = await yielding.type("this draft should never be fully typed because a human grabs the keyboard", { yieldCheckEvery: 4 });
+      const partial = await inspPage.locator("#inp").inputValue();
+      const submittedAfterYield = await inspPage.evaluate(() => window.__submitted);
+      check("type(): a simulated human mid-type yields ({ yielded:true })", yieldRes.yielded === true, JSON.stringify(yieldRes));
+      check("type(): yielded before finishing (input holds only the partial text)", partial.length === yieldRes.typed && yieldRes.typed < yieldRes.chars, `partial=${partial.length} typed=${yieldRes.typed}/${yieldRes.chars}`);
+      check("type(): STILL no submit on the yield path", submittedAfterYield === false);
+      await yielding.close();
+    } finally {
+      await insp.close().catch(() => {});
+    }
+  }
+
   // 8. the tier property holds on a REAL, connected instance too (not just the offline unit proof)
   check("a live InteractSession still has no click/goto/eval members", s.click === undefined && s.goto === undefined && s.eval === undefined && s.video.click === undefined);
+  check("a live InteractSession has NO 'send' member yet (LS-11)", s.send === undefined);
 
   // 9. pacing was actually ENFORCED live: every verb paid >= its configured floor, and events fired for each
   const kindByVerb = { open: "nav", snap: "read", scroll: "scroll", activate: "nav", back: "nav", capture: "read", "video.storyboard": "read", "video.clip": "read", "video.captions": "read" };

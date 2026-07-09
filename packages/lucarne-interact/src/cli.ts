@@ -3,6 +3,7 @@
 // The anti-bot tier property is enforced here too: click/goto/eval are refused BEFORE a
 // session is even constructed (they are not verbs — see session.ts's closing comment).
 import { InteractSession } from "./session.js";
+import { typingStats } from "./typing.js";
 
 // Bot-like actions that are not, and will never be, verbs on InteractSession (browser.ts:539-540).
 export const BANNED_VERBS = new Set(["click", "goto", "go", "eval"]);
@@ -18,6 +19,8 @@ Verbs:
   activate <selector>                     keyboard-first activation (focus + Enter)
   back                                    in-app Back control, else browser history
   capture <selector> <outPath>            element screenshot via CDP (invisible to the page)
+  type <text...>                          humanized keystrokes — STAGES only, never presses Enter
+  typing-stats <text...>                  offline timing-model stats for text (no browser needed)
   video-storyboard <selector> <outDir> [frames]   keyframe storyboard across the video's own duration
   video-clip <selector> <outPath>         record a video to completion (hard cap) -> mp4
   video-captions <selector>               read a video's caption transcript (the speech channel)
@@ -52,6 +55,12 @@ async function main(): Promise<void> {
     );
   }
 
+  // Offline — no browser needed, so this never touches (or requires a real) cdpUrl.
+  if (verb === "typing-stats") {
+    console.log(JSON.stringify(typingStats(rest.join(" ") || die("usage: typing-stats <text>"))));
+    return;
+  }
+
   const session = new InteractSession(cdpUrl);
   if (process.env.LUCARNE_INTERACT_DEBUG) {
     session.on("action", (e) => console.error("[action]", JSON.stringify(e)));
@@ -73,6 +82,9 @@ async function main(): Promise<void> {
         break;
       case "back":
         console.log(JSON.stringify(await session.back()));
+        break;
+      case "type":
+        console.log(JSON.stringify(await session.type(rest.join(" ") || die("usage: type <text...>"))));
         break;
       case "capture":
         console.log(
