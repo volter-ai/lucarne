@@ -21,7 +21,10 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const BANNED = [/cadence/, /__cadence/, /\.social/];
+// CASE-INSENSITIVE on the cadence tokens so a capitalized residual ("Cadence", "CADENCE-…") is
+// caught too, not just lowercase `cadence`. `.social` stays case-sensitive (it's a literal path
+// fragment, never capitalized).
+const BANNED = [/cadence/i, /__cadence/i, /\.social/];
 
 function walk(dir) {
   const out = [];
