@@ -40,7 +40,7 @@
     "build": "tsc -b",
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/unit-to-record.mjs"
+    "test": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/unit-to-record.mjs && node test/sites-x-aria.mjs && node test/sites-x-graphql.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
