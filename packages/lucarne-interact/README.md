@@ -11,11 +11,13 @@ from a normal distribution. If a bot-like action isn't a verb here, it
 mouse), no `goto`/`go` (deep-linking), and no `eval` (arbitrary code) on
 `InteractSession`.
 
-This is the **LS-09 scaffold**: the ACT verbs, enforced pacing, and the
-shared video assembler. Humanized typing (LS-10), the gated `send` mechanism
-(LS-11), the presence contract (LS-12), and recall — the OBSERVE half, at the
-`lucarne-interact/recall` subpath (LS-13/13W/14) — land in later issues on
-top of this scaffold.
+LS-09 scaffolded the ACT verbs, enforced pacing, and the shared video
+assembler. **LS-10 adds humanized typing**: `type(text)` stages text via a
+per-keystroke bigram/log-normal timing model (never presses Enter — that's
+the gated `send`, LS-11) and yields the keyboard the instant a live human
+appears to type. The gated `send` mechanism (LS-11), the presence contract
+(LS-12), and recall — the OBSERVE half, at the `lucarne-interact/recall`
+subpath (LS-13/13W/14) — land in later issues on top of this scaffold.
 
 ## Install
 
@@ -63,13 +65,68 @@ await session.close();
 | `activate(selector)` | `browser.ts:536-537` | keyboard-first activation: focus + Enter, no mouse |
 | `back({ inAppSelectors? })` | `browser.ts:270-274` | in-app Back control, else browser history |
 | `capture(selector, outPath)` | `browser.ts:287-292` | element-scoped screenshot via CDP, invisible to the page |
+| `type(text, opts?)` | `browser.ts:184-195` | humanized per-keystroke typing into the focused field — **stages only, never Enter**; yields to a live human |
 | `video.storyboard(selector, { outDir, frames? })` | `browser.ts:294-317` | keyframes across the video's own duration (a fallback view) |
 | `video.clip(selector, outPath)` | `browser.ts:333-379` | record a video to completion (hard-capped), assembled to mp4 |
 | `video.captions(selector)` | `browser.ts:394-401` | read the caption transcript from DOM cues (the speech channel) |
 
 Every verb call emits one `action` event and pays one enforced pace — success
-or failure. There is no `type`/`send` yet (LS-10/LS-11); typing/sending are
-out of scope for this issue.
+or failure. There is no `send` yet (LS-11); *sending* an approved, staged draft
+(the gated Enter/submit gesture) is out of scope for this issue.
+
+## Humanized typing (`type`) + yield-to-human
+
+`type(text)` enters text into whatever is focused using a per-keystroke timing
+model (ported from cadence's `typeHuman`/`keyDelay`, `browser.ts:132-195`):
+inter-keystroke intervals depend on the **bigram class** (same-finger keys are
+slowest, same-hand medium, alternating-hand fastest), sampled **log-normal**
+(right-skewed, like real typing), with **cognitive pauses** at sentence and
+word boundaries. The point isn't to forge human-ness — it's to *not* do the
+unnatural instant-paste thing.
+
+```ts
+const r = await session.type("hello world");   // { chars, typed, yielded }
+// r.yielded === true  → a live human started typing; we ABORTED (typed r.typed of r.chars)
+```
+
+**`type` STAGES ONLY — it never presses Enter or submits.** Sending an approved
+draft (the gated Enter/submit gesture) is the separate `send` verb (LS-11);
+`type` runs no key other than the characters of `text` (`page.keyboard.type`,
+which types printable characters and never dispatches Enter/submit).
+
+**Yield-to-human.** While typing, `type` probes every ~12 characters for a live
+human at the keyboard and, if one is detected within the threshold (~1500ms),
+returns `{ yielded: true }` without finishing. Two probe paths, tried in order:
+
+1. **PREFERRED — lucarne's actor-tagged activity** (`now.lastHumanActionMsAgo`).
+   Attributed at the source (porthole = human, `act()`/CDP-driver = agent), so
+   it can never mistake our own keystrokes for a human's. Duck-typed (no
+   `lucarne` import): pass an accessor via the option `activity`, or on the
+   `{ cdpUrl, activity }` constructor object:
+
+   ```ts
+   new InteractSession({ cdpUrl, activity: () => client.activity(session.id) });
+   // or: new InteractSession(cdpUrl, { activity: () => client.activity(id) });
+   ```
+
+2. **FALLBACK — the in-page `window.__lastInputAt` probe** (`browser.ts:186-190`),
+   used automatically when no `activity` accessor is available. `type` installs
+   a capture-phase input listener that stamps `window.__lastInputAt`, and
+   disqualifies the echo of its *own* CDP-dispatched keystrokes (a page-level
+   timestamp only counts as a human if it is newer than our last keystroke) —
+   otherwise the probe would yield to itself.
+
+### Offline timing stats
+
+`typingStats(text)` is a **pure** function (no browser) returning the model's
+stats for a string — handy for validating the cadence stays human without
+driving Chrome:
+
+```ts
+import { typingStats } from "lucarne-interact";
+typingStats("the quick brown fox");
+// { chars, seconds, wpm, median_ms, p10_ms, p90_ms, max_ms }
+```
 
 ## Enforced pacing
 
