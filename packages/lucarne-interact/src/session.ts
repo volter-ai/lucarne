@@ -70,9 +70,11 @@ export interface BackOptions {
 export interface BackResult {
   via: "in-app" | "history";
   /**
-   * Only meaningful on the "history" path: `false` when `page.goBack()` reported there was no
-   * history entry to return to (Playwright resolves with `null` in that case, per its docs) — a
-   * legitimate no-op, not an error. `true` once the back navigation actually committed.
+   * Only meaningful on the "history" path: derived from a URL comparison (before vs. after
+   * `page.goBack()`), NOT from `goBack`'s return value — Playwright's `goBack` resolves a `null`
+   * Response on a bfcache restore even though the navigation DID happen, so `nav !== null` is the
+   * wrong signal. `false` when the URL is unchanged (a legitimate no-op: no history entry to go
+   * back to), `true` once the URL actually changed (the back navigation committed).
    */
   navigated?: boolean;
 }
@@ -356,11 +358,17 @@ export class InteractSession extends EventEmitter {
       // though back-navigation fully succeeded (the real-Chrome CI failure this fixes). `'commit'`
       // resolves as soon as the navigation is committed — the only thing this verb needs to know
       // back actually happened — so it is robust to the missing refire.
-      const nav = await p.goBack({ timeout: 8000, waitUntil: "commit" });
-      // `goBack` resolves `null` specifically when there was no previous history entry to go back
-      // to (nothing to navigate) — report that as a legitimate no-op rather than letting callers
-      // mistake it for a failed/hung navigation.
-      return { via: "history" as const, navigated: nav !== null };
+      //
+      // `navigated` is derived from the URL, NOT from goBack's return value: Playwright's `goBack`
+      // resolves a `null` Response on a bfcache restore even though the navigation DID happen (the
+      // restored document is served from the bfcache rather than a fresh network response, so
+      // there's no Response object to report) — `nav !== null` was the WRONG signal and reported
+      // `navigated: false` on exactly the fast, common case this fix targets (the real-Chrome CI
+      // failure this fixes). A genuine no-op (no history entry to go back to) leaves the URL
+      // unchanged; a real back navigation — bfcache-restored or not — always changes it.
+      const urlBefore = p.url();
+      await p.goBack({ timeout: 8000, waitUntil: "commit" });
+      return { via: "history" as const, navigated: p.url() !== urlBefore };
     });
   }
 
