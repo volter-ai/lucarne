@@ -68,6 +68,12 @@ export interface BackOptions {
 
 export interface BackResult {
   via: "in-app" | "history";
+  /**
+   * Only meaningful on the "history" path: `false` when `page.goBack()` reported there was no
+   * history entry to return to (Playwright resolves with `null` in that case, per its docs) — a
+   * legitimate no-op, not an error. `true` once the back navigation actually committed.
+   */
+  navigated?: boolean;
 }
 
 export interface CaptureResult {
@@ -293,8 +299,19 @@ export class InteractSession extends EventEmitter {
         }
         return { via: "in-app" as const };
       }
-      await p.goBack({ timeout: 8000 });
-      return { via: "history" as const };
+      // History fallback. Playwright's DEFAULT `waitUntil` for `goBack` is `'load'`, which does
+      // NOT reliably refire on a back navigation — especially back to a bfcache'd / already-loaded
+      // page, where the browser restores the page without a fresh `load` event. The navigation
+      // itself commits (the URL/history entry changes) in well under a second, but `goBack` would
+      // hang waiting for a `load` event that never comes, and eventually throw `TimeoutError` even
+      // though back-navigation fully succeeded (the real-Chrome CI failure this fixes). `'commit'`
+      // resolves as soon as the navigation is committed — the only thing this verb needs to know
+      // back actually happened — so it is robust to the missing refire.
+      const nav = await p.goBack({ timeout: 8000, waitUntil: "commit" });
+      // `goBack` resolves `null` specifically when there was no previous history entry to go back
+      // to (nothing to navigate) — report that as a legitimate no-op rather than letting callers
+      // mistake it for a failed/hung navigation.
+      return { via: "history" as const, navigated: nav !== null };
     });
   }
 
