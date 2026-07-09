@@ -15,6 +15,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # No-Chrome-needed unit tests (store/policy/registry-round-trip logic) —
+      # cheap enough to run on every push, unlike the Chrome-gated acceptance job.
+      - run: npm run test:unit
 
   acceptance:
     # The crown jewel: run the real acceptance proofs against real Chrome.

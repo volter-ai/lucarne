@@ -43,6 +43,10 @@ export const openApiSpec = {
       delete: { summary: "Delete a per-session workspace file", responses: { "200": { description: "{ok}" } } },
     },
     "/sessions/{id}/login": { post: { summary: "Auto-inject a stored credential", responses: { "200": { description: "{filled}" } } } },
+    "/sessions/{id}/inject": {
+      get: { summary: "List sticky script-injection ids (survives reload/new tab/daemon restart)", responses: { "200": { description: "{ids}" } } },
+      post: { summary: "Register/replace ({id,source,bypassCSP?}) or remove ({id,remove:true}) a sticky script injection", responses: { "200": { description: "{ok,id|removed}" }, "400": { description: "missing id, or rejected by injectPolicy" } } },
+    },
     "/sessions/{id}/replay": { get: { summary: "Recording replay player (HTML)", responses: { "200": { description: "text/html" } } } },
     "/sessions/{id}/view": { get: { summary: "Porthole (watch + control); ?interactable=0 read-only, ?controls=1 URL bar", responses: { "200": { description: "text/html" } } } },
     "/sessions/{id}/files": { get: { summary: "List per-session scratch workspace files", responses: { "200": { description: "string[]" } } } },

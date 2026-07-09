@@ -1,6 +1,6 @@
 {
   "name": "lucarne",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
   "type": "module",
   "license": "MIT",
@@ -57,6 +57,7 @@
     "test": "npm run build && node test/acceptance.mjs",
     "test:acceptance": "node test/acceptance.mjs",
     "test:docker": "node test/docker-smoke.mjs",
+    "test:unit": "node test/inject-unit.mjs",
     "prepack": "rm -rf clients examples LICENSE README.md && cp -R ../../clients clients && cp -R ../../examples examples && cp ../../LICENSE LICENSE && cp ../../README.md README.md",
     "postpack": "rm -rf clients examples LICENSE README.md && ln -s ../../clients clients && ln -s ../../examples examples && ln -s ../../LICENSE LICENSE && ln -s ../../README.md README.md"
   },

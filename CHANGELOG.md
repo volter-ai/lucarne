@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.6.0]
+
+New capability: sticky script injection (`/inject`), the engine-side piece cadence's
+in-page widget mounts through — ported from cadence's Playwright-based eval-server
+sticky store onto the engine's own raw CDP client, so the engine stays Playwright-free.
+
+### Added
+- **`POST/GET /sessions/:id/inject`** — register/replace (`{id, source, bypassCSP?}`) or
+  remove (`{id, remove:true}`) a *sticky* script injection: applied to the session's
+  already-open pages immediately, re-applied on every reload
+  (`Page.addScriptToEvaluateOnNewDocument`), and covering NEWLY OPENED tabs via raw CDP
+  target discovery (`Target.setDiscoverTargets`/`Target.targetCreated`) — no Playwright
+  `BrowserContext` page event is available or used. `bypassCSP:true` holds a LIVE
+  per-page CDP session for as long as the page is open (`Page.setBypassCSP` is bound to
+  the session's lifetime, not the page's). The injection set is persisted into the
+  session spec (`LUCARNE_HOME/sessions.json`, additive `inject` field on
+  `CreateSessionOptions`) so a daemon restart re-applies everything for a durable
+  session. `GET` returns the currently-registered (and policy-accepted) ids.
+- **`injectPolicy(id) => boolean`** engine option — accept/reject a sticky-injection id;
+  default is permissive (every id accepted). A rejected id makes `POST /inject` return
+  4xx and `GET /inject` never lists it. The hook only decides accept/reject — content
+  doctrine (e.g. a shell-only allow-list) is the embedder's policy, not the engine's.
+  `LucarneClient` gains `injections()`/`setInjection()`/`removeInjection()`.
+
 ## [1.5.2]
 
 Repo-shape-only change: the engine moved into an npm-workspaces monorepo. No engine

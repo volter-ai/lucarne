@@ -1369,6 +1369,83 @@ if (process.env.LUCARNE_TEST_HEADED === "1") {
   console.log("  SKIP  headed: native headful path (set LUCARNE_TEST_HEADED=1 to verify)");
 }
 
+// ── STICKY INJECTION (LS-02): a registered script survives (a) a page reload,
+// (b) a NEWLY OPENED tab (raw CDP target discovery — the engine has no
+// Playwright `BrowserContext.on('page')`), and (c) a full engine daemon restart
+// (the durable session's persisted spec carries the injection; `restore()`
+// re-applies it). This is the one CHROME-REQUIRED half of LS-02's proof — the
+// non-browser half (store/policy/registry-round-trip logic) lives in the
+// separate, no-Chrome-needed `test/inject-unit.mjs` (run via `node
+// test/inject-unit.mjs`, no build-time Chrome dependency).
+{
+  const INJHOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-inject-"));
+  const injRegistry = path.join(INJHOME, "sessions.json");
+  const MARKER = "lucarne-inject-" + ID;
+  const markerSource = `document.documentElement.setAttribute('data-lucarne-inject', ${JSON.stringify(MARKER)});`;
+  const readMarker = async (cdp) => (await cdp.call("Runtime.evaluate", { expression: "document.documentElement.getAttribute('data-lucarne-inject')", returnByValue: true })).result?.value ?? null;
+  try {
+    const injEngine = new Lucarne({ port: 7940, token: TOKEN, record: false, registryFile: injRegistry });
+    await injEngine.listen();
+    try {
+      const s = await injEngine.create({ backend: "native", profile: "inj" });
+      await injEngine.setInjection(s.id, { id: "marker", source: markerSource });
+      check("inject: GET lists the registered id", (await injEngine.injectionIds(s.id)).includes("marker"));
+
+      const c1 = await attachPage(s.cdpUrl);
+      c1.send("Page.navigate", { url: "https://example.com" });
+      await sleep(1500);
+      check("inject: applied into the already-open page (eval, not just future reloads)", (await readMarker(c1)) === MARKER);
+
+      // (a) SURVIVES A RELOAD — addScriptToEvaluateOnNewDocument re-runs it
+      c1.send("Page.reload", {});
+      await sleep(1500);
+      check("inject(a): survives a page reload", (await readMarker(c1)) === MARKER);
+      c1.close();
+
+      // (b) COVERS A NEWLY OPENED TAB — via raw CDP Target.setDiscoverTargets/targetCreated,
+      // NOT a Playwright `context.on('page')` (the engine has no Playwright).
+      const b = await attachBrowser(s.cdpUrl);
+      const { targetId } = await b.call("Target.createTarget", { url: "https://example.com" });
+      await sleep(1800); // let target discovery see it, apply the script, and the page load
+      const c2 = await attachPage(s.cdpUrl, targetId);
+      check("inject(b): covers a NEWLY OPENED tab (raw CDP target discovery)", (await readMarker(c2)) === MARKER);
+      c2.close(); b.close();
+    } finally {
+      await injEngine.close().catch(() => {}); // graceful stop — KEEPS the persisted spec (not destroy)
+    }
+
+    // (c) SURVIVES A FULL ENGINE DAEMON RESTART — a fresh Lucarne process, same
+    // registryFile, `restore()`s the durable session and re-applies its injection.
+    const injEngine2 = new Lucarne({ port: 7941, token: TOKEN, record: false, registryFile: injRegistry });
+    await injEngine2.listen();
+    try {
+      const restored = await injEngine2.restore();
+      check("inject(c): durable session restored after daemon restart", restored.includes("inj"));
+      const back = injEngine2.get("inj");
+      if (back) {
+        const c3 = await attachPage(back.cdpUrl);
+        // The restored process re-applies immediately (eval into whatever page is open)...
+        check("inject(c): marker present immediately on the restored session's page", (await readMarker(c3)) === MARKER);
+        // ...AND addScriptToEvaluateOnNewDocument was re-registered from the restored
+        // spec (not just a one-off eval) — prove it survives a FRESH navigation too.
+        c3.send("Page.navigate", { url: "https://example.com" });
+        await sleep(1500);
+        check("inject(c): the injected script survives a full engine daemon restart (re-applied on the restored session + re-registered for future nav)", (await readMarker(c3)) === MARKER);
+        c3.close();
+      } else {
+        check("inject(c): marker present immediately on the restored session's page", false);
+        check("inject(c): the injected script survives a full engine daemon restart (re-applied on the restored session + re-registered for future nav)", false);
+      }
+      check("inject: GET still lists the id after restart (persisted + re-applied)", (await injEngine2.injectionIds("inj")).includes("marker"));
+    } finally {
+      await injEngine2.destroy("inj").catch(() => {});
+      await injEngine2.close().catch(() => {});
+    }
+  } finally {
+    fs.rmSync(INJHOME, { recursive: true, force: true });
+  }
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(`\n${results.length - failed}/${results.length} acceptance proofs passed`);
 process.exit(failed ? 1 : 0);
