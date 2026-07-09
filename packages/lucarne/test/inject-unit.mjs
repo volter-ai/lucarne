@@ -18,6 +18,7 @@ import { InjectionStore } from "../dist/inject.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -57,6 +58,33 @@ const fakeSession = (inject) => ({ inject, media: { close() {} }, stop: async ()
   check("store: remove() drops just that id", store.ids().length === 1 && store.ids()[0] === "other");
   await store.remove("does-not-exist");
   check("store: remove() of an absent id is a no-op (idempotent, doesn't throw)", store.ids().length === 1);
+}
+
+// ── request-path apply SURFACES a hard failure (regression guard) ────────────
+// The CI-only browser bug this branch fixes had a sibling risk: a page we KNOW is
+// open but can't attach to must not be silently swallowed — the first apply is
+// awaited and surfaces, so `POST /inject` can't 200 while applying to nothing.
+// Fake CDP: /json lists one open page target whose debugger socket is dead, so
+// attachPage throws → `set()` must REJECT (not resolve). No real Chrome, no hang.
+{
+  const server = http.createServer((req, res) => {
+    if (req.url === "/json/version") { res.end(JSON.stringify({})); return; }         // no browser ws → the discovery tap fails fast (swallowed by start())
+    if (req.url === "/json") {                                                        // listPages → one open page whose debugger ws is dead
+      res.end(JSON.stringify([{ id: "T1", type: "page", url: "about:blank", title: "", webSocketDebuggerUrl: `ws://${req.headers.host}/devtools/page/T1` }]));
+      return;
+    }
+    res.statusCode = 404; res.end();
+  });
+  server.on("upgrade", (_req, socket) => socket.destroy());                           // any CDP page-socket attach fails immediately (no hang)
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const store = new InjectionStore(`http://127.0.0.1:${port}`);
+  let threw = null;
+  try { await store.set("shell", "1+1"); } catch (e) { threw = e; }
+  check("request-path: a hard apply failure (open page, dead debugger socket) SURFACES from set()", threw instanceof Error, threw ? String(threw.message).slice(0, 60) : "did not throw");
+  check("request-path: the id is still recorded (best-effort desired state) despite the surfaced apply error", store.snapshot().shell?.source === "1+1");
+  store.close();
+  server.close();
 }
 
 // ── dev/02: injectPolicy hook — default permissive ───────────────────────────

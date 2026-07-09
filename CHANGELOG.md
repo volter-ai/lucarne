@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.6.1]
+
+### Fixed
+- **Sticky injections now reliably run on reloads and navigations.**
+  `Page.addScriptToEvaluateOnNewDocument` fires at document-START — before
+  `document.documentElement` exists — so a DOM-touching injected source would throw
+  and no-op on each fresh document (it only appeared to work on the current, already-
+  loaded document via the immediate eval). The store now ALSO re-evaluates every source
+  on the page's `load` event (DOM present), so an injection genuinely survives a reload,
+  a navigation, a newly opened tab, and a daemon restart. The request-triggered first
+  apply is awaited and now SURFACES a hard failure (a known-open page the store can't
+  attach to) instead of swallowing it, so `POST /inject` can't 200 while applying to
+  nothing; async discovery of pages opened later stays best-effort.
+
 ## [1.6.0]
 
 New capability: sticky script injection (`/inject`), the engine-side piece cadence's
