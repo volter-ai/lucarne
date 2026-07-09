@@ -142,6 +142,13 @@ export async function runWidgetSelftest(cdpUrl: string, ns: string, host: Selfte
     const page = await ctx.newPage();
     try {
       await runChecks(page, HOST, host, fixtures, record);
+      record("selftest checks ran to completion (no mid-run harness fault)", true);
+    } catch (e) {
+      // A mid-check fault (a `page.goto`/`host.push`/`page.evaluate` hiccup) must NOT propagate out and make
+      // `WidgetHost.selftest()` throw — the contract is "always returns the structured result." Append it as a
+      // failed check so whichever assertions DID run are still reported alongside it, then fall through to the
+      // `finally` teardown below (page.close + browser.close still run on this path).
+      record("selftest checks ran to completion (no mid-run harness fault)", false, (e as Error)?.message ?? String(e));
     } finally {
       try {
         await page.close({ runBeforeUnload: false });
@@ -294,25 +301,39 @@ async function runChecks(
     JSON.stringify({ reloadSnap, hasMarker: !!reloadText && reloadText.includes(fixtures.marker) }),
   );
 
-  // ── 5. RESPONSIVE — the page never froze/flooded (every eval sampled above stayed fast), and the host adapts
-  // to a genuinely-changed viewport (still fully on-screen at its own bottom-right anchor). ──
+  // ── 5. RESPONSIVE — the page never froze/flooded (every eval sampled above stayed fast), and the host truly
+  // ADAPTS to a genuinely-changed viewport: it must both (a) actually REPOSITION (a bottom-right-anchored host's
+  // client rect moves when the viewport shrinks — this is what catches a broken resize/anchor relay, which a
+  // mere "still on-screen" bounds check would pass for free on any position:fixed element) AND (b) stay fully
+  // on-screen after the change. The viewport delta is deliberately large (>=200px each axis) so a
+  // bottom-right-anchored host is forced to move by well more than any sub-pixel rounding noise. ──
   const notFrozen = maxMs < 1500;
-  let adaptsToViewport = false;
+  let repositioned = false;
+  let onScreen = false;
   let viewportDetail = "";
   try {
     const before = await page.viewportSize();
-    const target = { width: Math.max(320, (before?.width ?? 1280) - 220), height: Math.max(320, (before?.height ?? 800) - 160) };
+    const beforeSnap = await domSnapshot(page, HOST);
+    const target = { width: Math.max(320, (before?.width ?? 1280) - 260), height: Math.max(320, (before?.height ?? 800) - 200) };
     await page.setViewportSize(target);
-    await sleep(250);
+    await sleep(300);
     const afterSnap = await domSnapshot(page, HOST);
-    adaptsToViewport = !!afterSnap.rect && afterSnap.rect.right <= target.width + 1 && afterSnap.rect.bottom <= target.height + 1;
-    viewportDetail = `target=${JSON.stringify(target)} rect=${JSON.stringify(afterSnap.rect)}`;
+    const b = beforeSnap.rect;
+    const a = afterSnap.rect;
+    // MOVED: at least one edge shifted by a meaningful amount (guard against a stuck/absolute host that ignores
+    // the viewport entirely). A bottom-right-anchored host shifts its right+bottom by ~the viewport delta.
+    const MOVE_MIN = 20;
+    repositioned = !!a && !!b && (Math.abs(a.right - b.right) >= MOVE_MIN || Math.abs(a.bottom - b.bottom) >= MOVE_MIN || Math.abs(a.left - b.left) >= MOVE_MIN || Math.abs(a.top - b.top) >= MOVE_MIN);
+    // STILL ON-SCREEN: the whole host fits inside the new viewport (a 1px tolerance for rounding).
+    onScreen = !!a && a.right <= target.width + 1 && a.bottom <= target.height + 1 && a.left >= -1 && a.top >= -1;
+    viewportDetail = `target=${JSON.stringify(target)} before=${JSON.stringify(b)} after=${JSON.stringify(a)}`;
   } catch (e) {
     viewportDetail = (e as Error)?.message ?? String(e);
   }
+  const adaptsToViewport = repositioned && onScreen;
   record(
-    "responsive: no layout-thrash flood (eval stayed fast) and the host adapts to a changed viewport",
+    "responsive: no layout-thrash flood (eval stayed fast) and the host repositions + stays on-screen on a changed viewport",
     notFrozen && adaptsToViewport,
-    `maxMs=${maxMs} notFrozen=${notFrozen} adaptsToViewport=${adaptsToViewport} ${viewportDetail}`,
+    `maxMs=${maxMs} notFrozen=${notFrozen} repositioned=${repositioned} onScreen=${onScreen} ${viewportDetail}`,
   );
 }

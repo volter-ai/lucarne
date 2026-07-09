@@ -1,11 +1,11 @@
 // LS-16 dev/01 fixture — the NEUTRAL widget bundle `WidgetHost.selftest` (src/host.ts) drives as ITS OWN
 // committed acceptance proof (test/widget-selftest-acceptance.mjs). Two generic panels ("items"/"log") + a
 // pill, built with this package's own framework-free iframe runtime (`createWidget`, src/runtime.ts) — zero
-// app-specific content of any kind, purely generic panel/pill/list vocabulary. Because it only ever uses the
-// SHELL's own generic classes (`.pill`/`.panel`, from src/shell-css.ts) and never a fixture-specific selector,
-// `selftest()` opens/reads it the exact same way it would open/read ANY OTHER consumer's bundle built the same
-// way (e.g. a downstream consumer's own, LS-20) — this fixture proves the harness works, it does not
-// special-case it.
+// app-specific content of any kind, purely generic panel/pill/list vocabulary. Because the harness only ever
+// drives it through the SHELL's own generic `.pill` control (from src/shell-css.ts) plus the host element id,
+// the iframe, and a marker string — never a fixture-specific selector — `selftest()` opens/reads it the exact
+// same way it would open/read ANY OTHER consumer's bundle built the same way (e.g. a downstream consumer's own,
+// LS-20) — this fixture proves the harness works, it does not special-case it.
 import { createWidget } from "../../src/runtime.js";
 
 // Substituted at bundle time via `buildSrcdoc`'s `define` option (see the acceptance script) — the iframe's
