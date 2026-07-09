@@ -10,9 +10,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "docker/**"
-      - "src/backends/docker.ts"
-      - "test/docker-smoke.mjs"
+      - "packages/lucarne/docker/**"
+      - "packages/lucarne/src/backends/docker.ts"
+      - "packages/lucarne/test/docker-smoke.mjs"
       - ".github/workflows/docker.yml"
 
 jobs:
@@ -28,4 +28,4 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run build:image
-      - run: node test/docker-smoke.mjs
+      - run: npm run test:docker

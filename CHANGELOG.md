@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.5.2]
+
+Repo-shape-only change: the engine moved into an npm-workspaces monorepo. No engine
+behavior, public API, or SemVer promise changes.
+
+### Changed
+- **The repo is now an npm-workspaces monorepo.** The engine (`src`, `test`, `docker`,
+  its `package.json`) moved to `packages/lucarne` (`git mv`, history preserved). The
+  root is a private workspaces package (`workspaces: ["packages/*"]`) with a shared
+  `tsconfig.base.json`; `clients/python`, `examples/`, `standards/`, `scheduler/`,
+  `.claude/`, and the top-level docs stay at the repo root. `packages/lucarne/{clients,
+  examples,LICENSE,README.md}` are symlinks to the root originals so `npm pack` ships
+  the identical file list it always did (README, LICENSE, `dist`, `docker`, the Python
+  client, the examples, both bins). Root `npm test`/`npm run build` fan out to
+  workspaces (`--workspaces --if-present`).
+
 ## [1.4.1]
 
 A **third** adversarial review round (6 skeptics aimed at the 1.4.0 diff — "a hardening
