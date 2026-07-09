@@ -37,7 +37,7 @@ export interface SendFlowOptions {
   gesture: SendGesture;
   policy: SendPolicy;
   approval: SendApproval;
-  /** Opaque bag passed through to `policy(text, ctx)` verbatim (e.g. cadence's platform/kind/candidate id). This package never reads or interprets it. */
+  /** Opaque bag passed through to `policy(text, ctx)` verbatim (e.g. the origin app's platform/kind/candidate id). This package never reads or interprets it. */
   ctx?: Record<string, unknown>;
 }
 

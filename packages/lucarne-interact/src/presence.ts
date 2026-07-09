@@ -3,7 +3,7 @@
 // OBSERVE half (recall, LS-13) reads that marker for actor attribution (`by: 'agent'|'human'`)
 // and active-tab tie-breaking.
 //
-// This REPLACES cadence's `p === page` eval-server coupling (`cadence/src/recall.ts:74-78,81-86,
+// This REPLACES the origin app's `p === page` eval-server coupling (`recall.ts:74-78,81-86,
 // 100`): the old code worked because the eval-server and recall ran INSIDE THE SAME playwright
 // connection, so a live `Page` object literally WAS (or wasn't) the driven page — `p === page`
 // was a legitimate identity check, and the "actor" stamp was just `driven ? 'agent' : 'human'`
@@ -42,7 +42,7 @@ export interface PresenceMarker {
  * acting (a human could since have taken that tab back). This is deliberately WIDER than typing's
  * yield threshold (1500ms, `browser.ts:189`): the enforced post-verb pace (`pacing.ts`) already
  * puts multi-second gaps BETWEEN legitimate agent actions, so a window narrower than the paced
- * action cadence would spuriously flip attribution to 'human' between the agent's own actions.
+ * action the origin app would spuriously flip attribution to 'human' between the agent's own actions.
  */
 export const DEFAULT_ATTRIBUTION_STALE_MS = 8000;
 
@@ -125,7 +125,7 @@ export function presenceTieBreakBonus(
 // LS-10's `checkHumanYield`/`ActivityProbe` are now a thin public re-export — see yield.ts.)
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 //
-// `InteractSession#type` yields the keyboard the moment a live human starts typing (cadence's
+// `InteractSession#type` yields the keyboard the moment a live human starts typing (the origin app's
 // `typeHuman`, browser.ts:184-195: "yield if the human grabs the wheel mid-type"). There are TWO
 // possible sources for "is a human active right now", tried in order:
 //
@@ -137,7 +137,7 @@ export function presenceTieBreakBonus(
 //       lucarne session passes an `activity` accessor shaped like `LucarneClient#activity`/
 //       `Lucarne#activityNow`'s return value.
 //
-//   (b) FALLBACK — the in-page `window.__lastInputAt` probe (cadence's browser.ts:186-190). This is
+//   (b) FALLBACK — the in-page `window.__lastInputAt` probe (the origin app's browser.ts:186-190). This is
 //       weaker: CDP-dispatched keystrokes (what `type()` itself uses) are indistinguishable from a
 //       real human's at the DOM level (`isTrusted` is true for both), so a raw "ms since the page
 //       last saw ANY input" would immediately yield to ITSELF. `session.ts` compensates by also

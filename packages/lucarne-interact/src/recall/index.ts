@@ -1,6 +1,6 @@
 // startRecall — the OBSERVE half's SCREEN sensor (LS-13): a passive, read-only recorder of what's
 // on screen, running on its OWN `playwright-core` connection over a lucarne session's `cdpUrl`.
-// Rewritten from cadence's `recall.ts` `watch` command onto this package's presence contract
+// Rewritten from the origin app's `recall.ts` `watch` command onto this package's presence contract
 // (LS-12) and the shared video assembler (LS-09) — the retired arbitrary-code HTTP endpoint +
 // cross-eval `globalThis` state (`recall.ts:44-60`) is GONE; every piece of state below is
 // in-process.
@@ -37,7 +37,30 @@ export type {
   RecallToggles,
   RecallVideoStopReason,
 } from "./types.js";
-export { RecallStatusHolder, type RecallActivityState, type RecallObserveState, type RecallProgress, type RecallStatusSnapshot } from "./status.js";
+// The status contract (LS-14) — also re-exported at its own dedicated subpath, `lucarne-interact/status`
+// (package.json's `exports`), since `status.ts` is deliberately dependency-free/pure (see that file's
+// header) and a consumer (a widget bundle, a CLI) may want it WITHOUT pulling in the rest of `recall/`
+// (playwright-core, CDP, the wire sensor, …).
+export {
+  ACTIVITY,
+  DISPLAY,
+  OBSERVE,
+  RecallStatusHolder,
+  STALE_MS,
+  displayState,
+  heldMs,
+  type DisplayableStatus,
+  type DisplayResult,
+  type DisplayState,
+  type RecallActivityState,
+  type RecallObserveState,
+  type RecallProgress,
+  type RecallSignalLike,
+  type RecallStatusPatch,
+  type RecallStatusSnapshot,
+  type RecallWireStatus,
+} from "./status.js";
+export { cleanTitle, recallSummary, thumbDataUri, videoPoster, type RecallSummary, type RecallSummaryEntry, type RecallSummaryOptions } from "./summary.js";
 export { attributeActor, presenceTieBreakBonus } from "../presence.js";
 export type { PresenceMarker } from "../presence.js";
 export { classifyChange, pickBestTab } from "./tab-scoring.js";
@@ -65,7 +88,7 @@ export interface StartRecallOptions {
    *  operationName -> pure-parser dispatch, `wire.ts`). Pass `[]` to disable wire capture entirely
    *  while keeping the screen sensor. */
   wireAdapters?: readonly WireSiteAdapter[];
-  /** Consumer hooks fired for every capture/video/wire signal (cadence's intent-bus polling is NOT
+  /** Consumer hooks fired for every capture/video/wire signal (the origin app's intent-bus polling is NOT
    *  ported here — see this package's README; a caller wanting that reads its OWN page state). */
   observers?: readonly RecallObserverFn[];
   toggles?: RecallToggles;
@@ -104,9 +127,9 @@ interface PickedTabResult {
 }
 
 /**
- * Recall's active-tab selection (cadence's `SIG`, `recall.ts:62-101`), rewritten onto LS-12's
+ * Recall's active-tab selection (the origin app's `SIG`, `recall.ts:62-101`), rewritten onto LS-12's
  * presence contract: the `p === page` eval-server identity check becomes a `targetId` equality
- * check via `presenceTieBreakBonus`, and the FALLBACK (cadence's `recall.ts:81-86`, "no visible tab
+ * check via `presenceTieBreakBonus`, and the FALLBACK (the origin app's `recall.ts:81-86`, "no visible tab
  * scored — trust the one the eval-server is driving") becomes "trust the tab named by the
  * presence marker's `drivenTargetId`, if one exists and is still open" — the connection-independent
  * replacement `presence.ts`'s doc header describes.
@@ -136,7 +159,7 @@ async function pickActiveTab(conn: RecallConnection, presenceSnapshot: (() => Pr
   let target: Page | undefined = best && best.score >= ACTIVE_TAB_FALLBACK_THRESHOLD ? pageByIndex.get(best.index) : undefined;
 
   if (!target && marker) {
-    // FALLBACK — find the tab whose OWN targetId matches the marker's driven target (cadence's
+    // FALLBACK — find the tab whose OWN targetId matches the marker's driven target (the origin app's
     // `recall.ts:81-86` fallback, generalized: object identity → targetId equality).
     for (let i = 0; i < pages.length; i++) {
       const targetId = targetIdByIndex.get(i) ?? (await conn.targetIdFor(pages[i]!).catch(() => null));
@@ -192,7 +215,7 @@ async function captureWatchedVideo(
 /**
  * Start the SCREEN sensor: connect, sweep + reconcile, and run the capture-on-change / watched-
  * video loop until `stop()` is called. Self-heals — a single tick's error is logged into the
- * status snapshot's `observe` field and the loop keeps going (cadence's `recall.ts:313-317,407`
+ * status snapshot's `observe` field and the loop keeps going (the origin app's `recall.ts:313-317,407`
  * supervisor law: a transient fault must never kill the one sanctioned always-on process).
  */
 export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: StartRecallOptions): Promise<RecallHandle> {
@@ -219,7 +242,13 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
   status.publish({ activity: "starting" });
 
   const observers: RecallObserverFn[] = [...(opts.observers ?? [])];
+  // The ONE chokepoint every RecallSignal (capture/video/wire) flows through — `status.recordSignal`
+  // (LS-14) threads the wire sensor's capture counts/last-activity into the shared status snapshot
+  // HERE, since the wire sensor has no per-tick loop of its own to publish from (see status.ts's
+  // header). It runs BEFORE the consumer observers so a caller's own observer always sees a status
+  // snapshot already reflecting the signal it's about to receive.
   const emit = (signal: RecallSignal): void => {
+    status.recordSignal(signal);
     for (const observer of observers) {
       try {
         observer(signal);
@@ -275,7 +304,7 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
 
         // Video-watch is a BLOCKING branch (records to completion/cap). Skipped on a thread page
         // (`/status/<id>`) so a playing video there doesn't hijack recall from the comments —
-        // cadence's `recall.ts:368-373`.
+        // the origin app's `recall.ts:368-373`.
         const onThread = /\/status\/\d+/.test(sig.url || "");
         if (!onThread && sig.video && !sig.video.paused && sig.video.ct > 0.05) {
           const key = sig.url + "#" + Math.round(sig.video.dur || 0);
@@ -331,7 +360,7 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
         status.publish({ observe: "ok", activity: "idle" });
         await sleep(adaptivePaceMs(idle));
       } catch {
-        // SUPERVISOR (cadence's `recall.ts:313-317,407`): a transient fault (a flaky page read, a
+        // SUPERVISOR (the origin app's `recall.ts:313-317,407`): a transient fault (a flaky page read, a
         // screencast hiccup) must never kill the recorder — retry, never exit. Strictly read-only,
         // so "keep going" can never escalate into an account action.
         status.publish({ observe: "no_server" });

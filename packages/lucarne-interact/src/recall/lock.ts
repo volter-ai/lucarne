@@ -1,5 +1,5 @@
-// Singleton lock + orphan-frame-dir sweep + media reconcile — ported from cadence's
-// `recall.ts:252-287`. All three are `dataDir`-scoped filesystem operations (no cadence-specific
+// Singleton lock + orphan-frame-dir sweep + media reconcile — ported from the origin app's
+// `recall.ts:252-287`. All three are `dataDir`-scoped filesystem operations (no origin-app-specific
 // paths, no browser) so they run before recall ever opens a CDP connection, and are Chrome-free
 // unit-testable (test/recall-lock.mjs).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ const defaultIsAlive: IsAlive = (pid) => {
 /**
  * SINGLETON LOCK — refuse to start a second recall process against the same `dataDir` (would
  * duplicate captures + race the status heartbeat). A stale/dead pid in the lock file is taken over
- * silently (cadence's `recall.ts:256-263`).
+ * silently (the origin app's `recall.ts:256-263`).
  */
 export function acquireSingletonLock(lockPath: string, pid: number, isAlive: IsAlive = defaultIsAlive): LockResult {
   try {
@@ -49,7 +49,7 @@ export function acquireSingletonLock(lockPath: string, pid: number, isAlive: IsA
   try {
     writeFileSync(lockPath, String(pid));
   } catch {
-    /* best-effort — see cadence's own comment: claiming the lock is best-effort too */
+    /* best-effort — see the origin app's own comment: claiming the lock is best-effort too */
   }
   return { acquired: true };
 }
@@ -67,7 +67,7 @@ export function releaseSingletonLock(lockPath: string, pid: number): void {
  * ORPHANED FRAME-DIR SWEEP: `.vid-*` directories are transient screencast scratch — a finished
  * video becomes a `watched-*.mp4` and its frame dir is removed. If the process was killed
  * mid-video, the dir is left behind full of JPGs. Since the singleton lock is held before this
- * runs, no live recording owns any `.vid-*` dir, so any that exist are orphans (cadence's
+ * runs, no live recording owns any `.vid-*` dir, so any that exist are orphans (the origin app's
  * `recall.ts:266-276`).
  */
 export function sweepOrphanVideoDirs(dataDir: string): number {
@@ -99,7 +99,7 @@ export interface ReconcileResult {
 /**
  * RECONCILE MEDIA: bind every image crop already on disk (`media-<id>.png`) to its record, fixing
  * crops that were orphaned by a prior run (a capture that made the crop, but a crash before the
- * unit/record carrying it was ever written or re-merged) — cadence's `recall.ts:277-287`. Seeds
+ * unit/record carrying it was ever written or re-merged) — the origin app's `recall.ts:277-287`. Seeds
  * `tracker` so future attaches survive a restart too. Read-only of the store except for the
  * PATCHED records this actually fixes, which it writes back through `appendRecords` (still a
  * MERGE, not an overwrite — richest-text-wins / stub-never-degrades hold, `lucarne-records`).

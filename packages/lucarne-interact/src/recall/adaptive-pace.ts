@@ -1,4 +1,4 @@
-// Adaptive idle-backoff pacing for recall's poll loop — ported from cadence's `recall.ts:289-295`.
+// Adaptive idle-backoff pacing for recall's poll loop — ported from the origin app's `recall.ts:289-295`.
 //
 // NOTE: this is UNRELATED to `../pacing.ts` (the ACT half's enforced normal-distribution dwell
 // after every verb, which exists to make agent actions look human-paced). Recall never acts, so it
@@ -16,12 +16,12 @@ export interface AdaptivePaceConfig {
 
 export const DEFAULT_ADAPTIVE_PACE: Readonly<AdaptivePaceConfig> = Object.freeze({ activeMs: 500, idleMs: 2500, growth: 1.6 });
 
-/** cadence's `pace()` (`recall.ts:295`): `Math.min(ACTIVE_MS * 1.6**idle, IDLE_MS)`. */
+/** the origin app's `pace()` (`recall.ts:295`): `Math.min(ACTIVE_MS * 1.6**idle, IDLE_MS)`. */
 export function adaptivePaceMs(idle: number, cfg: AdaptivePaceConfig = DEFAULT_ADAPTIVE_PACE): number {
   return Math.min(cfg.activeMs * Math.pow(cfg.growth, Math.max(0, idle)), cfg.idleMs);
 }
 
-/** cadence's idle-counter cap (`recall.ts:402`: `else if (idle < 12) idle++`). */
+/** the origin app's idle-counter cap (`recall.ts:402`: `else if (idle < 12) idle++`). */
 export const IDLE_COUNTER_CAP = 12;
 
 /** Bump the idle counter by one, capped — call on a tick where nothing changed. */

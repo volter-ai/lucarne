@@ -37,7 +37,7 @@ const FROZEN_ORIGINAL = `export function decideSend(e: { blocked?: boolean; must
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sendGateSrc = readFileSync(path.join(PKG_ROOT, "src", "send-gate.ts"), "utf8");
 
-const BEGIN_MARKER = "// ---8<--- BEGIN VERBATIM PORT: cadence/src/guardrails/enforce.ts:124-132 (decideSend) ---8<---";
+const BEGIN_MARKER = "// ---8<--- BEGIN VERBATIM PORT: guardrails/enforce.ts:124-132 (decideSend) ---8<---";
 const END_MARKER = "// ---8<--- END VERBATIM PORT ---8<---";
 
 const beginIdx = sendGateSrc.indexOf(BEGIN_MARKER);

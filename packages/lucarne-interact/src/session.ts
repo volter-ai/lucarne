@@ -1,8 +1,8 @@
 // InteractSession — the ACT half of "the non-bot-like interaction plane".
 //
-// Ported (mechanism only, NO cadence policy) from cadence/src/browser.ts. Every verb here has a
+// Ported (mechanism only, NO origin-app policy) from browser.ts. Every verb here has a
 // direct source in that file; the per-app-URL lookup table, the reading-guide-coverage warning,
-// and the workspace action-log sink are cadence POLICY and stay in cadence (§1.1 of the split
+// and the workspace action-log sink are origin-app POLICY and stay in the origin app (§1.1 of the split
 // spec). This class talks to a browser purely over a lucarne session's `cdpUrl` via a vanilla
 // `playwright-core` connection — it does not import (or know about) the `lucarne` engine package.
 //
@@ -26,22 +26,22 @@ import { type SendFlowOptions, type SendFlowResult, runSendFlow } from "./send-f
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-const DEFAULT_TIMEOUT_MS = 15000; // cadence's `PW` (browser.ts:23) — generous per-call timeout for real remote sites
+const DEFAULT_TIMEOUT_MS = 15000; // the origin app's `PW` (browser.ts:23) — generous per-call timeout for real remote sites
 const DEFAULT_CLIP_MAX_MS = 5 * 60 * 1000; // the hard 5-minute clip ceiling (browser.ts:345)
-// `typeHuman`'s yield-check cadence + threshold (browser.ts:187,189): probe every 12 chars, yield
+// `typeHuman`'s yield-check rhythm + threshold (browser.ts:187,189): probe every 12 chars, yield
 // if the last detected human input landed under 1500ms ago.
 const DEFAULT_YIELD_CHECK_EVERY_CHARS = 12;
 const DEFAULT_YIELD_THRESHOLD_MS = 1500;
-// The two in-app "Back" affordances cadence recognized (browser.ts:270-271) — generic ARIA/testid
+// The two in-app "Back" affordances the origin app recognized (browser.ts:270-271) — generic ARIA/testid
 // patterns, not a per-site policy; callers can override entirely via `back({ inAppSelectors })`.
 const DEFAULT_BACK_SELECTORS = ['button[aria-label="Back"]', '[data-testid="app-bar-back"]'];
 
 export type CdpUrlSource = string | { cdpUrl: string; activity?: ActivityProbe };
 
 export interface InteractSessionOptions {
-  /** Per-kind pacing overrides (see pacing.ts). Unset fields fall back to cadence's defaults. */
+  /** Per-kind pacing overrides (see pacing.ts). Unset fields fall back to the origin app's defaults. */
   pacing?: PacingConfig;
-  /** Per-Playwright-call timeout, ms. Default matches cadence's `PW` (15000). */
+  /** Per-Playwright-call timeout, ms. Default matches the origin app's `PW` (15000). */
   timeoutMs?: number;
   /** Hard ceiling for `video.clip`, ms. Default 5 minutes (browser.ts:345). */
   clipMaxMs?: number;
@@ -316,7 +316,7 @@ export class InteractSession extends EventEmitter {
 
   // ── act verbs ────────────────────────────────────────────────────────────────────────────────
 
-  /** The single sanctioned bootstrap navigation (browser.ts:244-268, minus the per-app-URL lookup table + reading-guide-coverage warning — cadence policy). */
+  /** The single sanctioned bootstrap navigation (browser.ts:244-268, minus the per-app-URL lookup table + reading-guide-coverage warning — origin-app policy). */
   async open(url: string): Promise<OpenResult> {
     return this.#act("open", [url], "nav", async () => {
       const b = await this.#connect();
@@ -436,7 +436,7 @@ export class InteractSession extends EventEmitter {
 
   /**
    * Best-effort setter for the FALLBACK yield probe's `window.__lastInputAt` (browser.ts:186-190
-   * only ever READS this global — cadence never wired a setter, which left the probe permanently
+   * only ever READS this global — the origin app never wired a setter, which left the probe permanently
    * inert; this installs one). Idempotent (a page-level flag guards re-installation), and failures
    * are swallowed — the fallback probe degrades to "no signal" rather than breaking `type()`.
    */
@@ -476,7 +476,7 @@ export class InteractSession extends EventEmitter {
    * explicit approval, or yolo mode, fires the gesture. `send` does not stage text itself; it
    * COMMITS a draft the caller already staged via `type()`.
    *
-   * `decideSend` (send-gate.ts) is ported BYTE-IDENTICAL from cadence's
+   * `decideSend` (send-gate.ts) is ported BYTE-IDENTICAL from the origin app's
    * `guardrails/enforce.ts:124-132` (see that file's header + `test/decide-send-provenance.mjs`).
    * ALL policy computation — content rules, rate limits, sourcing/assess, the approvals ledger —
    * is the caller's `policy(text, ctx)` function; this class never evaluates content itself.

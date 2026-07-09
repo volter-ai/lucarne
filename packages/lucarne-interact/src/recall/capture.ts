@@ -1,4 +1,4 @@
-// One static capture — ported from cadence's `captureStatic` (`recall.ts:159-194`): an ARIA
+// One static capture — ported from the origin app's `captureStatic` (`recall.ts:159-194`): an ARIA
 // snapshot + an in-session screenshot + the two DOM probes (media boxes, viewport visibility),
 // dispatched through the caller's extractor plugins, filtered to what was honestly ON SCREEN, and
 // merged into the shared store. READ-ONLY: `page.locator(...).ariaSnapshot()` and `page.screenshot()`

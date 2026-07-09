@@ -1,5 +1,5 @@
 // composer-check.ts — the pre-keypress SAFETY check: the staged text must actually be in the
-// focused composer before `send()`'s gesture fires. Ported (mechanism only) from cadence's
+// focused composer before `send()`'s gesture fires. Ported (mechanism only) from the origin app's
 // `browser.ts:516-525`: "before firing the keypress, VERIFY the composer actually holds the
 // approved draft. `send` only presses Enter — `type` is what stages the text — so an
 // empty/stale/focus-lost composer would otherwise fire a blank or wrong post." Skipped entirely
