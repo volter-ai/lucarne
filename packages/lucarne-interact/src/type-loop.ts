@@ -4,7 +4,7 @@
 // `typeChar`/`inPageProbe`/`activityProbe` callbacks and asserts the loop aborts mid-type with
 // `{ yielded: true }`. `InteractSession#type` (session.ts) supplies the real page-backed callbacks.
 import { humanDelays } from "./typing.js";
-import { type ActivityProbe, type InPageInputProbe, checkHumanYield } from "./yield.js";
+import { type ActivityProbe, type InPageInputProbe, checkHumanYield } from "./presence.js";
 
 export interface TypeLoopResult {
   chars: number;
