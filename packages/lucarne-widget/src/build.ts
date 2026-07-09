@@ -1,11 +1,12 @@
-// The srcdoc BUILD HELPER — ported from cadence's `web/app/build.mjs`, generalized: any consumer's entrypoint(s) +
-// CSS bundle into ONE self-contained artifact (JS + CSS inlined, no external loads) suitable as an `<iframe
-// srcdoc="...">` value — the injector (`injector.ts`) hands this HTML straight to the iframe it mounts. `</script>`
-// escaping is the one correctness-critical detail (a literal `</script>` inside bundled string content would
-// otherwise terminate the inline `<script>` early and corrupt the page) — see `escapeScriptClose` below.
+// The srcdoc BUILD HELPER — ported from the prior single-app implementation's `web/app/build.mjs`, generalized:
+// any consumer's entrypoint(s) + CSS bundle into ONE self-contained artifact (JS + CSS inlined, no external
+// loads) suitable as an `<iframe srcdoc="...">` value — the injector (`injector.ts`) hands this HTML straight
+// to the iframe it mounts. `</script>` escaping is the one correctness-critical detail (a literal `</script>`
+// inside bundled string content would otherwise terminate the inline `<script>` early and corrupt the page) —
+// see `escapeScriptClose` below.
 //
 // Uses `esbuild` (a real dependency of this package, not just a dev tool — a consumer builds their OWN bundle
-// entrypoint with this at THEIR build time, e.g. cadence's `web/app/src/entry.tsx`, LS-20).
+// entrypoint with this at THEIR build time, e.g. a downstream consumer's own `web/app/src/entry.tsx`, LS-20).
 import { build as esbuild } from "esbuild";
 
 export interface BuildSrcdocOptions {

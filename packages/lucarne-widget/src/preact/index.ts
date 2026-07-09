@@ -8,7 +8,7 @@
 //
 //   import { createWidget } from "lucarne-widget/runtime";
 //   import { mountPanel } from "lucarne-widget/preact";
-//   const w = createWidget({ ns: "cadence", version: 1 });
+//   const w = createWidget({ ns: "myapp", version: 1 });
 //   w.registerPanel({ id: "capture", title: "Sense", render: mountPanel(CaptureFace) });
 //
 // `render()` is called again by the runtime every time a new patch merges into `state` — Preact's own diffing

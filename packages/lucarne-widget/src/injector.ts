@@ -1,7 +1,7 @@
 // The INJECTOR — runs in the HOST page context (mounted via the engine's sticky script injection, LS-02's
-// `POST /sessions/:id/inject`). Ported from cadence's `widget.ts:34-299`, generalized: every page global, the
-// host element id, and the outbound control-plane message key are derived from a caller-supplied `ns` (see
-// `ns.ts`) instead of a single hard-coded `__cadence*` family.
+// `POST /sessions/:id/inject`). Ported from the prior single-app implementation's `widget.ts:34-299`,
+// generalized: every page global, the host element id, and the outbound control-plane message key are derived
+// from a caller-supplied `ns` (see `ns.ts`) instead of a single hard-coded fixed-prefix family.
 //
 // Mounts:
 //   • a position:fixed shadow-DOM HOST (shields the mount from the page's own CSS)
@@ -63,8 +63,9 @@ export function injectorSource(opts: InjectorOptions): string {
   const GLASS = glassIds(ns);
 
   // NOTE: everything below is delivered to the page as a STRING (template-literal → `Runtime.evaluate` /
-  // `Page.addScriptToEvaluateOnNewDocument`), so — as the cadence original warns — any regex backslash-escape
-  // (`\d`, `\s`) inside it would be stripped before it ever runs. Keep parsing here backslash-free.
+  // `Page.addScriptToEvaluateOnNewDocument`), so — as the prior implementation's own version of this comment
+  // warns — any regex backslash-escape (`\d`, `\s`) inside it would be stripped before it ever runs. Keep
+  // parsing here backslash-free.
   return `(function(){
     // addScriptToEvaluateOnNewDocument runs in EVERY frame (main + every child iframe: embeds, ads, quote-posts).
     // Mount ONLY in the top frame, or a busy SPA spawns one widget per iframe as they churn.
