@@ -57,7 +57,7 @@
     "test": "npm run build && node test/acceptance.mjs",
     "test:acceptance": "node test/acceptance.mjs",
     "test:docker": "node test/docker-smoke.mjs",
-    "prepack": "rm -f clients examples LICENSE README.md && cp -R ../../clients clients && cp -R ../../examples examples && cp ../../LICENSE LICENSE && cp ../../README.md README.md",
+    "prepack": "rm -rf clients examples LICENSE README.md && cp -R ../../clients clients && cp -R ../../examples examples && cp ../../LICENSE LICENSE && cp ../../README.md README.md",
     "postpack": "rm -rf clients examples LICENSE README.md && ln -s ../../clients clients && ln -s ../../examples examples && ln -s ../../LICENSE LICENSE && ln -s ../../README.md README.md"
   },
   "dependencies": {

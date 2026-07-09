@@ -4,7 +4,7 @@ Thanks for helping. lucarne has one non-negotiable rule that makes it what it is
 
 ## The rule: every feature lands with a committed, real-behavior proof
 
-No feature is "done" until a re-runnable acceptance proof in `test/acceptance.mjs`
+No feature is "done" until a re-runnable acceptance proof in `packages/lucarne/test/acceptance.mjs`
 asserts its **real behavior** and passes — **never an HTTP 200**. "Real behavior"
 means the thing that actually matters: a rendered JPEG frame, real-Chrome state, a
 valid mp4, an RFC test vector — driven against a real browser. If you can't prove
