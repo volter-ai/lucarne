@@ -1,5 +1,6 @@
 import type { Backend } from "./backends/types.js";
 import type { CredentialProvider } from "./credentials.js";
+import type { InjectPolicy, StickyDef } from "./inject.js";
 
 /** Which engine spawns the browser behind a session. `attach` spawns nothing — it mirrors a foreign browser. */
 export type BackendKind = "attach" | "docker" | "native";
@@ -86,6 +87,13 @@ export interface CreateSessionOptions {
    * Off by default (a CDP-driven session with no porthole input is not "idle").
    */
   inactivityMs?: number;
+  /**
+   * Sticky script injections to (re)apply to this session — desired state keyed
+   * by id (see `POST /sessions/:id/inject`). Persisted into the session spec so
+   * a daemon restart re-applies every entry; normally set via `/inject`, not
+   * populated by hand at `create()` time.
+   */
+  inject?: Record<string, StickyDef>;
 }
 
 /** Rich, live view of a session (uptime / idle / dims / stream stats) for status + monitoring. */
@@ -198,6 +206,13 @@ export interface EngineOptions {
   registryFile?: string;
   /** Override the credential store. Default: the encrypted-file `FileCredentialStore`. */
   credentials?: CredentialProvider;
+  /**
+   * Accept/reject a sticky-injection id (`POST/GET /sessions/:id/inject`). Default
+   * PERMISSIVE — every id is accepted. This hook only decides accept/reject; a
+   * shell-only allow-list or any other content doctrine is the CALLER's policy
+   * (e.g. cadence's, wired in LS-20), not the engine's.
+   */
+  injectPolicy?: InjectPolicy;
   /** Isolation backends to register. Default: docker + native. */
   backends?: Backend[];
 }

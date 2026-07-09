@@ -74,6 +74,15 @@ export class LucarneClient {
   login(id: string, opts: { credential: string; userSelector?: string; passSelector?: string; totpSelector?: string; submitSelector?: string }): Promise<{ filled: string[] }> {
     return this.req("POST", `/sessions/${id}/login`, opts) as Promise<{ filled: string[] }>;
   }
+
+  // ── sticky script injection (survives reload / new tab / daemon restart) ──
+  injections(id: string): Promise<{ ids: string[] }> { return this.req("GET", `/sessions/${id}/inject`) as Promise<{ ids: string[] }>; }
+  setInjection(id: string, opts: { id: string; source: string; bypassCSP?: boolean }): Promise<{ ok: true; id: string }> {
+    return this.req("POST", `/sessions/${id}/inject`, opts) as Promise<{ ok: true; id: string }>;
+  }
+  removeInjection(id: string, injectionId: string): Promise<{ ok: true; removed: string }> {
+    return this.req("POST", `/sessions/${id}/inject`, { id: injectionId, remove: true }) as Promise<{ ok: true; removed: string }>;
+  }
   profiles(): Promise<{ name: string; active: boolean }[]> { return this.req("GET", "/profiles") as Promise<{ name: string; active: boolean }[]>; }
   deleteProfile(name: string): Promise<{ ok: boolean; reason?: string }> { return this.req("DELETE", `/profiles/${encodeURIComponent(name)}`) as Promise<{ ok: boolean; reason?: string }>; }
   upload(id: string, opts: { path: string; selector?: string }): Promise<{ ok: boolean }> { return this.req("POST", `/sessions/${id}/upload`, opts) as Promise<{ ok: boolean }>; }

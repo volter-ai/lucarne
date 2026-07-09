@@ -18,6 +18,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:acceptance": "npm run test:acceptance --workspaces --if-present",
     "test:docker": "npm run test:docker --workspaces --if-present",
+    "test:unit": "npm run test:unit --workspaces --if-present",
     "build:image": "npm run build:image --workspaces --if-present"
   },
   "devDependencies": {

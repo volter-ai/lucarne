@@ -10,6 +10,7 @@ import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { FileCredentialStore, totpCode, type CredentialProvider } from "./credentials.js";
 import { readBodyCapped, serveWorkspace, type Send } from "./http.js";
+import { InjectionStore, type InjectPolicy } from "./inject.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
@@ -29,6 +30,7 @@ interface Tracked extends Session {
   downloadDir: string;
   filesDir: string;
   media: SessionMedia;
+  inject: InjectionStore;
   createdAtMs: number;
   lastActivityMs: number;
   maxLifetimeMs?: number;
@@ -214,6 +216,7 @@ export class Lucarne {
   private readonly backends: Record<string, Backend> = {};
   private readonly credentials: CredentialProvider;
   private readonly credentialsService: CredentialsService;
+  private readonly injectPolicy: InjectPolicy;
   // Global (NOT session-scoped) subsystems, kept out of the engine's core so they
   // stay peelable; the router delegates to each in turn.
   private readonly globalServices: { handle(req: http.IncomingMessage, res: http.ServerResponse, send: Send, pathname: string): Promise<boolean> | boolean }[];
@@ -247,6 +250,7 @@ export class Lucarne {
     this.cors = opts.cors ?? false;
     this.credentials = opts.credentials ?? new FileCredentialStore();
     this.credentialsService = new CredentialsService(this.credentials);
+    this.injectPolicy = opts.injectPolicy ?? (() => true);
     this.globalServices = [this.credentialsService, new WorkspaceService(), new ExtensionsService()];
     // A backend is registered, not hard-coded — add one without editing the engine.
     for (const b of opts.backends ?? [dockerBackend, nativeBackend, attachBackend]) this.registerBackend(b);
@@ -312,7 +316,7 @@ export class Lucarne {
     const cdp = attaching ? parseAttachPort(opts.attach!) : (this.cdpFreeList.pop() ?? this.nextCdp++);
     const cdpUrl = `http://${CDP_HOST}:${cdp}`;
     await this.acquireSlot();
-    let handle: BackendHandle | undefined, media: SessionMedia | undefined;
+    let handle: BackendHandle | undefined, media: SessionMedia | undefined, inject: InjectionStore | undefined;
     try {
       handle = await backend.start(id, { cdp }, {
         host: CDP_HOST, image: this.image, chromePath: this.chromePath, viewport: this.viewport,
@@ -338,10 +342,23 @@ export class Lucarne {
         }
         bconn.close();
       }
+      // Sticky script injection (see inject.ts): wire target auto-attach coverage
+      // NOW, unconditionally (cheap — one extra CDP socket), so a later `/inject`
+      // call is covered from the moment it's set. `opts.inject` is the BOOT-RESTORE
+      // case — a durable session's persisted spec carries whatever was registered
+      // before the daemon last stopped; re-seed it here so a restart re-applies it.
+      inject = new InjectionStore(cdpUrl, this.injectPolicy);
+      await inject.start();
+      if (opts.inject) {
+        for (const [injId, def] of Object.entries(opts.inject)) {
+          await inject.set(injId, def.source, def.bypassCSP).catch(() => { /* a policy that tightened since — skip, don't fail boot */ });
+        }
+      }
     } catch (e) {
       // Roll back EVERYTHING on any failure — otherwise the browser/container, the
       // media (ffmpeg + screencast tick + CDP sockets), and the slot all leak, and
       // (for the slot) eventually deadlock every future create.
+      try { inject?.close(); } catch { /* ignore */ }
       try { media?.close(); } catch { /* ignore */ }
       await handle?.stop().catch(() => {});
       try { fs.rmSync(dirs.downloadDir, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -355,7 +372,7 @@ export class Lucarne {
       id, backend: backend.kind, cdpUrl, cdpPort: cdp, attached: attaching,
       viewUrl: `http://${this.host}:${this.port}/sessions/${id}/view/${qs}`,
       createdAt: new Date().toISOString(),
-      recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, stop: handle.stop,
+      recDir: dirs.recDir, downloadDir: dirs.downloadDir, filesDir: dirs.filesDir, media, inject, stop: handle.stop,
       createdAtMs: Date.now(), lastActivityMs: Date.now(),
       maxLifetimeMs: opts.maxLifetimeMs, inactivityMs: opts.inactivityMs,
       metadata: opts.metadata,
@@ -558,6 +575,42 @@ export class Lucarne {
     return { filled };
   }
 
+  /**
+   * Register/replace (`{id, source, bypassCSP?}`) or remove (`{id, remove:true}`)
+   * a session's sticky script injection (see inject.ts) — survives page reload, a
+   * newly opened tab, and (via the persisted spec) a daemon restart. Throws on a
+   * missing `id` or a policy rejection; the HTTP route turns either into a 4xx.
+   */
+  async setInjection(id: string, body: { id?: string; source?: string; bypassCSP?: boolean; remove?: boolean }): Promise<{ ok: true; id: string } | { ok: true; removed: string }> {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("no such session");
+    if (!body.id) throw new Error("need id");
+    if (body.remove) {
+      await s.inject.remove(body.id);
+      this.persistInject(id);
+      return { ok: true, removed: body.id };
+    }
+    await s.inject.set(body.id, String(body.source ?? ""), !!body.bypassCSP);
+    this.persistInject(id);
+    return { ok: true, id: body.id };
+  }
+
+  /** Ids of the session's currently-registered (and policy-accepted) sticky injections. */
+  injectionIds(id: string): string[] {
+    const s = this.sessions.get(id);
+    return s ? s.inject.ids() : [];
+  }
+
+  /** Sync a DURABLE session's persisted spec with its live injection set — a no-op for a session absent from the registry (nothing to keep in sync). */
+  private persistInject(id: string): void {
+    const reg = this.readReg();
+    if (!(id in reg)) return;
+    const s = this.sessions.get(id);
+    if (!s) return;
+    reg[id] = { ...reg[id], inject: s.inject.snapshot() };
+    this.writeReg(reg);
+  }
+
   /** A self-contained HTML player that streams the session's recording segments. */
   replayHtml(id: string): string {
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
@@ -702,6 +755,7 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     if (forget) this.forgetSpec(id);
     // Store the teardown promise so a same-id `create` can await it (no clobber race).
     const teardown = (async (): Promise<void> => {
+      try { s.inject.close(); } catch { /* ignore */ }
       try { s.media.close(); } catch { /* ignore */ }
       // Bound stop(): a wedged `docker rm -f` (no timeout in the docker backend) would
       // otherwise hang teardown forever → `destroying` never drains → every future same-id
@@ -926,6 +980,22 @@ v.addEventListener('ended',()=>{i++;play()});play();});
           if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
           const body = (await readBodyCapped(req)).toString();
           return send(res, 200, await this.loginWithCredential(id!, body ? JSON.parse(body) : {}));
+        }
+        const inj = pathname.match(/^\/sessions\/([^/]+)\/inject$/);
+        if (inj) {
+          const [, id] = inj;
+          if (!this.sessions.has(id!)) return send(res, 404, { error: "no such session" });
+          if (req.method === "GET") return send(res, 200, { ids: this.injectionIds(id!) });
+          if (req.method === "POST") {
+            const body = (await readBodyCapped(req)).toString();
+            let parsed: { id?: string; source?: string; bypassCSP?: boolean; remove?: boolean };
+            try { parsed = body ? JSON.parse(body) : {}; } catch { return send(res, 400, { error: "invalid JSON body" }); }
+            // A missing id / a policy rejection is a 4xx (caller error), not a 500 —
+            // caught here rather than falling through to the router's generic catch.
+            try { return send(res, 200, await this.setInjection(id!, parsed)); }
+            catch (e) { return send(res, 400, { error: String((e as Error).message ?? e) }); }
+          }
+          return send(res, 405, { error: "method not allowed" });
         }
         const up = pathname.match(/^\/sessions\/([^/]+)\/upload$/);
         if (up) {

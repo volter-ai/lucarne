@@ -269,6 +269,8 @@ GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadat
 PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
 GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
 POST   /sessions/:id/login                {credential, userSelector?, passSelector?, totpSelector?, submitSelector?}
+POST   /sessions/:id/inject               {id, source, bypassCSP?} | {id, remove:true}  -> { ok, id|removed }  (sticky script injection — see Security)
+GET    /sessions/:id/inject               -> { ids: string[] }   (currently-registered, policy-accepted injection ids)
 POST   /sessions/:id/act                  {action:"click|move|type|key|scroll|screenshot", x?,y?,...}  (computer-use; coordinate-based — for selector-driving use Playwright over cdpUrl)
 GET    /sessions/:id/replay               -> text/html   (recording player)
 PUT/GET/DELETE /extensions/:name/:file    -> upload/manage extensions; create({extensions:["name"]})
@@ -311,6 +313,7 @@ it by default.
 - **`?interactable=0`** drops input for *that* porthole connection server-side — but it is a per-connection mode, **not a capability boundary**: the same token can open an interactable socket or call `/act`. For a true read-only handoff, don't share the token. `?controls=1` adds a URL bar + back/forward/reload.
 - **`/login` is not a confidentiality boundary against the *caller*.** It injects a stored secret server-side so the agent needn't *handle* it, but a caller that can drive the browser can render the value into a page and read it back — treat API access as access to the credentials, as below.
 - **File access is confined.** Navigation refuses `file://`/`chrome://` (no host-file read via `/content`/`/screenshot`), and `/upload` only accepts paths inside the session's `/files` workspace — stage a file there first.
+- **`/inject` grants arbitrary script execution on every page of the session, CSP included.** `POST /sessions/:id/inject {id, source, bypassCSP?}` registers a *sticky* injection (`Page.addScriptToEvaluateOnNewDocument`) that re-runs on every reload, every newly opened tab, and — because it's persisted into the session spec — every daemon restart. `bypassCSP:true` disables the page's Content-Security-Policy for the session (`Page.setBypassCSP`, held on a live per-page CDP session for as long as the page is open), which is exactly as strong as running the script with devtools open: it can read/exfiltrate anything the page can, override page behavior, and defeat CSP protections the site relies on. Treat calling `/inject` as equivalent to `/act`/`/content` access plus standing devtools-level control — anyone who can call it can call it with *any* source, not just yours. There is no built-in content policy: an optional `injectPolicy(id) => boolean` hook (default **permissive** — every id accepted) lets an embedder restrict *which ids* may be registered (e.g. a shell-only allow-list), but the engine itself doesn't inspect or restrict `source` — that's the caller's responsibility.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
 ### Exposing it (remote / from your phone)

@@ -19,3 +19,4 @@ export type {
 } from "./types.js";
 export type { Backend, BackendContext, BackendHandle } from "./backends/types.js";
 export { attachBackend } from "./backends/attach.js";
+export type { InjectPolicy, StickyDef } from "./inject.js";
