@@ -14,6 +14,14 @@ export interface StickyDef {
  */
 export type InjectPolicy = (id: string) => boolean;
 
+/**
+ * Error `.code` set when the request-path FIRST apply hits a genuine browser-side
+ * fault — a page the store knows is live but cannot reach (e.g. a dead debugger
+ * socket). The HTTP route maps it to 502 (a fault talking to Chrome, NOT a caller
+ * error). A concurrently-closed tab is deliberately NOT this — it's absorbed.
+ */
+export const INJECT_APPLY_FAILED_CODE = "LUCARNE_INJECT_APPLY_FAILED";
+
 interface PageSession {
   cdp: CdpConn;
   /** CDP script identifier per injection id, so a later removal targets the right registration. */
@@ -206,7 +214,13 @@ export class InjectionStore {
       try { await this.applyToTarget(targetId); }
       catch (e) { if (firstError === undefined) firstError = e; }
     }
-    if (firstError !== undefined) throw firstError instanceof Error ? firstError : new Error(String(firstError));
+    if (firstError !== undefined) {
+      // Tag it so the HTTP route can answer 502 (browser fault), not 400. A
+      // concurrently-closed tab never reaches here — applyToTargetInner absorbs it.
+      const err = firstError instanceof Error ? firstError : new Error(String(firstError));
+      (err as Error & { code?: string }).code = INJECT_APPLY_FAILED_CODE;
+      throw err;
+    }
   }
 
   /**
@@ -254,20 +268,38 @@ export class InjectionStore {
     if (!ids.length) return; // nothing accepted yet — don't pay for a page session
     let s = this.pageSessions.get(targetId);
     if (!s) {
-      const cdp = await attachPage(this.cdpUrl, targetId);
+      let cdp: CdpConn;
+      try {
+        cdp = await attachPage(this.cdpUrl, targetId);
+      } catch (e) {
+        // The tab closed concurrently with this apply: `Target.targetDestroyed` may
+        // not have pruned `knownTargets` yet, so attachPage can't find the target
+        // ("no CDP page target"). A gone page is NOT a failure — absorb it (every
+        // live page was still covered) and let discovery settle. A DIFFERENT error
+        // (a dead debugger socket on a still-live target) is a genuine hard failure
+        // and propagates (→ applyToOpenPages surfaces it as 502).
+        if (!this.knownTargets.has(targetId) || /no CDP page target/i.test(String((e as Error)?.message ?? e))) return;
+        throw e;
+      }
       // Page.enable turns on the Page lifecycle events (incl. loadEventFired) this
       // session's load hook rides — so it must actually land, not just be fired off.
       await cdp.call("Page.enable").catch(() => { /* best-effort */ });
       // A targetDestroyed/close() during the awaits above means this conn is now
       // stale — storing it would leak a socket + a ghost page session. Close + skip.
       if (this.closed || !this.knownTargets.has(targetId)) { try { cdp.close(); } catch { /* ignore */ } return; }
-      s = { cdp, scriptIds: new Map(), cspEnabled: false };
-      this.pageSessions.set(targetId, s);
+      const session: PageSession = { cdp, scriptIds: new Map(), cspEnabled: false };
+      s = session;
+      this.pageSessions.set(targetId, session);
       // Re-run every source once each navigation/reload has produced a DOM. This is
       // the reliable half of "sticky": addScriptToEvaluateOnNewDocument (below) fires
       // at document-START, before document.documentElement exists, so a DOM-touching
       // source no-ops there; re-evaluating on load lands it.
       cdp.on("Page.loadEventFired", () => { void this.reevalLoaded(targetId); });
+      // If this page's socket drops while the target lives, prune the dead conn so a
+      // FUTURE apply re-attaches (otherwise `s` lingers, the load hook goes silent,
+      // and applyToTargetInner never re-creates it). Same resilience the browser tap
+      // has; non-throwing (the cdp onClose callback is guarded).
+      cdp.onClose(() => { if (this.pageSessions.get(targetId) === session) this.pageSessions.delete(targetId); });
     }
     if (ids.some((id) => this.sticky.get(id)?.bypassCSP) && !s.cspEnabled) {
       try { await s.cdp.call("Page.setBypassCSP", { enabled: true }); s.cspEnabled = true; } catch { /* best-effort */ }

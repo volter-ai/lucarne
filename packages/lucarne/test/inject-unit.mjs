@@ -14,7 +14,7 @@
 // `test/acceptance.mjs` (search "STICKY INJECTION"). This file is the in-sandbox
 // half: run with `node test/inject-unit.mjs` (after `npm run build`).
 import { Lucarne } from "../dist/index.js";
-import { InjectionStore } from "../dist/inject.js";
+import { InjectionStore, INJECT_APPLY_FAILED_CODE } from "../dist/inject.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -60,31 +60,84 @@ const fakeSession = (inject) => ({ inject, media: { close() {} }, stop: async ()
   check("store: remove() of an absent id is a no-op (idempotent, doesn't throw)", store.ids().length === 1);
 }
 
-// ── request-path apply SURFACES a hard failure (regression guard) ────────────
-// The CI-only browser bug this branch fixes had a sibling risk: a page we KNOW is
-// open but can't attach to must not be silently swallowed — the first apply is
-// awaited and surfaces, so `POST /inject` can't 200 while applying to nothing.
-// Fake CDP: /json lists one open page target whose debugger socket is dead, so
-// attachPage throws → `set()` must REJECT (not resolve). No real Chrome, no hang.
-{
+// A fake CDP HTTP endpoint (no real Chrome). `/json` (listPages) reports one page
+// target whose debugger websocket is DEAD (the http server destroys every upgrade),
+// so attaching to it fails fast (no hang). `liveTarget:false` reports the target on
+// the FIRST /json (so the tap records it in knownTargets) then reports it GONE on
+// every later /json — modelling a tab closed concurrently with the POST.
+const fakeCdp = (liveTarget) => {
+  let served = 0;
   const server = http.createServer((req, res) => {
     if (req.url === "/json/version") { res.end(JSON.stringify({})); return; }         // no browser ws → the discovery tap fails fast (swallowed by start())
-    if (req.url === "/json") {                                                        // listPages → one open page whose debugger ws is dead
-      res.end(JSON.stringify([{ id: "T1", type: "page", url: "about:blank", title: "", webSocketDebuggerUrl: `ws://${req.headers.host}/devtools/page/T1` }]));
+    if (req.url === "/json") {
+      const present = liveTarget || served === 0;
+      served++;
+      res.end(JSON.stringify(present ? [{ id: "T1", type: "page", url: "about:blank", title: "", webSocketDebuggerUrl: `ws://${req.headers.host}/devtools/page/T1` }] : []));
       return;
     }
     res.statusCode = 404; res.end();
   });
   server.on("upgrade", (_req, socket) => socket.destroy());                           // any CDP page-socket attach fails immediately (no hang)
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const port = server.address().port;
-  const store = new InjectionStore(`http://127.0.0.1:${port}`);
+  return server;
+};
+const listen = (server) => new Promise((r) => server.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${server.address().port}`)));
+
+// ── request-path: a GENUINE hard failure SURFACES (with the 502 code) + is persisted ──
+// A live page the store can't reach (dead debugger socket) must not be swallowed —
+// the first apply is awaited and surfaces, so `POST /inject` can't 200 while applying
+// to nothing. It carries INJECT_APPLY_FAILED_CODE so the route answers 502, not 400.
+{
+  const server = fakeCdp(true);
+  const base = await listen(server);
+  const store = new InjectionStore(base);
   let threw = null;
   try { await store.set("shell", "1+1"); } catch (e) { threw = e; }
   check("request-path: a hard apply failure (open page, dead debugger socket) SURFACES from set()", threw instanceof Error, threw ? String(threw.message).slice(0, 60) : "did not throw");
+  check("request-path: the surfaced error is tagged INJECT_APPLY_FAILED_CODE (→ route answers 502)", threw?.code === INJECT_APPLY_FAILED_CODE, String(threw?.code));
   check("request-path: the id is still recorded (best-effort desired state) despite the surfaced apply error", store.snapshot().shell?.source === "1+1");
   store.close();
   server.close();
+}
+
+// ── request-path: a CONCURRENTLY-CLOSED tab is ABSORBED, not a failure ────────
+// The target is listed once (recorded in knownTargets) then vanishes before
+// attachPage can reach it ("no CDP page target") — every live page was covered, so
+// `set()` must RESOLVE, not reject on a spurious 502.
+{
+  const server = fakeCdp(false);
+  const base = await listen(server);
+  const store = new InjectionStore(base);
+  let threw = null;
+  try { await store.set("shell", "1+1"); } catch (e) { threw = e; }
+  check("request-path: a concurrently-closed tab is absorbed — set() resolves (no spurious failure)", threw === null, threw ? String(threw.message).slice(0, 60) : "resolved");
+  check("request-path: the id is recorded after the absorbed close", store.snapshot().shell?.source === "1+1");
+  store.close();
+  server.close();
+}
+
+// ── engine: a hard apply failure is a 502 AND the id is persisted (never lost) ──
+// setInjection persists the live desired state in a `finally`, so a durable session's
+// spec matches the live store even when the apply surfaced a browser-side fault — the
+// injection is re-applied on the next daemon restart instead of silently vanishing.
+{
+  const server = fakeCdp(true);
+  const base = await listen(server);
+  const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-inject-persist-fail-"));
+  const registryFile = path.join(HOME, "sessions.json");
+  const engine = new Lucarne({ port: 17903, token: "t", record: false, registryFile });
+  try {
+    engine.persistSpec("d1", { profile: "d1", persist: true });                       // make d1 durable (in the registry)
+    engine.sessions.set("d1", fakeSession(new InjectionStore(base)));
+    let threw = null;
+    try { await engine.setInjection("d1", { id: "shell", source: "1+1" }); } catch (e) { threw = e; }
+    check("engine: a browser-side apply fault surfaces from setInjection (route → 502)", threw instanceof Error && threw.code === INJECT_APPLY_FAILED_CODE, String(threw?.code));
+    const onDisk = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    check("engine: the id is PERSISTED despite the apply fault (survives a restart, never silently lost)", onDisk.d1?.inject?.shell?.source === "1+1");
+  } finally {
+    await engine.close().catch(() => {});
+    server.close();
+    fs.rmSync(HOME, { recursive: true, force: true });
+  }
 }
 
 // ── dev/02: injectPolicy hook — default permissive ───────────────────────────

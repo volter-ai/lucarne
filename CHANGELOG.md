@@ -13,10 +13,16 @@ to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
   and no-op on each fresh document (it only appeared to work on the current, already-
   loaded document via the immediate eval). The store now ALSO re-evaluates every source
   on the page's `load` event (DOM present), so an injection genuinely survives a reload,
-  a navigation, a newly opened tab, and a daemon restart. The request-triggered first
-  apply is awaited and now SURFACES a hard failure (a known-open page the store can't
-  attach to) instead of swallowing it, so `POST /inject` can't 200 while applying to
-  nothing; async discovery of pages opened later stays best-effort.
+  a navigation, a newly opened tab, and a daemon restart. Injected sources may now run
+  twice per document (document-start hook + load re-eval), so they must be null-safe +
+  idempotent (documented in the README `/inject` note).
+- The request-triggered first apply is awaited and SURFACES a genuine browser-side fault
+  (a live page the store can't reach) as a **502** — while a tab closed concurrently with
+  the request is absorbed as a non-failure (no spurious error), and `POST /inject` can't
+  200 while applying to nothing; async discovery of pages opened later stays best-effort.
+  The desired state is now persisted even when the apply surfaces a fault, so a durable
+  session's injection is never silently lost on the next restart. Page CDP sessions get an
+  onClose prune so a dropped page socket re-attaches on the next apply (load hook stays live).
 
 ## [1.6.0]
 
