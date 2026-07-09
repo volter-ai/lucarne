@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/lucarne" },
     { "path": "packages/lucarne-records" },
-    { "path": "packages/lucarne-corpus-mcp" }
+    { "path": "packages/lucarne-corpus-mcp" },
+    { "path": "packages/lucarne-interact" }
   ]
 }

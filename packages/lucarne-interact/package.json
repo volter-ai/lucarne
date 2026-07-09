@@ -1,0 +1,62 @@
+{
+  "name": "lucarne-interact",
+  "version": "0.1.0",
+  "description": "The non-bot-like interaction plane: one human-paced presence over a lucarne session's cdpUrl. ACT verbs (open/snap/scroll/activate/back/capture/video.*) with enforced normal-distribution pacing after every verb; click/goto/eval do not exist.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aaron Volter",
+  "homepage": "https://github.com/volter-ai/lucarne#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/volter-ai/lucarne.git",
+    "directory": "packages/lucarne-interact"
+  },
+  "bugs": {
+    "url": "https://github.com/volter-ai/lucarne/issues"
+  },
+  "keywords": [
+    "browser",
+    "playwright",
+    "cdp",
+    "accessibility",
+    "anti-bot",
+    "human-paced",
+    "automation"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "lucarne-interact": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "npm run build && node test/tier-property.mjs && node test/pacing.mjs && node test/policy-free-gate.mjs && node test/cli-rejection.mjs",
+    "test:acceptance": "npm run build && node test/acceptance.mjs"
+  },
+  "peerDependencies": {
+    "playwright-core": ">=1.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "lucarne": "^1.6.1",
+    "playwright-core": "^1.49.0",
+    "typescript": "^5.7.0"
+  }
+}
