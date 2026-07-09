@@ -342,16 +342,19 @@ export class Lucarne {
         }
         bconn.close();
       }
-      // Sticky script injection (see inject.ts): wire target auto-attach coverage
-      // NOW, unconditionally (cheap — one extra CDP socket), so a later `/inject`
-      // call is covered from the moment it's set. `opts.inject` is the BOOT-RESTORE
-      // case — a durable session's persisted spec carries whatever was registered
-      // before the daemon last stopped; re-seed it here so a restart re-applies it.
+      // Sticky script injection (see inject.ts): created for every session but LAZY —
+      // it opens no CDP socket until the first injection. `opts.inject` is the
+      // BOOT-RESTORE case: a durable session's persisted spec carries whatever was
+      // registered before the daemon last stopped, so re-seed (and thereby start
+      // coverage for) it here; a session that never injects stays zero-footprint.
       inject = new InjectionStore(cdpUrl, this.injectPolicy);
-      await inject.start();
       if (opts.inject) {
         for (const [injId, def] of Object.entries(opts.inject)) {
-          await inject.set(injId, def.source, def.bypassCSP).catch(() => { /* a policy that tightened since — skip, don't fail boot */ });
+          // A persisted id the CURRENT policy now rejects throws here and is skipped,
+          // but stays in the spec — intentional: policy may loosen, so it's retried
+          // on each restart rather than silently dropped. (An explicit remove is the
+          // only thing that clears it.)
+          await inject.set(injId, def.source, def.bypassCSP).catch(() => { /* rejected-by-policy or a page not ready — skip, don't fail boot */ });
         }
       }
     } catch (e) {

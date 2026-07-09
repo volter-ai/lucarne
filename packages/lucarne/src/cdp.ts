@@ -9,6 +9,10 @@ export interface CdpConn {
   /** Request/response — resolves with `result`, rejects on CDP `error`. */
   call(method: string, params?: Record<string, unknown>): Promise<any>;
   on(method: string, cb: (params: any) => void): void;
+  /** Fires (at most once) when the socket closes — a drop (tab/Chrome gone) OR an
+   *  explicit `close()`. Lets a long-lived consumer re-establish coverage after a
+   *  blip; the callback runs immediately if the socket is already closed. */
+  onClose(cb: () => void): void;
   close(): void;
 }
 
@@ -45,6 +49,7 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
   let id = 1;
   let closed = false;
   const handlers = new Map<string, Set<(p: any) => void>>();
+  const closeCbs = new Set<() => void>();
   const pending = new Map<number, { resolve: (r: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   ws.onmessage = (m: { data: unknown }): void => {
     // A malformed frame or a throwing event handler must NOT crash the whole daemon —
@@ -68,13 +73,15 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
   // A dropped page socket (tab crash, Chrome GC of an idle target) otherwise goes SILENT —
   // input/screencast die with no signal. Reject every in-flight call so callers fail fast
   // instead of waiting out the 15s timeout, and mark closed so further calls reject at once.
-  const onClose = (): void => {
+  const handleClose = (): void => {
     if (closed) return;
     closed = true;
     for (const [, p] of pending) { clearTimeout(p.timer); p.reject(new Error("lucarne: CDP socket closed")); }
     pending.clear();
+    for (const cb of closeCbs) { try { cb(); } catch { /* a close subscriber throwing must not cascade */ } }
+    closeCbs.clear();
   };
-  ws.onclose = onClose;
+  ws.onclose = handleClose;
   await new Promise<void>((resolve, reject) => {
     ws.onopen = (): void => resolve();
     ws.onerror = (): void => reject(new Error("lucarne: CDP websocket failed"));
@@ -99,8 +106,9 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
       if (!handlers.has(method)) handlers.set(method, new Set());
       handlers.get(method)!.add(cb);
     },
+    onClose(cb): void { if (closed) { try { cb(); } catch { /* ignore */ } } else closeCbs.add(cb); },
     // Drain pending so a close() during an in-flight call doesn't leave it hanging on a
     // non-unref'd 15s timer (pinning the loop); idempotent with the onclose drain.
-    close(): void { onClose(); try { ws.close(); } catch { /* ignore */ } },
+    close(): void { handleClose(); try { ws.close(); } catch { /* ignore */ } },
   };
 }

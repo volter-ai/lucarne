@@ -27,7 +27,7 @@ interface PageSession {
  * store (`cadence/src/browser/server.ts:124-208`), which rode a Playwright
  * `BrowserContext`'s `page` event to cover new tabs; the engine has none, so
  * coverage of newly opened tabs instead comes from raw CDP target discovery
- * (`Target.setAutoAttach` / `Target.targetCreated`, see `start()` below).
+ * (`Target.setDiscoverTargets` → `Target.targetCreated`, see `start()` below).
  *
  * Three invariants carried over from the cadence original:
  *  - `Page.addScriptToEvaluateOnNewDocument` re-runs the script on every
@@ -40,14 +40,24 @@ interface PageSession {
  *    common case — you rarely inject into a fresh blank page) needs to also be
  *    evaluated into that already-loaded document; `addScriptToEvaluateOnNewDocument`
  *    only covers documents loaded AFTER it's registered.
+ *
+ * Lifecycle: LAZY. The browser-level discovery tap (one CDP socket + a
+ * `targetCreated`/`targetDestroyed` stream) only opens once there's something to
+ * cover — the first `set()`, or a boot-restore that re-applies a non-empty
+ * persisted set. A session that never injects pays nothing (matters on a
+ * "don't behave like a bot" tool, and on attached FOREIGN browsers we shouldn't
+ * touch beyond what's asked).
  */
 export class InjectionStore {
   private readonly sticky = new Map<string, StickyDef>();
   private readonly pageSessions = new Map<string, PageSession>();
   /** Every page target we know is open (from the initial list + `Target.targetCreated`/`targetDestroyed`) — the set `applyAll()` walks; a page only gets a live CDP session in `pageSessions` lazily, once there's something to apply to it. */
   private readonly knownTargets = new Set<string>();
+  /** Per-target promise chain so a `set()`→`applyAll()` and a `targetCreated` for the SAME target never interleave and double-register (which would orphan the first script id). */
+  private readonly applyChains = new Map<string, Promise<void>>();
   private readonly policy: InjectPolicy;
   private browserConn: CdpConn | undefined;
+  private started = false;
   private closed = false;
 
   constructor(private readonly cdpUrl: string, policy?: InjectPolicy) {
@@ -73,6 +83,11 @@ export class InjectionStore {
    */
   async set(id: string, source: string, bypassCSP = false): Promise<void> {
     if (!this.policy(id)) throw new Error(`lucarne: injection '${id}' rejected by policy`);
+    // LAZY: the first injection is what opens the browser-level discovery tap.
+    // Best-effort — like cadence's `/sticky`, the DESIRED STATE is recorded even
+    // if the browser can't be reached right now (it's applied on the next
+    // reachable moment / a restart), so a transient CDP hiccup never loses an id.
+    await this.start().catch(() => { /* browser not reachable yet — state still recorded below */ });
     await this.clearId(id); // drop any prior per-page registration before re-registering
     this.sticky.set(id, { source, bypassCSP });
     await this.applyAll();
@@ -86,42 +101,65 @@ export class InjectionStore {
 
   /**
    * Start covering this session's pages: apply the current sticky set to every
-   * open page now (this is the BOOT-RESTORE step — a fresh engine process re-
-   * seeds `sticky` from the persisted session spec and calls `set()` per entry
-   * before/around this, so a daemon restart re-applies everything), then keep
-   * covering pages that open LATER.
+   * open page now (this is also the BOOT-RESTORE path — a fresh engine process
+   * re-seeds `sticky` from the persisted session spec by calling `set()` per
+   * entry, and the first such `set()` calls this), then keep covering pages that
+   * open LATER. Idempotent: safe to call on every `set()`; opens the browser tap
+   * only once.
+   */
+  async start(): Promise<void> {
+    if (this.started || this.closed) return;
+    await this.openBrowserTap();   // may throw if the browser isn't reachable yet
+    this.started = true;           // only latch success, so a failed first attempt retries on the next set()
+  }
+
+  /**
+   * Open (or, after a drop, RE-open) the browser-level discovery tap: list the
+   * open pages and apply to each, then subscribe to target churn so new tabs are
+   * covered and closed tabs release their per-page session.
    *
    * New-tab coverage: cadence rode Playwright's `context.on('page', ...)`; the
    * engine has no Playwright `BrowserContext`, so this attaches to the session's
    * BROWSER-level CDP endpoint and turns on target discovery
-   * (`Target.setAutoAttach` + `Target.setDiscoverTargets`) — `Target.targetCreated`
-   * then fires for every new page target, which this applies to exactly like an
-   * already-open one.
+   * (`Target.setDiscoverTargets`) — `Target.targetCreated` then fires for every
+   * new target, which this applies (page targets only) exactly like an
+   * already-open one. (`Target.setAutoAttach` is deliberately NOT used: it emits
+   * `attachedToTarget`, not `targetCreated`, and would make Chrome attach a
+   * debugger session to every target — needless here, and rude on an attached
+   * foreign browser — while `setDiscoverTargets` alone gives us the events.)
    */
-  async start(): Promise<void> {
+  private async openBrowserTap(): Promise<void> {
     if (this.closed) return;
     for (const t of await listPages(this.cdpUrl)) {
       this.knownTargets.add(t.id);
       await this.applyToTarget(t.id).catch(() => { /* a page that's already gone — nothing to cover */ });
     }
-    this.browserConn = await attachBrowser(this.cdpUrl);
-    this.browserConn.on("Target.targetCreated", (p: { targetInfo?: { targetId: string; type: string } }) => {
+    const conn = await attachBrowser(this.cdpUrl);
+    if (this.closed) { try { conn.close(); } catch { /* ignore */ } return; }
+    this.browserConn = conn;
+    conn.on("Target.targetCreated", (p: { targetInfo?: { targetId: string; type: string } }) => {
       if (p.targetInfo?.type !== "page") return;
       const targetId = p.targetInfo.targetId;
       this.knownTargets.add(targetId);
       void this.applyToTarget(targetId).catch(() => { /* races the tab's own close — ignore */ });
     });
-    this.browserConn.on("Target.targetDestroyed", (p: { targetId?: string }) => {
+    conn.on("Target.targetDestroyed", (p: { targetId?: string }) => {
       if (!p.targetId) return;
       this.knownTargets.delete(p.targetId);
       const s = this.pageSessions.get(p.targetId);
       if (s) { try { s.cdp.close(); } catch { /* already gone */ } this.pageSessions.delete(p.targetId); }
     });
-    // `setAutoAttach` is the modern, cross-version-reliable way to turn on
-    // Target.targetCreated for new top-level targets; `setDiscoverTargets` is
-    // kept alongside it (belt + suspenders — harmless if already implied).
-    await this.browserConn.call("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => { /* best-effort */ });
-    await this.browserConn.call("Target.setDiscoverTargets", { discover: true }).catch(() => { /* best-effort */ });
+    // RESILIENCE: if this discovery socket drops while Chrome lives (a transient
+    // blip), target-churn coverage would otherwise die silently. Re-open once on
+    // close (unless WE closed it, or it was already superseded). A genuinely-dead
+    // Chrome makes the re-attach throw → swallow + log (degraded, not a crash);
+    // the fresh tap's own onClose re-arms this for the next blip.
+    conn.onClose(() => {
+      if (this.closed || this.browserConn !== conn) return;
+      this.browserConn = undefined;
+      this.openBrowserTap().catch(() => { console.warn(`lucarne: inject discovery tap for ${this.cdpUrl} dropped and could not be re-opened — new-tab coverage degraded until the next inject`); });
+    });
+    await conn.call("Target.setDiscoverTargets", { discover: true }).catch(() => { /* best-effort */ });
   }
 
   /** Release every held per-page CDP session + the browser-level discovery tap (session teardown). */
@@ -148,11 +186,27 @@ export class InjectionStore {
   }
 
   /**
+   * Serialize `applyToTargetInner` PER TARGET: a `set()`→`applyAll()` and a
+   * `targetCreated` for the same target must not both pass the
+   * `!scriptIds.has(id)` check and double-register the same script (which orphans
+   * the first identifier → a removed injection keeps firing as a ghost). Each
+   * target runs its applies one-at-a-time via a tail-chained promise.
+   */
+  private applyToTarget(targetId: string): Promise<void> {
+    const prev = this.applyChains.get(targetId) ?? Promise.resolve();
+    const next = prev.catch(() => { /* a prior apply failing must not block the next */ }).then(() => this.applyToTargetInner(targetId));
+    this.applyChains.set(targetId, next);
+    // Drop the chain entry once it settles (if still the tail) so the map doesn't grow per-target forever.
+    void next.finally(() => { if (this.applyChains.get(targetId) === next) this.applyChains.delete(targetId); }).catch(() => { /* caller owns the rejection */ });
+    return next;
+  }
+
+  /**
    * Register every policy-accepted sticky script on ONE page. Lazily opens (and
    * then holds) a dedicated CDP session for the page — the LIVE session cadence's
    * comment calls out, needed because `Page.setBypassCSP` dies with the session.
    */
-  private async applyToTarget(targetId: string): Promise<void> {
+  private async applyToTargetInner(targetId: string): Promise<void> {
     if (this.closed) return;
     const ids = this.ids();
     if (!ids.length) return; // nothing accepted yet — don't pay for a page session
@@ -160,6 +214,9 @@ export class InjectionStore {
     if (!s) {
       const cdp = await attachPage(this.cdpUrl, targetId);
       await cdp.call("Page.enable").catch(() => { /* best-effort */ });
+      // A targetDestroyed/close() during the awaits above means this conn is now
+      // stale — storing it would leak a socket + a ghost page session. Close + skip.
+      if (this.closed || !this.knownTargets.has(targetId)) { try { cdp.close(); } catch { /* ignore */ } return; }
       s = { cdp, scriptIds: new Map(), cspEnabled: false };
       this.pageSessions.set(targetId, s);
     }

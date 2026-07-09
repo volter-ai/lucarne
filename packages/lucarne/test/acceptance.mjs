@@ -1370,7 +1370,7 @@ if (process.env.LUCARNE_TEST_HEADED === "1") {
 }
 
 // ── STICKY INJECTION (LS-02): a registered script survives (a) a page reload,
-// (b) a NEWLY OPENED tab (raw CDP target auto-attach — the engine has no
+// (b) a NEWLY OPENED tab (raw CDP target discovery — the engine has no
 // Playwright `BrowserContext.on('page')`), and (c) a full engine daemon restart
 // (the durable session's persisted spec carries the injection; `restore()`
 // re-applies it). This is the one CHROME-REQUIRED half of LS-02's proof — the
@@ -1402,13 +1402,13 @@ if (process.env.LUCARNE_TEST_HEADED === "1") {
       check("inject(a): survives a page reload", (await readMarker(c1)) === MARKER);
       c1.close();
 
-      // (b) COVERS A NEWLY OPENED TAB — via raw CDP Target.setAutoAttach/targetCreated,
+      // (b) COVERS A NEWLY OPENED TAB — via raw CDP Target.setDiscoverTargets/targetCreated,
       // NOT a Playwright `context.on('page')` (the engine has no Playwright).
       const b = await attachBrowser(s.cdpUrl);
       const { targetId } = await b.call("Target.createTarget", { url: "https://example.com" });
-      await sleep(1800); // let auto-attach discover it, apply the script, and the page load
+      await sleep(1800); // let target discovery see it, apply the script, and the page load
       const c2 = await attachPage(s.cdpUrl, targetId);
-      check("inject(b): covers a NEWLY OPENED tab (raw CDP target auto-attach)", (await readMarker(c2)) === MARKER);
+      check("inject(b): covers a NEWLY OPENED tab (raw CDP target discovery)", (await readMarker(c2)) === MARKER);
       c2.close(); b.close();
     } finally {
       await injEngine.close().catch(() => {}); // graceful stop — KEEPS the persisted spec (not destroy)

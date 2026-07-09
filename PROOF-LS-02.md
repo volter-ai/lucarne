@@ -17,11 +17,12 @@ This file is the evidence artifact for the three ACs, following the `PROOF-LS-01
     `Page.setBypassCSP` is bound to the *session's* lifetime, not the page's — cadence's own
     comment (`server.ts:126-127`) is the reason this can't be a call-and-forget.
   - **New-tab coverage without Playwright**: cadence rode a Playwright `BrowserContext`'s
-    `context.on('page', ...)`. The engine has no `BrowserContext`, so `InjectionStore.start()`
-    instead opens the session's browser-level CDP endpoint and turns on target discovery
-    (`Target.setAutoAttach` + `Target.setDiscoverTargets`); `Target.targetCreated` fires for every
-    new page target and is applied exactly like an already-open one. `Target.targetDestroyed`
-    releases the per-page session when a tab closes.
+    `context.on('page', ...)`. The engine has no `BrowserContext`, so the store opens the
+    session's browser-level CDP endpoint and turns on target discovery
+    (`Target.setDiscoverTargets`); `Target.targetCreated` fires for every new page target and is
+    applied exactly like an already-open one. `Target.targetDestroyed` releases the per-page
+    session when a tab closes. (`Target.setAutoAttach` is deliberately NOT used — it emits
+    `attachedToTarget`, not `targetCreated`, and would attach a debugger to every target.)
   - `injectPolicy(id) => boolean` hook (default permissive) gates `set()` (throws on rejection) and
     filters `ids()` (a rejected id is never listed even if a since-changed policy once accepted it).
 - **`engine.ts` wiring**: `Tracked.inject: InjectionStore`, created + `.start()`ed unconditionally at
@@ -59,7 +60,7 @@ Out of scope, confirmed untouched: the widget package (LS-15) and any shell-only
    - the script is applied to the already-open page immediately after `setInjection()`,
    - **(a)** it survives `Page.reload()`,
    - **(b)** it covers a target opened via `Target.createTarget` (a NEWLY OPENED tab) —
-     specifically exercising the raw-CDP auto-attach path, not a Playwright `page` event,
+     specifically exercising the raw-CDP target-discovery path, not a Playwright `page` event,
    - **(c)** a SECOND, freshly-constructed `Lucarne` engine (same `registryFile`, after the first
      is gracefully `.close()`d — which keeps the persisted spec) calls `restore()` and the marker
      is present on the restored session's page, both immediately (eval-into-loaded-doc) and after a

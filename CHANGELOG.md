@@ -15,7 +15,7 @@ sticky store onto the engine's own raw CDP client, so the engine stays Playwrigh
   remove (`{id, remove:true}`) a *sticky* script injection: applied to the session's
   already-open pages immediately, re-applied on every reload
   (`Page.addScriptToEvaluateOnNewDocument`), and covering NEWLY OPENED tabs via raw CDP
-  target discovery (`Target.setAutoAttach`/`Target.targetCreated`) — no Playwright
+  target discovery (`Target.setDiscoverTargets`/`Target.targetCreated`) — no Playwright
   `BrowserContext` page event is available or used. `bypassCSP:true` holds a LIVE
   per-page CDP session for as long as the page is open (`Page.setBypassCSP` is bound to
   the session's lifetime, not the page's). The injection set is persisted into the

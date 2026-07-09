@@ -1,10 +1,10 @@
 // Non-browser proofs for LS-02 (sticky script injection) — everything here runs
 // with NO Chrome/Docker: the store's add/remove/list bookkeeping, the
 // `injectPolicy` accept/reject hook (including over REAL HTTP, via a fake
-// session seeded directly into the engine's session map — the point being that
-// `InjectionStore.set()`/`.ids()` never touch the network until `.start()` is
-// called, and a fake session here never calls it), and the session-spec
-// persistence round-trip on disk (the additive `inject` field on
+// session seeded directly into the engine's session map — `set()` best-effort
+// tries to open a CDP tap but fails-soft against the unreachable test CDP url,
+// so the desired-state bookkeeping is still fully observable), and the
+// session-spec persistence round-trip on disk (the additive `inject` field on
 // `CreateSessionOptions`, through the SAME `readReg`/`writeReg`/`persistInject`
 // code paths the engine uses at runtime).
 //
@@ -25,11 +25,21 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-// A deliberately unreachable CDP url: legitimate because none of the assertions
-// below ever call `store.start()` — `set()`/`remove()`/`ids()` are pure
-// bookkeeping over an empty `knownTargets` set until something calls `start()`
-// (which is what does the real CDP work: `listPages`/`attachBrowser`/`attachPage`).
+// A deliberately unreachable CDP url. `set()` DOES lazily try to open the CDP
+// discovery tap, but that's best-effort: against an unreachable browser it
+// fails-soft (connection refused, fast) and the DESIRED STATE is still recorded,
+// so `set()`/`remove()`/`ids()`/`snapshot()` remain observable pure bookkeeping
+// here — no real browser, no hang. (Real CDP coverage is proven in the
+// Chrome-gated `test/acceptance.mjs` STICKY INJECTION section.)
 const DEAD_CDP = "http://127.0.0.1:1";
+
+// A fake tracked session with just enough shape for `engine.close()`→`destroy()`
+// to tear it down cleanly (no real backend/media/CDP): a no-op `media.close`, a
+// no-op `stop`, `attached:true` so no engine port is reclaimed, and dirs pointing
+// at a guaranteed-absent path so the teardown `rmSync(force:true)` is a clean
+// no-op. Without these, teardown throws (swallowed) and mis-accounts the slot.
+const NOWHERE = path.join(os.tmpdir(), "lucarne-inject-unit-nonexistent");
+const fakeSession = (inject) => ({ inject, media: { close() {} }, stop: async () => {}, attached: true, downloadDir: NOWHERE, filesDir: NOWHERE });
 
 // ── dev/01: store add/remove/list logic (no CDP, no network) ────────────────
 {
@@ -70,14 +80,14 @@ const DEAD_CDP = "http://127.0.0.1:1";
 // ── dev/02: injectPolicy hook — over REAL HTTP (the actual route + 4xx code) ──
 // A fake session is seeded directly into the engine's session map (bypassing
 // backend/CDP spawn entirely — legitimate here because `POST/GET /inject`
-// touches only `session.inject`, and that InjectionStore's `.start()` is never
-// called, so nothing ever dials the network).
+// touches only `session.inject`, and that InjectionStore's lazy CDP tap
+// fails-soft against the unreachable test url, so no real browser is needed).
 {
   const PORT = 17901, TOKEN = "inject-test-token";
   const engine = new Lucarne({ port: PORT, token: TOKEN, record: false, injectPolicy: (id) => id !== "X" });
   await engine.listen();
   const FAKE_ID = "fake-http";
-  engine.sessions.set(FAKE_ID, { inject: new InjectionStore(DEAD_CDP, engine.injectPolicy) });
+  engine.sessions.set(FAKE_ID, fakeSession(new InjectionStore(DEAD_CDP, engine.injectPolicy)));
   const F = (p, opts = {}) => fetch(`http://127.0.0.1:${PORT}${p}`, { ...opts, headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...(opts.headers || {}) } });
   try {
     const ok = await F(`/sessions/${FAKE_ID}/inject`, { method: "POST", body: JSON.stringify({ id: "shell", source: "1+1", bypassCSP: true }) });
@@ -122,7 +132,7 @@ const DEAD_CDP = "http://127.0.0.1:1";
     const liveStore = new InjectionStore(DEAD_CDP);
     await liveStore.set("shell", "console.log(2)", false);
     await liveStore.set("second", "console.log(3)", true);
-    engine.sessions.set("durable1", { inject: liveStore });
+    engine.sessions.set("durable1", fakeSession(liveStore));
     engine.persistInject("durable1");
     const afterSync = JSON.parse(fs.readFileSync(registryFile, "utf8"));
     check("persist: persistInject() syncs the registry to the live store's snapshot",
@@ -131,7 +141,7 @@ const DEAD_CDP = "http://127.0.0.1:1";
     // A session that was never persisted (not in the registry) must NOT be
     // written into it just because it's live — persistInject() is a sync, not a
     // promotion to durable.
-    engine.sessions.set("ephemeral", { inject: new InjectionStore(DEAD_CDP) });
+    engine.sessions.set("ephemeral", fakeSession(new InjectionStore(DEAD_CDP)));
     engine.persistInject("ephemeral");
     const stillNoEphemeral = JSON.parse(fs.readFileSync(registryFile, "utf8"));
     check("persist: an ephemeral (non-durable) session is never written into the registry", !("ephemeral" in stillNoEphemeral));
