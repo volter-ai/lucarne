@@ -1396,7 +1396,8 @@ if (process.env.LUCARNE_TEST_HEADED === "1") {
       await sleep(1500);
       check("inject: applied into the already-open page (eval, not just future reloads)", (await readMarker(c1)) === MARKER);
 
-      // (a) SURVIVES A RELOAD — addScriptToEvaluateOnNewDocument re-runs it
+      // (a) SURVIVES A RELOAD — the per-page load hook re-runs the source (with the
+      // DOM present) on top of the document-start addScriptToEvaluateOnNewDocument hook
       c1.send("Page.reload", {});
       await sleep(1500);
       check("inject(a): survives a page reload", (await readMarker(c1)) === MARKER);
@@ -1426,8 +1427,9 @@ if (process.env.LUCARNE_TEST_HEADED === "1") {
         const c3 = await attachPage(back.cdpUrl);
         // The restored process re-applies immediately (eval into whatever page is open)...
         check("inject(c): marker present immediately on the restored session's page", (await readMarker(c3)) === MARKER);
-        // ...AND addScriptToEvaluateOnNewDocument was re-registered from the restored
-        // spec (not just a one-off eval) — prove it survives a FRESH navigation too.
+        // ...AND the restore re-registered the source for FUTURE documents (the
+        // document-start hook + the per-page load hook), not just a one-off eval —
+        // prove it survives a FRESH navigation too.
         c3.send("Page.navigate", { url: "https://example.com" });
         await sleep(1500);
         check("inject(c): the injected script survives a full engine daemon restart (re-applied on the restored session + re-registered for future nav)", (await readMarker(c3)) === MARKER);

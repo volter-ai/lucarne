@@ -10,7 +10,7 @@ import { nativeBackend } from "./backends/native.js";
 import { attachBrowser } from "./cdp.js";
 import { FileCredentialStore, totpCode, type CredentialProvider } from "./credentials.js";
 import { readBodyCapped, serveWorkspace, type Send } from "./http.js";
-import { InjectionStore, type InjectPolicy } from "./inject.js";
+import { InjectionStore, INJECT_APPLY_FAILED_CODE, type InjectPolicy } from "./inject.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
 import { portholeHtml } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
@@ -582,7 +582,9 @@ export class Lucarne {
    * Register/replace (`{id, source, bypassCSP?}`) or remove (`{id, remove:true}`)
    * a session's sticky script injection (see inject.ts) — survives page reload, a
    * newly opened tab, and (via the persisted spec) a daemon restart. Throws on a
-   * missing `id` or a policy rejection; the HTTP route turns either into a 4xx.
+   * missing `id` / policy rejection (the route → 4xx) or a browser-side apply fault
+   * (tagged `INJECT_APPLY_FAILED_CODE` → 502); the desired state is persisted either
+   * way so an injection never silently vanishes on the next restart.
    */
   async setInjection(id: string, body: { id?: string; source?: string; bypassCSP?: boolean; remove?: boolean }): Promise<{ ok: true; id: string } | { ok: true; removed: string }> {
     const s = this.sessions.get(id);
@@ -593,8 +595,15 @@ export class Lucarne {
       this.persistInject(id);
       return { ok: true, removed: body.id };
     }
-    await s.inject.set(body.id, String(body.source ?? ""), !!body.bypassCSP);
-    this.persistInject(id);
+    try {
+      await s.inject.set(body.id, String(body.source ?? ""), !!body.bypassCSP);
+    } finally {
+      // Persist the live desired state even if the apply surfaced a browser-side
+      // fault: set() records the id BEFORE applying, so the durable spec must match
+      // (else the injection silently vanishes on the next daemon restart). No-op on a
+      // policy rejection (the id was never recorded) or a non-durable session.
+      this.persistInject(id);
+    }
     return { ok: true, id: body.id };
   }
 
@@ -993,10 +1002,15 @@ v.addEventListener('ended',()=>{i++;play()});play();});
             const body = (await readBodyCapped(req)).toString();
             let parsed: { id?: string; source?: string; bypassCSP?: boolean; remove?: boolean };
             try { parsed = body ? JSON.parse(body) : {}; } catch { return send(res, 400, { error: "invalid JSON body" }); }
-            // A missing id / a policy rejection is a 4xx (caller error), not a 500 —
-            // caught here rather than falling through to the router's generic catch.
+            // A missing id / a policy rejection is a 400 (caller error); a browser-
+            // side apply fault (a live page the store can't reach) is a 502 (fault
+            // talking to Chrome, not the caller's fault). Caught here rather than
+            // falling through to the router's generic 500.
             try { return send(res, 200, await this.setInjection(id!, parsed)); }
-            catch (e) { return send(res, 400, { error: String((e as Error).message ?? e) }); }
+            catch (e) {
+              const status = (e as { code?: string }).code === INJECT_APPLY_FAILED_CODE ? 502 : 400;
+              return send(res, status, { error: String((e as Error).message ?? e) });
+            }
           }
           return send(res, 405, { error: "method not allowed" });
         }

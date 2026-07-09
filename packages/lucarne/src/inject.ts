@@ -14,6 +14,14 @@ export interface StickyDef {
  */
 export type InjectPolicy = (id: string) => boolean;
 
+/**
+ * Error `.code` set when the request-path FIRST apply hits a genuine browser-side
+ * fault — a page the store knows is live but cannot reach (e.g. a dead debugger
+ * socket). The HTTP route maps it to 502 (a fault talking to Chrome, NOT a caller
+ * error). A concurrently-closed tab is deliberately NOT this — it's absorbed.
+ */
+export const INJECT_APPLY_FAILED_CODE = "LUCARNE_INJECT_APPLY_FAILED";
+
 interface PageSession {
   cdp: CdpConn;
   /** CDP script identifier per injection id, so a later removal targets the right registration. */
@@ -31,15 +39,20 @@ interface PageSession {
  *
  * Three invariants carried over from the cadence original:
  *  - `Page.addScriptToEvaluateOnNewDocument` re-runs the script on every
- *    reload/navigation for free — that's what makes it "sticky".
+ *    reload/navigation for free — but it fires at document-START (before
+ *    `document.documentElement` exists), so a source that touches the DOM would
+ *    throw there. So we ALSO re-evaluate every source on the page's `load` event
+ *    (DOM present); together they make an injection reliably "stick" across
+ *    reloads and navigations. Sources are idempotent by contract (they already
+ *    re-run on every navigation), so the extra load-time run is safe.
  *  - `Page.setBypassCSP` is bound to the CDP SESSION's lifetime, not the page's —
  *    dropping the session silently drops the bypass on the next reload. So a
  *    LIVE per-page CDP session is held for as long as the page is open, not
  *    reopened per call.
  *  - A script registered on a page that already has a document loaded (the
  *    common case — you rarely inject into a fresh blank page) needs to also be
- *    evaluated into that already-loaded document; `addScriptToEvaluateOnNewDocument`
- *    only covers documents loaded AFTER it's registered.
+ *    evaluated into that already-loaded document NOW (no `load` event will fire
+ *    for it); `addScriptToEvaluateOnNewDocument` only covers FUTURE documents.
  *
  * Lifecycle: LAZY. The browser-level discovery tap (one CDP socket + a
  * `targetCreated`/`targetDestroyed` stream) only opens once there's something to
@@ -51,9 +64,9 @@ interface PageSession {
 export class InjectionStore {
   private readonly sticky = new Map<string, StickyDef>();
   private readonly pageSessions = new Map<string, PageSession>();
-  /** Every page target we know is open (from the initial list + `Target.targetCreated`/`targetDestroyed`) — the set `applyAll()` walks; a page only gets a live CDP session in `pageSessions` lazily, once there's something to apply to it. */
+  /** Every page target we know is open (from the initial list + `Target.targetCreated`/`targetDestroyed`) — the set `applyToOpenPages()` walks; a page only gets a live CDP session in `pageSessions` lazily, once there's something to apply to it. */
   private readonly knownTargets = new Set<string>();
-  /** Per-target promise chain so a `set()`→`applyAll()` and a `targetCreated` for the SAME target never interleave and double-register (which would orphan the first script id). */
+  /** Per-target promise chain so a `set()`→`applyToOpenPages()` and a `targetCreated` for the SAME target never interleave and double-register (which would orphan the first script id). */
   private readonly applyChains = new Map<string, Promise<void>>();
   private readonly policy: InjectPolicy;
   private browserConn: CdpConn | undefined;
@@ -90,7 +103,11 @@ export class InjectionStore {
     await this.start().catch(() => { /* browser not reachable yet — state still recorded below */ });
     await this.clearId(id); // drop any prior per-page registration before re-registering
     this.sticky.set(id, { source, bypassCSP });
-    await this.applyAll();
+    // The request-triggered FIRST apply is AWAITED (and surfaces a hard failure —
+    // see applyToOpenPages), so when `set()` resolves the caller's HTTP response
+    // honestly means "registered on + applied to every currently-open page." Only
+    // the async DISCOVERY of pages opened LATER stays best-effort (openBrowserTap).
+    await this.applyToOpenPages();
   }
 
   /** Drop a sticky injection. Idempotent — removing an absent id is a no-op. */
@@ -181,12 +198,51 @@ export class InjectionStore {
     }
   }
 
-  private async applyAll(): Promise<void> {
-    for (const targetId of this.knownTargets) await this.applyToTarget(targetId).catch(() => { /* one bad target must not block the rest */ });
+  /**
+   * Apply the current sticky set to EVERY currently-open page, AWAITED — the
+   * request-triggered first apply. When it resolves, every open page has the
+   * script registered (`addScriptToEvaluateOnNewDocument`) + a load-hook + the
+   * source eval'd into its already-loaded document. A HARD failure — a page we
+   * know is open that we can't attach to — SURFACES (so the request path doesn't
+   * silently no-op); per-page CDP hiccups on Page.enable/addScript/eval stay
+   * best-effort inside applyToTargetInner (the load hook + future re-apply cover
+   * them). Pages opened LATER are the discovery handler's job, not this.
+   */
+  private async applyToOpenPages(): Promise<void> {
+    let firstError: unknown;
+    for (const targetId of [...this.knownTargets]) {
+      try { await this.applyToTarget(targetId); }
+      catch (e) { if (firstError === undefined) firstError = e; }
+    }
+    if (firstError !== undefined) {
+      // Tag it so the HTTP route can answer 502 (browser fault), not 400. A
+      // concurrently-closed tab never reaches here — applyToTargetInner absorbs it.
+      const err = firstError instanceof Error ? firstError : new Error(String(firstError));
+      (err as Error & { code?: string }).code = INJECT_APPLY_FAILED_CODE;
+      throw err;
+    }
   }
 
   /**
-   * Serialize `applyToTargetInner` PER TARGET: a `set()`→`applyAll()` and a
+   * Re-evaluate every policy-accepted source into a page whose document just
+   * finished loading — the `load`-event half of the sticky guarantee (see the
+   * class doc): `addScriptToEvaluateOnNewDocument` runs at document-start before
+   * the DOM root exists, so this load-time re-run is what actually lands a
+   * DOM-touching source on each fresh navigation/reload. Best-effort + guarded.
+   */
+  private async reevalLoaded(targetId: string): Promise<void> {
+    if (this.closed) return;
+    const s = this.pageSessions.get(targetId);
+    if (!s) return;
+    for (const id of this.ids()) {
+      const def = this.sticky.get(id);
+      if (!def) continue;
+      try { await s.cdp.call("Runtime.evaluate", { expression: def.source }); } catch { /* page navigating/gone */ }
+    }
+  }
+
+  /**
+   * Serialize `applyToTargetInner` PER TARGET: a `set()`→`applyToOpenPages()` and a
    * `targetCreated` for the same target must not both pass the
    * `!scriptIds.has(id)` check and double-register the same script (which orphans
    * the first identifier → a removed injection keeps firing as a ghost). Each
@@ -212,13 +268,38 @@ export class InjectionStore {
     if (!ids.length) return; // nothing accepted yet — don't pay for a page session
     let s = this.pageSessions.get(targetId);
     if (!s) {
-      const cdp = await attachPage(this.cdpUrl, targetId);
+      let cdp: CdpConn;
+      try {
+        cdp = await attachPage(this.cdpUrl, targetId);
+      } catch (e) {
+        // The tab closed concurrently with this apply: `Target.targetDestroyed` may
+        // not have pruned `knownTargets` yet, so attachPage can't find the target
+        // ("no CDP page target"). A gone page is NOT a failure — absorb it (every
+        // live page was still covered) and let discovery settle. A DIFFERENT error
+        // (a dead debugger socket on a still-live target) is a genuine hard failure
+        // and propagates (→ applyToOpenPages surfaces it as 502).
+        if (!this.knownTargets.has(targetId) || /no CDP page target/i.test(String((e as Error)?.message ?? e))) return;
+        throw e;
+      }
+      // Page.enable turns on the Page lifecycle events (incl. loadEventFired) this
+      // session's load hook rides — so it must actually land, not just be fired off.
       await cdp.call("Page.enable").catch(() => { /* best-effort */ });
       // A targetDestroyed/close() during the awaits above means this conn is now
       // stale — storing it would leak a socket + a ghost page session. Close + skip.
       if (this.closed || !this.knownTargets.has(targetId)) { try { cdp.close(); } catch { /* ignore */ } return; }
-      s = { cdp, scriptIds: new Map(), cspEnabled: false };
-      this.pageSessions.set(targetId, s);
+      const session: PageSession = { cdp, scriptIds: new Map(), cspEnabled: false };
+      s = session;
+      this.pageSessions.set(targetId, session);
+      // Re-run every source once each navigation/reload has produced a DOM. This is
+      // the reliable half of "sticky": addScriptToEvaluateOnNewDocument (below) fires
+      // at document-START, before document.documentElement exists, so a DOM-touching
+      // source no-ops there; re-evaluating on load lands it.
+      cdp.on("Page.loadEventFired", () => { void this.reevalLoaded(targetId); });
+      // If this page's socket drops while the target lives, prune the dead conn so a
+      // FUTURE apply re-attaches (otherwise `s` lingers, the load hook goes silent,
+      // and applyToTargetInner never re-creates it). Same resilience the browser tap
+      // has; non-throwing (the cdp onClose callback is guarded).
+      cdp.onClose(() => { if (this.pageSessions.get(targetId) === session) this.pageSessions.delete(targetId); });
     }
     if (ids.some((id) => this.sticky.get(id)?.bypassCSP) && !s.cspEnabled) {
       try { await s.cdp.call("Page.setBypassCSP", { enabled: true }); s.cspEnabled = true; } catch { /* best-effort */ }
@@ -230,11 +311,12 @@ export class InjectionStore {
         try {
           const r = await s.cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: def.source });
           s.scriptIds.set(id, r.identifier);
-        } catch { /* best-effort — a future reload will retry via applyAll() */ }
+        } catch { /* best-effort — the load hook + a future apply still cover execution */ }
       }
-      // Also run it into the document that's ALREADY loaded — `addScriptToEvaluateOnNewDocument`
-      // only fires for documents loaded from now on, so a script registered mid-session
-      // would otherwise sit inert until the next navigation.
+      // Run it into the document that's ALREADY loaded NOW — no `load` event will
+      // fire for the current document, and addScriptToEvaluateOnNewDocument only
+      // covers FUTURE documents, so a source registered mid-session would otherwise
+      // sit inert until the next navigation.
       try { await s.cdp.call("Runtime.evaluate", { expression: def.source }); } catch { /* page not ready / navigating — ignore */ }
     }
   }
