@@ -1,4 +1,4 @@
 {
   "files": [],
-  "references": [{ "path": "packages/lucarne" }]
+  "references": [{ "path": "packages/lucarne" }, { "path": "packages/lucarne-records" }]
 }
