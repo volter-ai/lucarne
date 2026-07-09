@@ -23,8 +23,10 @@ export type RecallCaptureReason = "initial" | "navigated" | "new-content" | "scr
 /** Why a watched-video recording stopped (recall.ts:219-236's `reason`). */
 export type RecallVideoStopReason = "ended" | "looped" | "looked-away" | "cap" | "gone" | "paused";
 
-/** A durable, structured event recall emits for every capture/video it makes — the thing an
- *  `observers` hook (or a future summary pass, LS-14) consumes instead of parsing a raw log. */
+/** A durable, structured event recall emits for every capture/video/wire-response it makes — the
+ *  thing an `observers` hook (or a future summary pass, LS-14) consumes instead of parsing a raw
+ *  log. Both sensors (screen + wire, LS-13W) publish through this ONE union so a consumer never
+ *  needs to know which sensor produced a given signal to observe the recorder as a whole. */
 export type RecallSignal =
   | {
       kind: "capture";
@@ -47,6 +49,15 @@ export type RecallSignal =
       mp4: string | null;
       watchedRange: [number, number];
       frames: number;
+    }
+  | {
+      /** The WIRE sensor (LS-13W): a passively CDP-captured GraphQL response was parsed into one or
+       *  more `via:'internal-api'` records. `url` is the response's OWN request url (query string
+       *  included) — never a url this recorder requested itself. */
+      kind: "wire";
+      ts: string;
+      url: string;
+      recordsAdded: number;
     };
 
 export type RecallObserverFn = (signal: RecallSignal) => void;
@@ -56,4 +67,8 @@ export type RecallObserverFn = (signal: RecallSignal) => void;
  *  `isEnabled` (or no `toggles` at all) means "always enabled", matching cadence's default-ON law. */
 export interface RecallToggles {
   isEnabled?(): boolean;
+  /** Same contract as `isEnabled`, scoped to the WIRE sensor (LS-13W) alone — a caller that wants
+   *  the screen sensor running without the wire sensor (or vice versa) can differentiate; absent
+   *  means "same as `isEnabled`" (both sensors default ON together). */
+  isWireEnabled?(): boolean;
 }

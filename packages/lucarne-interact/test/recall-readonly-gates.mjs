@@ -1,5 +1,5 @@
-// LS-13 dev/02 — the read-only law gates (Chrome-free, grep-only). Safety law 3: the recorder is
-// read-only AND makes ZERO synthetic requests.
+// LS-13/LS-13W dev/02 — the read-only law gates (Chrome-free, grep-only). Safety law 3: the
+// recorder is read-only AND makes ZERO synthetic requests.
 //
 //  1. No `/eval` usage anywhere in recall — the `/eval` REPL + cross-eval `globalThis` state
 //     (cadence's `recall.ts:44-60`) is RETIRED; recall holds its own in-process state instead.
@@ -7,9 +7,15 @@
 //     image crops derive from the session's OWN screenshot via the shared assembler
 //     (`cropImageFromScreenshot`, `video/assembler.ts`), never a network request.
 //  3. No `click`/`goto`/`eval` — recall never drives the page (only reads: ARIA, screenshot,
-//     screencast, DOM probes).
+//     screencast, DOM probes, and — LS-13W — the CDP `Network` domain's passive response tap).
 //  4. `lucarne-records` is a real dependency; NO `lucarne` (the engine) import exists in src/ —
 //     recall talks to a session purely through its `cdpUrl`, same posture as `session.ts`.
+//  5. LS-13W: no `fetch(`/`XMLHttpRequest`/`chrome.windows`/`Fetch.enable`/`Fetch.continueRequest`/
+//     `__cs_scroll`/`activeFetch` anywhere in recall — the WIRE sensor is a CDP `Network`-domain tap,
+//     never the request-pausing `Fetch` domain, never a MV3-extension-shaped synthetic call. The
+//     only CDP domains this package ever `.send()`s/`.enable`s for CAPTURE are `Network` (LS-13W)
+//     and the pre-existing `Page.startScreencast` family (LS-13) — asserted directly against the
+//     domain names appearing before a `.send(`/`.enable(` call in src/recall.
 //
 // Run with `node test/recall-readonly-gates.mjs` (no build needed — this only greps src/ + reads
 // package.json).
@@ -73,6 +79,38 @@ check("recall never imports the engine's internal src/cdp.ts (it owns its own pl
 //    cadence-specific strings leaked into the new files) ──
 const policyHits = grep("FEEDS|x\\.com/home|\\.social|channels/", RECALL_SRC);
 check("no cadence policy strings in src/recall either", policyHits.length === 0, policyHits.join(" | "));
+
+// ── 5. LS-13W: the exact spec'd banned-pattern grep, 0 hits ──
+const bannedPattern = 'fetch\\(|XMLHttpRequest|chrome\\.windows|Fetch\\.(enable|continueRequest)|__cs_scroll|activeFetch';
+const bannedHits = grep(bannedPattern, RECALL_SRC);
+check("LS-13W banned-pattern gate: 0 hits for fetch(|XMLHttpRequest|chrome.windows|Fetch.(enable|continueRequest)|__cs_scroll|activeFetch in src/recall", bannedHits.length === 0, bannedHits.join(" | "));
+
+// ── 6. LS-13W: `Network` is the ONLY new CDP domain enabled/sent for capture; `Fetch.*` stays 0 ──
+// Collect every `<Domain>.<method>` string literal passed to a CDP session's `.send(...)` anywhere
+// recall's capture path reaches (src/recall itself, plus src/video/assembler.ts — the shared
+// screencast tap `video-watch.ts` calls into) and assert the domain set is exactly the
+// pre-LS-13W allowance (`Page` screencast, `Target` for actor-attribution identity) PLUS `Network`
+// (LS-13W) — nothing else, and specifically never `Fetch`.
+const VIDEO_SRC = path.join(SRC, "video");
+function collectSendDomains(dir) {
+  const hits = grep('\\.send\\(\\s*["\']([A-Za-z]+)\\.[A-Za-z]+', dir);
+  const domains = new Set();
+  for (const line of hits) {
+    const m = line.match(/\.send\(\s*["']([A-Za-z]+)\./);
+    if (m) domains.add(m[1]);
+  }
+  return domains;
+}
+const sendDomains = new Set([...collectSendDomains(RECALL_SRC), ...collectSendDomains(VIDEO_SRC)]);
+const ALLOWED_DOMAINS = new Set(["Network", "Page", "Target"]);
+const unexpectedDomains = [...sendDomains].filter((d) => !ALLOWED_DOMAINS.has(d));
+check(
+  "the only CDP domains this package ever .send()s for capture are Network (LS-13W) + Page (screencast) + Target (actor-attribution identity) — no other domain, and never Fetch",
+  unexpectedDomains.length === 0 && sendDomains.has("Network"),
+  `domains seen: ${[...sendDomains].join(",")}`,
+);
+const fetchDomainHits = grep('["\']Fetch\\.', SRC);
+check("no literal 'Fetch.<method>' CDP call anywhere in src/ (the request-pausing domain is categorically never used)", fetchDomainHits.length === 0, fetchDomainHits.join(" | "));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
