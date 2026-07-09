@@ -12,11 +12,13 @@ mouse), no `goto`/`go` (deep-linking), and no `eval` (arbitrary code) on
 `InteractSession`.
 
 LS-09 scaffolded the ACT verbs, enforced pacing, and the shared video
-assembler. **LS-10 adds humanized typing**: `type(text)` stages text via a
-per-keystroke bigram/log-normal timing model (never presses Enter — that's
-the gated `send`, LS-11) and yields the keyboard the instant a live human
-appears to type. The gated `send` mechanism (LS-11), the presence contract
-(LS-12), and recall — the OBSERVE half, at the `lucarne-interact/recall`
+assembler. LS-10 added humanized typing: `type(text)` stages text via a
+per-keystroke bigram/log-normal timing model (never presses Enter) and
+yields the keyboard the instant a live human appears to type. **LS-11 adds
+the GATED `send()`** — the *only* code path in this package that presses
+Enter / submits: default-refuse, only an explicit approval or yolo mode
+sends, with a pre-keypress composer-verification safety check. The presence
+contract (LS-12) and recall — the OBSERVE half, at the `lucarne-interact/recall`
 subpath (LS-13/13W/14) — land in later issues on top of this scaffold.
 
 ## Install
@@ -66,13 +68,66 @@ await session.close();
 | `back({ inAppSelectors? })` | `browser.ts:270-274` | in-app Back control, else browser history |
 | `capture(selector, outPath)` | `browser.ts:287-292` | element-scoped screenshot via CDP, invisible to the page |
 | `type(text, opts?)` | `browser.ts:184-195` | humanized per-keystroke typing into the focused field — **stages only, never Enter**; yields to a live human |
+| `send(text, opts)` | `guardrails/enforce.ts:110-132` + `browser.ts:503-534` | the GATED commit: default-refuse; only an explicit approval, or yolo, presses Enter/submits |
 | `video.storyboard(selector, { outDir, frames? })` | `browser.ts:294-317` | keyframes across the video's own duration (a fallback view) |
 | `video.clip(selector, outPath)` | `browser.ts:333-379` | record a video to completion (hard-capped), assembled to mp4 |
 | `video.captions(selector)` | `browser.ts:394-401` | read the caption transcript from DOM cues (the speech channel) |
 
 Every verb call emits one `action` event and pays one enforced pace — success
-or failure. There is no `send` yet (LS-11); *sending* an approved, staged draft
-(the gated Enter/submit gesture) is out of scope for this issue.
+or failure.
+
+## The gated `send()` (LS-11)
+
+`send` is the **only** code path in this package that presses Enter or
+submits — the anti-footgun for acting on logged-in accounts. It composes on
+`type`'s staging: `type` enters text; `send` commits whatever the caller
+already staged. The default is **REFUSE** — a send only fires on an explicit
+approval signal, or yolo mode:
+
+```ts
+const result = await session.send(draft, {
+  gesture: { key: "Meta+Enter" },       // or { submit: "button[type=submit]" }
+  policy: async (text, ctx) => enforce(text, guardrailsConfig, ctx), // CALLER-supplied
+  approval: { mode: "ask", approved: true },   // or { mode: "yolo" }; ack: true for always-ask topics
+});
+// { sent, action, reason, policyResult, gesture, chars, composerCheck? }
+```
+
+**`decideSend`** (`src/send-gate.ts`) is ported **byte-identical** from
+cadence's `guardrails/enforce.ts:124-132` — `test/decide-send-provenance.mjs`
+diffs the ported span against a frozen copy of the original and fails on any
+drift. Priority order (strictest first, same in both modes unless noted):
+
+1. **blocked** → never send (a hard guardrail failure). Even in yolo.
+2. **always-ask** → needs an explicit `ack`. Even in yolo.
+3. **ask mode** → needs an explicit per-send `approved` (or `ack`). yolo skips this.
+4. otherwise → send (`send-approved`, or `send-yolo` in yolo mode).
+
+All **policy** is caller-supplied: `policy(text, ctx)` computes the
+`GuardrailResult` (`{ blocked?, mustAsk?, ok?, violations? }` — `decideSend`
+only ever reads `blocked`/`mustAsk`). This package carries **none** of
+cadence's content rules, rate limits, sourcing/assess, or approvals ledger —
+those stay cadence policy (LS-18 injects them via `policy`/`ctx`).
+
+On a GO decision, the **composer-verification check**
+(`src/composer-check.ts`, ported from `browser.ts:516-525`) runs before the
+keypress — skipped for `{ submit }` gestures — and can still refuse
+(`action: 'composer-mismatch'`) with a distinct reason if the focused
+composer doesn't actually hold the draft:
+
+- `empty` — something is focused, but holds no text.
+- `stale` — holds text, but it doesn't match the draft (normalized compare; a
+  code-point-safe 16-character probe, so an emoji-leading draft is never
+  mis-split).
+- `focus-lost` — nothing focusable is focused at all.
+
+**Zero keypress on any refusing branch is structural, not incidental**: the
+drive loop (`src/send-flow.ts#runSendFlow`) evaluates `decideSend` first and
+returns immediately on a refusal — before the transport (`pressKey`/
+`pressSubmit`/`readComposerProbe`) is ever touched. `test/send-gate.mjs`
+proves this with a mock transport that records zero dispatches on every
+refusing branch of the full decision table, plus an exhaustive matrix over
+every `(blocked, mustAsk, mode, approved, ack)` combination.
 
 ## Humanized typing (`type`) + yield-to-human
 
@@ -186,3 +241,12 @@ is cadence's job), the `.social/log` action-log sink (this package only
 emits `on('action', e)`; where that goes is the consumer's choice), and any
 per-platform behavior. `grep -REn "FEEDS|x\.com/home|\.social|channels/"
 src/` returns zero hits.
+
+Also not ported: `send`'s **content policy** — banned words, the AI-tell/
+"cringe" phrase list, the link allow-list, rate limits (flat + per-platform),
+the burst/send-interval guard, always-ask topics, source/sourcing gating,
+and the human-approval ledger (`.social/approvals.jsonl`) are all cadence's
+`enforce()` + surrounding machinery (`guardrails/enforce.ts`), never
+duplicated here. This package only knows the two fields `decideSend` reads
+off whatever `GuardrailResult` the caller's `policy(text, ctx)` computes —
+`blocked` and `mustAsk` — plus the `approval`/`mode` gate itself.

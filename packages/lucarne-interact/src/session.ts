@@ -17,6 +17,7 @@ import { assembleMp4FromFrames, cleanupFramesDir, startScreencastToFrames } from
 import { type PaceKind, type PaceProfile, type PacingConfig, pace as paceOnce, resolvePacing } from "./pacing.js";
 import { type ActivityProbe } from "./yield.js";
 import { runTypeLoop } from "./type-loop.js";
+import { type SendFlowOptions, type SendFlowResult, runSendFlow } from "./send-flow.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -95,6 +96,11 @@ export interface TypeResult {
   /** True if typing was aborted mid-way because a live human appeared to take the keyboard. */
   yielded: boolean;
 }
+
+/** `send()`'s options — see send-flow.ts for the full field docs (this is a named re-export of the same shape). */
+export type SendOptions = SendFlowOptions;
+/** `send()`'s resolved outcome — see send-flow.ts for the full field docs. */
+export type SendResult = SendFlowResult;
 
 export interface StoryboardOptions {
   /** Where to write the keyframe PNGs — caller-supplied (this package holds no corpus opinion). */
@@ -388,6 +394,53 @@ export class InteractSession extends EventEmitter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The GATED send: the ONLY code path in this package that presses Enter / submits (LS-11). This
+   * is the anti-footgun for acting on logged-in accounts — the default is REFUSE; only an
+   * explicit approval, or yolo mode, fires the gesture. `send` does not stage text itself; it
+   * COMMITS a draft the caller already staged via `type()`.
+   *
+   * `decideSend` (send-gate.ts) is ported BYTE-IDENTICAL from cadence's
+   * `guardrails/enforce.ts:124-132` (see that file's header + `test/decide-send-provenance.mjs`).
+   * ALL policy computation — content rules, rate limits, sourcing/assess, the approvals ledger —
+   * is the caller's `policy(text, ctx)` function; this class never evaluates content itself.
+   *
+   * On a GO decision (approved, or yolo), the staged-composer safety check runs first
+   * (`browser.ts:516-525` — skipped for `{ submit }` gestures) and can still refuse
+   * (`action: 'composer-mismatch'`) with zero keypress if the focused composer doesn't actually
+   * hold the draft. Only past both gates does the gesture fire: a `Meta+Enter`-style keypress, or
+   * a keyboard-activated submit-selector click.
+   */
+  async send(text: string, opts: SendOptions): Promise<SendResult> {
+    return this.#act("send", [text, { gesture: opts.gesture, approval: opts.approval }], "act", () =>
+      runSendFlow(text, opts, {
+        pressKey: async (key) => {
+          const p = await this.#page();
+          await p.keyboard.press(key);
+        },
+        pressSubmit: async (selector) => {
+          const p = await this.#page();
+          await p.locator(selector).first().press("Enter", { timeout: this.#timeoutMs });
+        },
+        // Mirrors browser.ts:518 exactly: read document.activeElement's held text (input .value,
+        // or innerText/textContent for a contenteditable), plus a `focused` signal so
+        // composer-check.ts can report a distinct "focus-lost" reason (an enrichment over the
+        // original's single combined message — same underlying gate condition).
+        readComposerProbe: async () => {
+          const p = await this.#page();
+          return p.evaluate(() => {
+            const el = document.activeElement as (HTMLElement & { value?: string; isContentEditable?: boolean }) | null;
+            const focusable = !!el && el !== document.body && el !== document.documentElement;
+            if (!focusable) return { focused: false, value: "" };
+            const value =
+              el!.value != null ? String(el!.value) : el!.isContentEditable ? el!.innerText || el!.textContent || "" : "";
+            return { focused: true, value };
+          });
+        },
+      }),
+    );
   }
 
   // ── video.* (browser.ts:294-401) ────────────────────────────────────────────────────────────

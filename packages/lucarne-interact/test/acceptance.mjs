@@ -195,9 +195,137 @@ try {
     }
   }
 
+  // 7c. send() — the GATED send (LS-11) against the SAME real form fixture. Stage via type(), then
+  //     drive every decideSend branch + the composer-verification check with a REAL Chrome, proving
+  //     "zero keypress on refuse" end-to-end (not just the mocked-transport unit proof in
+  //     test/send-gate.mjs). An independent read-only playwright connection (the same pattern as
+  //     7b) is ground truth for whether the form actually submitted.
+  {
+    const insp = await chromium.connectOverCDP(session.cdpUrl);
+    const inspCtx = insp.contexts()[0];
+    const inspPage = inspCtx.pages()[0];
+    const okPolicy = async () => ({ blocked: false, mustAsk: false });
+    // Fresh navigation reloads the fixture's inline script (`window.__submitted=false;`), so this
+    // is also how each sub-test gets a clean slate.
+    const resetForm = async () => {
+      await s.open(BASE + "/form");
+      await inspPage.waitForSelector("#inp");
+      await inspPage.locator("#inp").focus();
+    };
+    try {
+      // A. DEFAULT REFUSE — ask mode, no approval: send() must NOT press Enter.
+      await resetForm();
+      const draftA = "the human has not approved this yet";
+      await s.type(draftA);
+      const beforeA = await inspPage.locator("#inp").inputValue();
+      const resA = await s.send(draftA, { gesture: { key: "Enter" }, policy: okPolicy, approval: { mode: "ask" } });
+      const afterA = await inspPage.locator("#inp").inputValue();
+      const submittedA = await inspPage.evaluate(() => window.__submitted);
+      check("send(): ask mode with no approval REFUSES (sent:false)", resA.sent === false, JSON.stringify(resA));
+      check("send(): refusal action is 'needs-approval'", resA.action === "needs-approval", resA.action);
+      check("send(): NO keypress fired on refuse — composer still holds the staged draft, untouched", afterA === beforeA && afterA === draftA);
+      check("send(): NO keypress fired on refuse — the form was NOT submitted", submittedA === false);
+
+      // B. APPROVED — same staged draft (untouched by A's refusal) now sends for real.
+      const resB = await s.send(draftA, { gesture: { key: "Enter" }, policy: okPolicy, approval: { mode: "ask", approved: true } });
+      const submittedB = await inspPage.evaluate(() => window.__submitted);
+      check("send(): ask mode WITH approval SENDS (sent:true)", resB.sent === true, JSON.stringify(resB));
+      check("send(): approved action is 'send-approved'", resB.action === "send-approved", resB.action);
+      check("send(): the keypress actually fired — the form WAS submitted", submittedB === true);
+
+      // C. BLOCKED always blocks, even with approved:true (guardrails win over approval).
+      await resetForm();
+      const draftC = "this draft is blocked by the caller's policy";
+      await s.type(draftC);
+      const resC = await s.send(draftC, {
+        gesture: { key: "Enter" },
+        policy: async () => ({ blocked: true }),
+        approval: { mode: "ask", approved: true },
+      });
+      const submittedC = await inspPage.evaluate(() => window.__submitted);
+      check("send(): blocked policy REFUSES even when approved (sent:false)", resC.sent === false, JSON.stringify(resC));
+      check("send(): blocked action is 'blocked'", resC.action === "blocked", resC.action);
+      check("send(): blocked — NO keypress, form NOT submitted", submittedC === false);
+
+      // D. ALWAYS-ASK needs an explicit ack, even when approved — then ack unblocks it.
+      await resetForm();
+      const draftD = "always-ask topic — needs explicit ack";
+      await s.type(draftD);
+      const resD1 = await s.send(draftD, {
+        gesture: { key: "Enter" },
+        policy: async () => ({ blocked: false, mustAsk: true }),
+        approval: { mode: "ask", approved: true },
+      });
+      const submittedD1 = await inspPage.evaluate(() => window.__submitted);
+      check("send(): always-ask topic REFUSES without --ack, even when approved (sent:false)", resD1.sent === false, JSON.stringify(resD1));
+      check("send(): needs-ack action is 'needs-ack'", resD1.action === "needs-ack", resD1.action);
+      check("send(): needs-ack — NO keypress, form NOT submitted", submittedD1 === false);
+
+      const resD2 = await s.send(draftD, {
+        gesture: { key: "Enter" },
+        policy: async () => ({ blocked: false, mustAsk: true }),
+        approval: { mode: "ask", ack: true },
+      });
+      const submittedD2 = await inspPage.evaluate(() => window.__submitted);
+      check("send(): --ack on an always-ask topic SENDS (sent:true)", resD2.sent === true, JSON.stringify(resD2));
+      check("send(): ack — the keypress fired, form WAS submitted", submittedD2 === true);
+
+      // E. YOLO mode auto-sends with no per-send approval at all.
+      await resetForm();
+      const draftE = "yolo auto-send, no per-send approval";
+      await s.type(draftE);
+      const resE = await s.send(draftE, { gesture: { key: "Enter" }, policy: okPolicy, approval: { mode: "yolo" } });
+      const submittedE = await inspPage.evaluate(() => window.__submitted);
+      check("send(): yolo mode SENDS with no approval (sent:true)", resE.sent === true, JSON.stringify(resE));
+      check("send(): yolo action is 'send-yolo'", resE.action === "send-yolo", resE.action);
+      check("send(): yolo — the keypress fired, form WAS submitted", submittedE === true);
+
+      // F. COMPOSER-VERIFICATION — approved, but the focused composer no longer holds the draft
+      //    (stale / empty / focus-lost). Each refuses with a DISTINCT reason and zero keypress.
+      await resetForm();
+      const draftF = "this exact draft should be staged before sending";
+      await s.type(draftF);
+      await inspPage.locator("#inp").fill("a completely different, stale value");
+      const resStale = await s.send(draftF, { gesture: { key: "Enter" }, policy: okPolicy, approval: { mode: "ask", approved: true } });
+      check("send(): STALE composer refuses (sent:false)", resStale.sent === false, JSON.stringify(resStale));
+      check("send(): stale composer action is 'composer-mismatch'", resStale.action === "composer-mismatch", resStale.action);
+      check("send(): stale composer reports reason 'stale'", resStale.composerCheck?.reason === "stale", JSON.stringify(resStale.composerCheck));
+      check("send(): stale composer — NO keypress fired", (await inspPage.evaluate(() => window.__submitted)) === false);
+
+      await inspPage.locator("#inp").fill("");
+      const resEmpty = await s.send(draftF, { gesture: { key: "Enter" }, policy: okPolicy, approval: { mode: "ask", approved: true } });
+      check("send(): EMPTY composer refuses with reason 'empty'", resEmpty.sent === false && resEmpty.composerCheck?.reason === "empty", JSON.stringify(resEmpty));
+      check("send(): empty composer — NO keypress fired", (await inspPage.evaluate(() => window.__submitted)) === false);
+
+      await inspPage.locator("#inp").evaluate((el) => el.blur());
+      const resFocusLost = await s.send(draftF, { gesture: { key: "Enter" }, policy: okPolicy, approval: { mode: "ask", approved: true } });
+      check(
+        "send(): FOCUS-LOST composer refuses with reason 'focus-lost'",
+        resFocusLost.sent === false && resFocusLost.composerCheck?.reason === "focus-lost",
+        JSON.stringify(resFocusLost),
+      );
+      check("send(): focus-lost composer — NO keypress fired", (await inspPage.evaluate(() => window.__submitted)) === false);
+
+      // G. `{ submit }` gesture SKIPS the composer check entirely (browser.ts:516) — it still
+      //    sends via the submit control even though the composer holds nothing that matches.
+      await resetForm();
+      await inspPage.locator("#inp").fill("");
+      const resSubmit = await s.send("irrelevant to a submit-selector gesture", {
+        gesture: { submit: "#go" },
+        policy: okPolicy,
+        approval: { mode: "ask", approved: true },
+      });
+      const submittedG = await inspPage.evaluate(() => window.__submitted);
+      check("send(): { submit } gesture SENDS via the submit control, skipping the composer check (sent:true)", resSubmit.sent === true, JSON.stringify(resSubmit));
+      check("send(): { submit } gesture — the submit control WAS activated", submittedG === true);
+    } finally {
+      await insp.close().catch(() => {});
+    }
+  }
+
   // 8. the tier property holds on a REAL, connected instance too (not just the offline unit proof)
   check("a live InteractSession still has no click/goto/eval members", s.click === undefined && s.goto === undefined && s.eval === undefined && s.video.click === undefined);
-  check("a live InteractSession has NO 'send' member yet (LS-11)", s.send === undefined);
+  check("a live InteractSession has a 'send' member (LS-11 landed)", typeof s.send === "function");
 
   // 9. pacing was actually ENFORCED live: every verb paid >= its configured floor, and events fired for each
   const kindByVerb = { open: "nav", snap: "read", scroll: "scroll", activate: "nav", back: "nav", capture: "read", "video.storyboard": "read", "video.clip": "read", "video.captions": "read" };
