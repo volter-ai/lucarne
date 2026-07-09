@@ -1,10 +1,10 @@
-// The ~150 lines of SHELL-CHROME CSS — split out of cadence's `web/app/style.css`, generalized: the
-// wrap/pill/panel frame, the organ tablist, the drag affordance, and the generic status-indicator primitives
-// (`.oi` dot/pulse/badge) that `registerPanel`'s `indicator`/`badge` callbacks (see `runtime.ts`) render through.
-// Deliberately EXCLUDED (stays cadence, ported forward unchanged by LS-20): the draft/candidate content styles
-// (`.draft`, `.trow`, `.optcar`, `.replyto`, `.trust`, `.seg`, `.whypanel`, `.use`, `.draftchip`, …) and the
-// "Apple-Intelligence" edge-glow/recording-dot flourishes, which carry cadence's own product semantics rather
-// than generic shell chrome.
+// The ~150 lines of SHELL-CHROME CSS — split out of the prior single-app implementation's `web/app/style.css`,
+// generalized: the wrap/pill/panel frame, the organ tablist, the drag affordance, and the generic
+// status-indicator primitives (`.oi` dot/pulse/badge) that `registerPanel`'s `indicator`/`badge` callbacks (see
+// `runtime.ts`) render through. Deliberately EXCLUDED (stays with the downstream consumer, ported forward
+// unchanged by LS-20): the draft/option content styles (`.draft`, `.trow`, `.optcar`, `.replyto`, `.trust`,
+// `.seg`, `.whypanel`, `.use`, `.draftchip`, …) and the "Apple-Intelligence" edge-glow/recording-dot
+// flourishes, which carry that product's own semantics rather than generic shell chrome.
 //
 // A consumer's own build (`build.ts`'s `buildSrcdoc({ css })`) concatenates this with its own panel/organ CSS —
 // this string is exported as a plain constant (not a `.css` file import) so it needs no bundler CSS loader.

@@ -1,9 +1,10 @@
-// The IFRAME runtime — bundled into a consumer's own srcdoc bundle (via `build.ts`). Ported from cadence's
-// `main.tsx` shell mechanics (`:611-622,678-688,725-728,747-756,763-776,793-811,890-918`): the envelope
-// reducer's pin/dispatch half (`reducer.ts`, extracted separately so it's Chrome-free testable), the ARIA
-// tablist organ switcher with roving keyboard focus, the anti-jitter resize relay, the pill↔panel morph, and the
-// drag-from-header relay. EXCLUDED (stays cadence, LS-20): the per-key patch reducers (`main.tsx:689-723`), the
-// termfleet fork effect, and candidate re-sync — this runtime never inspects what's INSIDE a patch, it only
+// The IFRAME runtime — bundled into a consumer's own srcdoc bundle (via `build.ts`). Ported from the prior
+// single-app implementation's `main.tsx` shell mechanics
+// (`:611-622,678-688,725-728,747-756,763-776,793-811,890-918`): the envelope reducer's pin/dispatch half
+// (`reducer.ts`, extracted separately so it's Chrome-free testable), the ARIA tablist organ switcher with
+// roving keyboard focus, the anti-jitter resize relay, the pill↔panel morph, and the drag-from-header relay.
+// EXCLUDED (stays with the downstream consumer, LS-20): the per-key patch reducers (`main.tsx:689-723`), the
+// fork effect, and app-specific option re-sync — this runtime never inspects what's INSIDE a patch, it only
 // shallow-merges patches into a running `state` object and hands that to whichever panel/sheet is on screen.
 //
 // FRAMEWORK-FREE BY DESIGN (LS-15 dev/03's grep gate): plain DOM + `emitter.ts`'s tiny pub/sub. A panel's own
@@ -80,7 +81,7 @@ function genId(): string {
   return `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
 }
 
-/** Shallow-merge one incoming patch into the running state accumulator — the ONE opinion this package holds about patch shape: if both sides are plain objects, merge key-by-key (a later patch's key wins); otherwise the patch replaces the accumulator outright. This is deliberately naive (no deep merge, no array concat) — a consumer wanting richer semantics reduces further itself inside its own `onPatch` subscriber (that's exactly what stays cadence, `main.tsx:689-723`). */
+/** Shallow-merge one incoming patch into the running state accumulator — the ONE opinion this package holds about patch shape: if both sides are plain objects, merge key-by-key (a later patch's key wins); otherwise the patch replaces the accumulator outright. This is deliberately naive (no deep merge, no array concat) — a consumer wanting richer semantics reduces further itself inside its own `onPatch` subscriber (that's exactly what stays with the downstream consumer, `main.tsx:689-723`). */
 function mergePatch(prev: unknown, patch: unknown): unknown {
   const isPlain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
   if (isPlain(prev) && isPlain(patch)) return { ...prev, ...patch };

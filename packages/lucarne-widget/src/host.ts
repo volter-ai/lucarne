@@ -1,9 +1,9 @@
-// The HOST-side runtime — Node, next to the session. Ported from cadence's `widget-bridge.ts:32-61,156-171,252-277`
-// skeleton: `toWidget`/`toWidgets` (postMessage push), the crash-safe tick pump (`every` — "a single rejected tick
-// must not take the server down"), and the read-and-clear queue-drain with dedup-by-id (`ctlSeen`/`cfgSeen`,
-// generalized to any number of NAMED intent queues). Mounting is LS-02's engine feature: `POST /sessions/:id/inject`
-// via `lucarne`'s `LucarneClient` — this is the one place this package depends on `lucarne` (per §1.6: "widget MAY
-// depend on `lucarne`, unlike interact").
+// The HOST-side runtime — Node, next to the session. Ported from the prior single-app implementation's
+// `widget-bridge.ts:32-61,156-171,252-277` skeleton: `toWidget`/`toWidgets` (postMessage push), the crash-safe
+// tick pump (`every` — "a single rejected tick must not take the server down"), and the read-and-clear
+// queue-drain with dedup-by-id (`ctlSeen`/`cfgSeen`, generalized to any number of NAMED intent queues).
+// Mounting is LS-02's engine feature: `POST /sessions/:id/inject` via `lucarne`'s `LucarneClient` — this is
+// the one place this package depends on `lucarne` (per §1.6: "widget MAY depend on `lucarne`, unlike interact").
 //
 // Everything past the mount call (push/onIntent/every/remove) talks to the page directly over the session's raw
 // `cdpUrl` (see `cdp-lite.ts`) — a small, FIXED set of expressions this package builds itself, not a re-exposed
@@ -13,6 +13,9 @@ import { evaluateOnAllPages, evaluateOnAllPagesCollecting } from "./cdp-lite.js"
 import { type Identity, widgetMessage } from "./envelope.js";
 import { injectorSource } from "./injector.js";
 import { assertNs, guardGlobal, hostElementId, iframeGlobal, intentQueueGlobal, shellStickyId } from "./ns.js";
+import { runWidgetSelftest, type SelftestCheck, type SelftestFixtures, type SelftestResult } from "./selftest.js";
+
+export type { SelftestCheck, SelftestFixtures, SelftestResult } from "./selftest.js";
 
 export interface WidgetHostEngineOptions {
   baseUrl?: string;
@@ -35,8 +38,23 @@ export interface WidgetHostOptions {
 
 export type IntentHandler = (intent: { id: string | number; payload: unknown }) => void | Promise<void>;
 
-/** The crash-safe tick cadence for the intent-drain pump — matches `widget-bridge.ts`'s control/settings queues (~1.2s). */
+/** The crash-safe tick interval for the intent-drain pump — matches `widget-bridge.ts`'s control/settings queues (~1.2s). */
 const DRAIN_INTERVAL_MS = 1200;
+
+export interface SelftestOptions {
+  /** Namespace for this run's throwaway shell instance. Defaults to a freshly generated one — pass your own for a stable, greppable `ns` in CI logs. */
+  ns?: string;
+  /** The built, self-contained srcdoc HTML to mount and drive — same shape `WidgetHost.attach` takes (see `build.ts`'s `buildSrcdoc`). Pass your OWN bundle to selftest a real downstream consumer's widget (LS-20); this package's own `test/widget-selftest-acceptance.mjs` passes its NEUTRAL fixture bundle (LS-16 dev/01). */
+  html: string;
+  /** The neutral test data pushed mid-run and re-pushed after the reload check — see `SelftestFixtures` (`selftest.ts`). */
+  fixtures: SelftestFixtures;
+  engine?: WidgetHostEngineOptions;
+  identity?: Identity;
+}
+
+function defaultSelftestNs(): string {
+  return `lwselftest${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export class WidgetHost {
   private readonly timers = new Set<ReturnType<typeof setInterval>>();
@@ -55,7 +73,7 @@ export class WidgetHost {
 
   /**
    * Resolve the session, register the injector as a durable sticky injection (`bypassCSP: true` — the shell needs
-   * `Page.setBypassCSP` the same way cadence's original did, `widget.ts`'s `stickyp` call), and return a live host.
+   * `Page.setBypassCSP` the same way the prior implementation's `widget.ts`'s `stickyp` call did), and return a live host.
    * The mount call is AWAITED and, per the engine's `set()` contract, means every currently-open page already has
    * the shell registered + applied by the time this resolves (pages opened later are covered by the engine's own
    * discovery tap — see `packages/lucarne/src/inject.ts`).
@@ -81,6 +99,55 @@ export class WidgetHost {
   /** The session id this host is mounted on. */
   get sessionId(): string {
     return this.id;
+  }
+
+  /**
+   * The package's OWN committed acceptance proof (LS-16), runnable against ANY consumer's built bundle — not
+   * just this package's neutral fixture. Mounts `opts.html` on a THROWAWAY `data:` tab of the given session
+   * (never a real tab already open for other work), asserts singleton / top-frame-only / size-stable /
+   * survives-reload-populated / responsive — each reported INDIVIDUALLY (see `selftest.ts`) — and tears itself
+   * down (`remove()`) whether the run passes, fails, or throws. `sessionOrCdpUrl` accepts everything
+   * `attach()`'s `SessionRef` does, PLUS a bare `cdpUrl` string (this is a throwaway diagnostic entry point, so
+   * skipping the engine round-trip when the caller already has a live `cdpUrl` in hand is worth the extra
+   * branch). Needs the OPTIONAL peer dependency `playwright-core` installed — CI-gated, like every other
+   * Chrome-driving proof in this monorepo (`npm run test:acceptance`); never runs in a Chrome-free environment.
+   */
+  static async selftest(sessionOrCdpUrl: SessionRef | string, opts: SelftestOptions): Promise<SelftestResult> {
+    const ns = opts.ns ?? defaultSelftestNs();
+    let id: string;
+    let cdpUrl: string;
+    try {
+      if (typeof sessionOrCdpUrl === "string" && /^(https?|wss?):\/\//.test(sessionOrCdpUrl)) {
+        id = "selftest";
+        cdpUrl = sessionOrCdpUrl;
+      } else if (typeof sessionOrCdpUrl === "string") {
+        const client = new LucarneClient({ baseUrl: opts.engine?.baseUrl, token: opts.engine?.token });
+        const session = await client.get(sessionOrCdpUrl);
+        id = session.id;
+        cdpUrl = session.cdpUrl;
+      } else {
+        id = sessionOrCdpUrl.id;
+        cdpUrl = sessionOrCdpUrl.cdpUrl;
+      }
+    } catch (e) {
+      const check: SelftestCheck = { name: "selftest harness: resolves the session", pass: false, detail: (e as Error)?.message ?? String(e) };
+      return { pass: false, checks: [check] };
+    }
+
+    let host: WidgetHost;
+    try {
+      host = await WidgetHost.attach({ id, cdpUrl }, { ns, html: opts.html, engine: opts.engine, identity: opts.identity ?? {} });
+    } catch (e) {
+      const check: SelftestCheck = { name: "selftest harness: mounts the shell (WidgetHost.attach)", pass: false, detail: (e as Error)?.message ?? String(e) };
+      return { pass: false, checks: [check] };
+    }
+    try {
+      return await runWidgetSelftest(cdpUrl, ns, host, opts.fixtures);
+    } finally {
+      await host.remove().catch(() => {
+        /* best-effort teardown — a failed selftest run must still not leak the sticky shell registration */
+      });
+    }
   }
 
   /**
@@ -124,7 +191,7 @@ export class WidgetHost {
 
   /**
    * Register a drain callback for one NAMED intent queue — the generalized form of `widget-bridge.ts`'s two
-   * hard-coded queues (`__cadenceCtl`/`__cadenceCfg`, drained by `ctlSeen`/`cfgSeen` dedup Sets). A single shared
+   * fixed-name queues (drained by their own pair of dedup Sets). A single shared
    * crash-safe tick (started lazily on the first `onIntent` call) drains every registered name each pass; within a
    * name, an intent is dedup'd by its `id` — "add BEFORE acting → never retried", the same ordering the original
    * comments call out (a handler that throws does not cause a re-delivery on the next tick).

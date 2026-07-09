@@ -2,7 +2,7 @@
 // every open page on a session's `cdpUrl` and evaluate a small, FIXED set of expressions this package itself
 // builds (postMessage the envelope in; read-and-clear a named intent queue out). This is deliberately NOT a
 // general "eval" capability re-exposed over the network — the engine's own `/eval` REPL was retired, not
-// generalized (CADENCE-SPLIT-TASKSPEC.md §1.5) — it is a private implementation detail of this package, mirroring
+// generalized (the split's task spec §1.5) — it is a private implementation detail of this package, mirroring
 // the shape of `lucarne`'s own internal `src/cdp.ts` (not part of that package's public exports) closely enough
 // that a future refactor could delegate to it, without adding a dependency today.
 //

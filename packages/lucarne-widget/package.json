@@ -60,13 +60,17 @@
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs",
-    "test:acceptance": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs"
+    "test:unit": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs && node test/fixture-neutrality-gate.mjs",
+    "test:acceptance": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs && node test/fixture-neutrality-gate.mjs && node test/widget-selftest-acceptance.mjs"
   },
   "peerDependencies": {
+    "playwright-core": ">=1.40.0",
     "preact": ">=10.0.0"
   },
   "peerDependenciesMeta": {
+    "playwright-core": {
+      "optional": true
+    },
     "preact": {
       "optional": true
     }
@@ -77,6 +81,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "playwright-core": "^1.49.0",
     "preact": "^10.19.0",
     "typescript": "^5.7.0"
   }

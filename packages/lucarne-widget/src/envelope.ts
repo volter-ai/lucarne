@@ -1,10 +1,11 @@
-// The ONE envelope that crosses host→iframe: ported from cadence's `widget-state.ts:23-35` (`WIDGET_STATE_VERSION`,
-// `widgetMessage`, the shell-id doctrine) and generalized. Every push is versioned + identity-stamped so a
-// consuming iframe can PIN to the first identity it sees and drop anything foreign/stale (the reducer in
-// `reducer.ts` implements that half — ported from `main.tsx:678-688`'s pin/dispatch semantics) — defense-in-depth
-// atop whatever session isolation the host process already has. `ns` rides in the envelope too (a namespace this
-// package didn't carry in the cadence original — added here per LS-15's "already ns-parameterized" mandate) so a
-// page hosting several widget instances never lets one instance's push land in another's reducer.
+// The ONE envelope that crosses host→iframe: ported from the prior single-app implementation's
+// `widget-state.ts:23-35` (`WIDGET_STATE_VERSION`, `widgetMessage`, the shell-id doctrine) and generalized.
+// Every push is versioned + identity-stamped so a consuming iframe can PIN to the first identity it sees and
+// drop anything foreign/stale (the reducer in `reducer.ts` implements that half — ported from
+// `main.tsx:678-688`'s pin/dispatch semantics) — defense-in-depth atop whatever session isolation the host
+// process already has. `ns` rides in the envelope too (a namespace the prior implementation didn't carry —
+// added here per LS-15's "already ns-parameterized" mandate) so a page hosting several widget instances never
+// lets one instance's push land in another's reducer.
 import { assertNs, shellStickyId } from "./ns.js";
 
 /** Bump only on a wire-incompatible change to the envelope shape itself (not on patch content). */
@@ -21,7 +22,7 @@ export interface WidgetEnvelope<TPatch = unknown> {
   patch: TPatch;
 }
 
-/** The wire message shape: one well-known top-level key (`lwState` — cadence's original was `cadenceState`, `widget-state.ts:33`) carrying the envelope. */
+/** The wire message shape: one well-known top-level key (`lwState` — the prior implementation used a differently-named top-level key for the same purpose, `widget-state.ts:33`) carrying the envelope. */
 export interface WidgetEnvelopeMessage<TPatch = unknown> {
   lwState: WidgetEnvelope<TPatch>;
 }
@@ -55,8 +56,8 @@ export function isShellOnlyId(ns: string, id: string): boolean {
 /**
  * A generic "only-my-shell-ids" `injectPolicy` predicate: accepts exactly the given ids (defaults to this
  * package's own single shell-sticky-id for `ns`) and rejects everything else — so content can never be
- * frozen into the engine's sticky injection store. Cadence wires ITS strict shell-only doctrine (its own
- * settings/organs ids alongside the widget shell) on top of this in LS-20.
+ * frozen into the engine's sticky injection store. A downstream consumer wires ITS OWN strict shell-only
+ * doctrine (its own settings/organs ids alongside the widget shell) on top of this in LS-20.
  */
 export function onlyShellIds(ids: Iterable<string>): (id: string) => boolean {
   const set = new Set(ids);
