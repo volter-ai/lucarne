@@ -4,6 +4,7 @@
     { "path": "packages/lucarne" },
     { "path": "packages/lucarne-records" },
     { "path": "packages/lucarne-corpus-mcp" },
-    { "path": "packages/lucarne-interact" }
+    { "path": "packages/lucarne-interact" },
+    { "path": "packages/lucarne-widget" }
   ]
 }
