@@ -36,6 +36,17 @@ export function isProvenance(v: unknown): v is Provenance {
   );
 }
 
+/**
+ * A weaker check than `isEntity`: does `v` look like a record at all — an object
+ * carrying a `provenance` OBJECT? Used by the store to distinguish a
+ * forward-schema record it doesn't yet fully understand (preserve it) from
+ * outright garbage (drop it). Deliberately does NOT validate provenance's fields
+ * or the entity kind, so a record from a newer schema version still qualifies.
+ */
+export function isRecordShaped(v: unknown): boolean {
+  return isRecordObject(v) && isRecordObject((v as { provenance?: unknown }).provenance);
+}
+
 function isAuthorRef(v: unknown): v is AuthorRef {
   return isRecordObject(v) && isNonEmptyString(v.handle) && isNonEmptyString(v.profileUrl);
 }

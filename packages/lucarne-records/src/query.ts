@@ -27,19 +27,23 @@ export interface RecordRef {
   id: string;
 }
 
-/**
- * A single-entity lookup — the shape of `get_profile`/`get_post`. Store read
- * only: returns `undefined` on a miss, never fetches.
- */
-export function getRecord(dir: string, ref: RecordRef): Entity | undefined {
-  const all = loadRecords(dir);
-  return all.find((e) => {
+/** Find a single entity within an ALREADY-loaded record array (no disk read). */
+function findRecord(records: readonly Entity[], ref: RecordRef): Entity | undefined {
+  return records.find((e) => {
     if (e.kind !== ref.kind || e.provenance.source !== ref.source) return false;
     if (e.provenance.id === ref.id) return true;
     if (e.provenance.canonicalUrl === ref.id) return true;
     if (e.kind === "profile" && e.handle === ref.id) return true;
     return false;
   });
+}
+
+/**
+ * A single-entity lookup — the shape of `get_profile`/`get_post`. Store read
+ * only: returns `undefined` on a miss, never fetches.
+ */
+export function getRecord(dir: string, ref: RecordRef): Entity | undefined {
+  return findRecord(loadRecords(dir), ref);
 }
 
 type SortKind = "top" | "new" | "best" | "controversial" | "relevance";
@@ -108,7 +112,7 @@ function scoreOf(e: Post | Profile): number {
 }
 
 function createdAtOf(e: Entity): number {
-  const t = e.kind === "profile" ? e.createdAt : e.createdAt;
+  const t = e.createdAt;
   return t ? Date.parse(t) || 0 : 0;
 }
 
@@ -133,7 +137,8 @@ export function queryRecords(dir: string, q: RecordQuery): Page<Entity> {
   const offset = decodeOffset(q.cursor);
 
   if (q.op === "comments") {
-    const post = getRecord(dir, { source: q.source, kind: "post", id: q.postIdOrUrl });
+    // reuse the already-loaded `all` — don't re-read the file via getRecord.
+    const post = findRecord(all, { source: q.source, kind: "post", id: q.postIdOrUrl });
     const rootUrl = post?.provenance.canonicalUrl ?? q.postIdOrUrl;
     const comments = all.filter(
       (e): e is Comment => e.kind === "comment" && e.provenance.source === q.source && e.threadRootUrl === rootUrl,

@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn as childSpawn } from "node:child_process";
 import { appendRecords, loadRecords, recordKey } from "../dist/store.js";
 import { getRecord, queryRecords } from "../dist/query.js";
 import { isEntity } from "../dist/validate.js";
@@ -85,6 +86,127 @@ const post = (id, text, metrics, over = {}) => ({
     threw = true;
   }
   check("appendRecords: refuses a record with no provenance rather than corrupting the store", threw);
+}
+
+// ── review-fix #2: EXPLICIT stub signal is authoritative + real-ness is STICKY ──
+// The load-bearing regression the reviewer demonstrated: a REAL image-only post
+// (empty text, no metrics — so structurally indistinguishable from a stub) is
+// degraded by a later placeholder stub. An explicit `stub:false` on the real
+// record must protect it, and an explicit `stub:true` on the placeholder must
+// be honored regardless of the structural heuristic.
+{
+  const STUB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub-test-"));
+  // a REAL image-only post: no text, no metrics, but explicitly stub:false, with
+  // a distinguishing author we can watch for degradation.
+  const realImageOnly = { ...post("4004", "", {}), stub: false, author: { handle: "real_author", profileUrl: "https://x.com/real_author" } };
+  const laterStub = { ...post("4004", "", {}), stub: true, author: { handle: "placeholder", profileUrl: "https://x.com/placeholder" } };
+  appendRecords(STUB_DIR, [realImageOnly]);
+  appendRecords(STUB_DIR, [laterStub]);
+  let stored = loadRecords(STUB_DIR).find((e) => e.provenance.id === "4004");
+  check("explicit-stub: a real (stub:false) text-less post is NOT degraded by a later stub:true (author preserved)", stored.author.handle === "real_author");
+  check("explicit-stub: the merged record is not itself marked stub (real iff either contributor is real)", stored.stub !== true);
+
+  // order independence: stub FIRST, real (stub:false) later → still real.
+  const STUB_DIR2 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub2-test-"));
+  appendRecords(STUB_DIR2, [{ ...laterStub, author: { handle: "placeholder", profileUrl: "https://x.com/placeholder" } }]);
+  appendRecords(STUB_DIR2, [{ ...realImageOnly, author: { handle: "real_author", profileUrl: "https://x.com/real_author" } }]);
+  stored = loadRecords(STUB_DIR2).find((e) => e.provenance.id === "4004");
+  check("explicit-stub: a real (stub:false) record arriving AFTER a stub wins the merge (author = real)", stored.author.handle === "real_author" && stored.stub !== true);
+
+  // raw.stub is honored as the explicit signal too (unitToRecord may stash it there).
+  const STUB_DIR3 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub3-test-"));
+  const realViaRaw = { ...post("5005", "", {}), raw: { stub: false }, author: { handle: "keep_me", profileUrl: "https://x.com/keep_me" } };
+  const stubViaRaw = { ...post("5005", "", {}), raw: { stub: true }, author: { handle: "drop_me", profileUrl: "https://x.com/drop_me" } };
+  appendRecords(STUB_DIR3, [realViaRaw]);
+  appendRecords(STUB_DIR3, [stubViaRaw]);
+  stored = loadRecords(STUB_DIR3).find((e) => e.provenance.id === "5005");
+  check("explicit-stub: raw.stub is honored as the explicit signal (real raw.stub:false survives)", stored.author.handle === "keep_me");
+
+  fs.rmSync(STUB_DIR, { recursive: true, force: true });
+  fs.rmSync(STUB_DIR2, { recursive: true, force: true });
+  fs.rmSync(STUB_DIR3, { recursive: true, force: true });
+}
+
+// ── review-fix #1: atomic write — a reader never sees a partial file; re-append idempotent ──
+// A synchronous write loop never yields to a same-process timer, so an honest
+// torn-read proof needs a SEPARATE reader PROCESS running while the writer
+// rewrites the (deliberately large) store hundreds of times. With writeFileSync
+// truncate-in-place a reader would routinely catch a half-written line; with the
+// temp-file + renameSync path it must see a COMPLETE, fully-parseable JSONL at
+// every observation. The child reads until the writer drops a `done` flag.
+{
+  const ATOMIC_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-atomic-test-"));
+  const file = path.join(ATOMIC_DIR, "records.jsonl");
+  const resultFile = path.join(ATOMIC_DIR, "reader-result.json");
+  const doneFlag = path.join(ATOMIC_DIR, "writer-done");
+  const readerScript = path.join(ATOMIC_DIR, "reader.mjs");
+  fs.writeFileSync(
+    readerScript,
+    [
+      'import fs from "node:fs";',
+      "const [, , file, resultFile, doneFlag] = process.argv;",
+      "const hardStop = Date.now() + 5000;",
+      "let reads = 0, torn = false;",
+      "while (!fs.existsSync(doneFlag) && Date.now() < hardStop) {",
+      '  let raw; try { raw = fs.readFileSync(file, "utf8"); } catch { continue; }',
+      "  reads++;",
+      '  for (const line of raw.split("\\n")) { if (!line.trim()) continue; try { JSON.parse(line); } catch { torn = true; } }',
+      "}",
+      "fs.writeFileSync(resultFile, JSON.stringify({ reads, torn }));",
+    ].join("\n"),
+  );
+
+  appendRecords(ATOMIC_DIR, [post("seed", "seed", { score: 0 })]);
+  const child = childSpawn(process.execPath, [readerScript, file, resultFile, doneFlag], { stdio: "ignore" });
+  const bigText = "x".repeat(4000); // widen every write so a torn read would be easy to catch
+  for (let i = 0; i < 400; i++) {
+    appendRecords(ATOMIC_DIR, [post("a" + i, bigText + " #" + i, { score: i })]);
+  }
+  fs.writeFileSync(doneFlag, "1");
+  await new Promise((res) => child.on("close", res));
+  const result = JSON.parse(fs.readFileSync(resultFile, "utf8"));
+  check("atomic-write: a separate reader PROCESS never observed a partial/torn file", result.reads > 0 && result.torn === false, `${result.reads} cross-process reads, all whole`);
+  check("atomic-write: no stray .tmp file remains after writes", !fs.existsSync(file + ".tmp"));
+  // idempotency still holds through the atomic path
+  const before = loadRecords(ATOMIC_DIR).length;
+  const added = appendRecords(ATOMIC_DIR, [post("a5", "x".repeat(4000) + " #5", { score: 5 })]);
+  const after = loadRecords(ATOMIC_DIR).length;
+  check("atomic-write: re-appending an existing record is still idempotent (no new identity, no count change)", added === 0 && before === after);
+  fs.rmSync(ATOMIC_DIR, { recursive: true, force: true });
+}
+
+// ── review-fix #3: forward-schema records survive an append cycle ────────────
+// An LS-04-era record (e.g. via:'screen', which THIS version's validator rejects)
+// is record-shaped (has a provenance object) but not currently valid. An LS-03
+// appendRecords must NOT delete it on rewrite — only garbage is dropped.
+{
+  const FWD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-fwd-test-"));
+  const file = path.join(FWD_DIR, "records.jsonl");
+  const forwardRecord = {
+    kind: "post",
+    provenance: { source: "x", id: "future1", canonicalUrl: "https://x.com/i/status/future1", fetchedAt: "2026-07-09T00:00:00.000Z", via: "screen" },
+    author: { handle: "future", profileUrl: "https://x.com/future" },
+    text: "captured by a newer package via the screen sensor",
+    metrics: { score: 3 },
+    capture: { from: "aria/2026-07-09.txt", by: "human" },
+  };
+  const garbage = "this is not json at all {{{";
+  // hand-seed the store with a valid line, a forward-schema line, and a garbage line
+  fs.mkdirSync(FWD_DIR, { recursive: true });
+  fs.writeFileSync(file, [JSON.stringify(post("known1", "a normal record", { score: 1 })), JSON.stringify(forwardRecord), garbage].join("\n") + "\n");
+  // sanity: the current validator does reject the forward record (so this test is meaningful)
+  check("forward-schema: the via:'screen' record IS rejected by the current validator (test is meaningful)", !isEntity(forwardRecord));
+  // now run an append cycle
+  appendRecords(FWD_DIR, [post("known2", "another normal record", { score: 2 })]);
+  const raw = fs.readFileSync(file, "utf8");
+  const lines = raw.split("\n").filter((l) => l.trim());
+  const parsed = lines.map((l) => JSON.parse(l));
+  const survivedForward = parsed.find((p) => p.provenance && p.provenance.id === "future1");
+  check("forward-schema: the unknown-but-record-shaped line survives the append cycle", !!survivedForward && survivedForward.provenance.via === "screen");
+  check("forward-schema: the forward record is preserved byte-faithfully (capture pointer intact)", !!survivedForward && survivedForward.capture && survivedForward.capture.by === "human");
+  check("forward-schema: the garbage line is dropped", !raw.includes("not json at all"));
+  check("forward-schema: valid records are still present alongside it", parsed.some((p) => p.provenance.id === "known1") && parsed.some((p) => p.provenance.id === "known2"));
+  fs.rmSync(FWD_DIR, { recursive: true, force: true });
 }
 
 // ── seed a richer store for the query surface tests ──────────────────────────

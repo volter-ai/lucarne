@@ -10,26 +10,44 @@
  * On-disk layout: `<dir>/records.jsonl` — every entity kind (profile/post/comment)
  * lives in the ONE file, discriminated by each line's own `kind` field (a store
  * directory is the unit other packages point at; nothing else is written there
- * by this module). `dir` is created if absent.
+ * by this module, except a transient `records.jsonl.tmp` during a write). `dir`
+ * is created if absent.
+ *
+ * CONCURRENCY MODEL. This store is designed for the §1.6 architecture: ONE
+ * recorder PROCESS is the only writer (its two sensors — screen + wire — write
+ * through the same in-process `appendRecords`), and any number of separate
+ * READER processes (e.g. `lucarne-corpus-mcp`) call `loadRecords`/`getRecord`/
+ * `queryRecords`. `appendRecords` writes to `records.jsonl.tmp` and then
+ * `renameSync`s it over `records.jsonl` — an atomic swap on POSIX — so a reader
+ * NEVER sees a torn/partial file and a crash mid-write can never truncate the
+ * live store (the half-written bytes land in `.tmp`, which is discarded). The
+ * atomic rename makes readers safe regardless of writer timing; it does NOT make
+ * two concurrent WRITER processes safe (last-rename-wins would drop the other's
+ * merge) — the single-writer-process expectation above is the contract for that.
  *
  * MERGE INVARIANTS (must hold — ported from `units.ts:114-131`):
  *  - richest-text-wins: for the same identity, the record carrying MORE text
- *    (bio, for a Profile) replaces a thinner one.
- *  - stub-never-degrades: a record with real content (non-empty text/bio, or any
- *    real metric) is NEVER overwritten by a stub/empty one for the same identity.
- *    The schema itself has no `stub` flag (that's LS-04's job, mapping cadence's
- *    `Unit.stub` into this schema) — so "stub-like" is derived structurally here:
- *    empty text/bio AND no real metric value. That is exactly the signal
- *    `units.ts:114`'s `richVals` check + the text-length comparison already used,
- *    generalized to a schema that doesn't (yet) carry an explicit stub flag.
+ *    (bio, for a Profile) replaces a thinner one. This is the ONLY place text
+ *    length matters — it is NOT how stub-ness is decided (see below).
+ *  - stub-never-degrades: a record known to be REAL is never overwritten by a
+ *    stub for the same identity. Cadence decided this from an EXPLICIT `Unit.stub`
+ *    flag, never from text length — its own comment (`units.ts:122`) warns that
+ *    "real" is NOT "text is empty": an image/video-only post is REAL with empty
+ *    text. So we honor an explicit stub signal FIRST (a top-level `stub:boolean`
+ *    or `raw.stub`, which LS-04's `unitToRecord` will set) — when present it is
+ *    authoritative and real-ness is STICKY (a known-real record never loses to a
+ *    stub, even when the real one is text-less). Only when NO explicit signal
+ *    exists do we fall back to the structural heuristic (empty text/bio AND no
+ *    real metric) so a bare LS-03 record still degrades sensibly.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Entity } from "./schema.js";
-import { assertEntity, isEntity } from "./validate.js";
+import { assertEntity, isEntity, isRecordShaped } from "./validate.js";
 
 const STORE_FILE = "records.jsonl";
+const TMP_SUFFIX = ".tmp";
 
 function storePath(dir: string): string {
   return resolve(dir, STORE_FILE);
@@ -48,9 +66,45 @@ function hasRealMetrics(m: Record<string, unknown> | undefined | null): boolean 
   return !!m && Object.values(m).some((v) => v !== undefined && v !== null);
 }
 
+/**
+ * Read an EXPLICIT stub signal off a record if one is present: a top-level
+ * `stub:boolean` (LS-04's `unitToRecord` writes this), else `raw.stub`. Returns
+ * `undefined` when the record carries no explicit signal at all — the caller
+ * then falls back to the structural heuristic. The field isn't on the `Entity`
+ * type yet (LS-04 adds it); read it defensively.
+ */
+function explicitStub(e: Entity): boolean | undefined {
+  const m = e as unknown as { stub?: unknown; raw?: { stub?: unknown } };
+  if (typeof m.stub === "boolean") return m.stub;
+  if (m.raw && typeof m.raw.stub === "boolean") return m.raw.stub;
+  return undefined;
+}
+
 /** Structurally "stub-like": no text/bio content AND no real metric value. */
 function isStubLike(e: Entity): boolean {
   return textOf(e).length === 0 && !hasRealMetrics(e.metrics as Record<string, unknown>);
+}
+
+/**
+ * Is this record a stub? Explicit signal wins (authoritative); the structural
+ * heuristic is only the fallback when no explicit signal exists.
+ */
+function isStub(e: Entity): boolean {
+  const flag = explicitStub(e);
+  if (flag !== undefined) return flag;
+  return isStubLike(e);
+}
+
+/** Reflect the merged real-ness on the output record (top-level `stub` is canonical). */
+function setMergedStub(merged: Entity, stub: boolean): void {
+  const m = merged as unknown as { stub?: boolean; raw?: Record<string, unknown> };
+  if (stub) {
+    m.stub = true;
+  } else {
+    // real iff EITHER contributor is real — clear any stale stub flag it inherited
+    delete m.stub;
+    if (m.raw && "stub" in m.raw) delete m.raw.stub;
+  }
 }
 
 function richerText(a: Entity, b: Entity): string {
@@ -81,10 +135,12 @@ export function mergeEntity(prev: Entity, next: Entity): Entity {
     // preferring the incoming record rather than corrupting a merge.
     return next;
   }
-  const prevStub = isStubLike(prev);
-  const nextStub = isStubLike(next);
-  // stub-never-degrades: an incoming stub-like record never becomes the
-  // structural base over a real prior record.
+  const prevStub = isStub(prev);
+  const nextStub = isStub(next);
+  // stub-never-degrades: a stub incoming over a real prior yields the structural
+  // base (author/provenance/other fields) to the real record. Real-ness is
+  // sticky — this holds even when the real prior is text-less (an image-only
+  // post), which the explicit signal captures and a text-length test never could.
   const donor = nextStub && !prevStub ? prev : next;
   const base = donor === next ? prev : next;
   const merged = { ...base, ...donor } as Entity;
@@ -97,6 +153,8 @@ export function mergeEntity(prev: Entity, next: Entity): Entity {
     merged.text = text;
   }
   merged.metrics = richerMetrics(prev, next) as never;
+  // the merged record is a stub ONLY if BOTH contributors were stubs.
+  setMergedStub(merged, prevStub && nextStub);
   return merged;
 }
 
@@ -105,21 +163,44 @@ export function mergeEntity(prev: Entity, next: Entity): Entity {
  * count of BRAND-NEW identities added (matching `appendUnits`'s return shape).
  * Idempotent: re-appending the same capture adds nothing new and does not
  * regress any previously-merged field.
+ *
+ * WRITER contract: this must be the only writer PROCESS for `dir` (see the
+ * concurrency model at the top of this file). The write itself is crash- and
+ * reader-safe — records go to `records.jsonl.tmp` and are `renameSync`d over the
+ * live file atomically, so a reader never observes a partial store.
+ *
+ * Forward-compatibility: lines that parse as JSON and are record-shaped (carry a
+ * `provenance` object) but fail the CURRENT validator — e.g. a future
+ * `via:'screen'` record written by a newer package — are PRESERVED verbatim
+ * through the rewrite rather than dropped, so an older `appendRecords` never
+ * silently deletes records it doesn't yet understand. Only non-JSON garbage is
+ * discarded.
  */
 export function appendRecords(dir: string, entities: readonly Entity[]): number {
   if (!dir || !entities || !entities.length) return 0;
   for (const e of entities) assertEntity(e);
   const file = storePath(dir);
   const byKey = new Map<string, Entity>();
+  const passthrough: string[] = [];
   if (existsSync(file)) {
     for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!line.trim()) continue;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: unknown;
       try {
-        const parsed: unknown = JSON.parse(line);
-        if (isEntity(parsed)) byKey.set(recordKey(parsed), parsed);
+        parsed = JSON.parse(trimmed);
       } catch {
-        // corrupt line — skip, don't fail the whole load
+        // non-JSON garbage — the only thing we drop
+        continue;
       }
+      if (isEntity(parsed)) {
+        byKey.set(recordKey(parsed), parsed);
+      } else if (isRecordShaped(parsed)) {
+        // record-shaped but not valid under THIS version's schema — carry it
+        // through untouched rather than deleting a forward-schema record.
+        passthrough.push(trimmed);
+      }
+      // else: JSON but not record-shaped — drop
     }
   }
   let added = 0;
@@ -134,7 +215,12 @@ export function appendRecords(dir: string, entities: readonly Entity[]): number 
     byKey.set(key, mergeEntity(prev, e));
   }
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, [...byKey.values()].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const lines = [...byKey.values()].map((e) => JSON.stringify(e)).concat(passthrough);
+  // atomic: write to a temp file, then rename over the live store so readers
+  // and crashes never see a partially-written file.
+  const tmp = file + TMP_SUFFIX;
+  writeFileSync(tmp, lines.join("\n") + "\n");
+  renameSync(tmp, file);
   return added;
 }
 
