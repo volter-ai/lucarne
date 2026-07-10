@@ -1,4 +1,13 @@
 // LS-46 (panel-fix-skills) — .claude/skills domain-neutrality gate.
+// LS-48 (panel-fix hardening) — closes 2 blind spots the re-panel generality skeptic found:
+//   1. This gate used to scan ONLY `.claude/skills/`, missing the SECOND live skills root,
+//      `.codex/skills/` (mirrors develop/draft/pm/reviewer for the codex agent runner). A
+//      codex-only social skill would have recurred silently. Now scans BOTH roots (and any other
+//      `<dir>/skills/` root that shows up in the repo tree — see SKILLS_ROOTS below).
+//   2. The banned-vocab list only covered the original x/reddit/HN incident terms and omitted
+//      `linkedin` / `youtube` — both LIVE domains of this product (cadence ships
+//      `channels/linkedin/`), so a `linkedin-outreach` or `youtube-*` skill would have passed
+//      clean. Now banned alongside the original terms.
 //
 // lucarne is the DOMAIN-AGNOSTIC platform repo (packages/* ship a generic corpus-read primitive
 // and generic dev/code-host skills — develop/draft/pm/reviewer). The four x/reddit/HN OPERATOR
@@ -6,27 +15,34 @@
 // this repo's `.claude/skills/` by the earlier split merge — a domain-specific consumer concern
 // that belongs in `cadence` (the social consumer repo), not in the platform. They've been removed
 // (this commit); this gate is the enforcement so they — or any other social/domain vocabulary —
-// can never land back in `.claude/skills/` silently again.
+// can never land back in `.claude/skills/` (or `.codex/skills/`) silently again.
 //
 // Existing package-clean gates (e.g. this package's own test/package-clean-gate.mjs) only scan a
-// single package's `src/` — `.claude/skills/` at the REPO ROOT was entirely outside their blind
-// spot, which is exactly how the four social skills shipped unnoticed. This gate walks the whole
-// repo's `.claude/skills/` tree instead (three levels up from this file: packages/lucarne-corpus-mcp/test
-// -> packages/lucarne-corpus-mcp -> packages -> repo root), independent of which package the
-// violation would land under.
+// single package's `src/` — the repo-root skills dirs were entirely outside their blind spot,
+// which is exactly how the four social skills shipped unnoticed. This gate walks the whole repo's
+// skills trees instead (three levels up from this file: packages/lucarne-corpus-mcp/test ->
+// packages/lucarne-corpus-mcp -> packages -> repo root), independent of which package or agent
+// runner (claude vs codex) the violation would land under.
 //
 // Wired into CI: this file is invoked from THIS package's `test:unit` script (package.json), and
 // the repo root's `npm run test:unit` runs `--workspaces`, which `.github/workflows/ci.yml`'s
 // `build` job already runs on every push/PR (`- run: npm run test:unit`). No new CI step needed —
-// this package's existing CI-run test lane now also covers the repo-root `.claude/skills/` tree.
+// this package's existing CI-run test lane now also covers the repo-root skills trees.
 //
 // NON-VACUOUS: before scanning the real tree, this gate proves its own detector actually detects —
-// it plants each banned term (one at a time) into a throwaway fixture directory, asserts the scan
-// catches it, then deletes the fixture. A gate that only ever reports "0 hits" is indistinguishable
-// from a gate that never runs its regexes at all; the self-test rules that out.
+// it plants each banned term (one at a time, incl. linkedin/youtube) into a throwaway fixture
+// directory, asserts the scan catches it; it also plants a social skill under a `.codex/skills`-
+// style path and asserts the multi-root walk catches it there too. Then it deletes the fixtures.
+// A gate that only ever reports "0 hits" is indistinguishable from a gate that never runs its
+// regexes (or never actually walks a second root) at all; the self-test rules that out.
+//
+// MAINTAINER NOTE: this gate enumerates both the skills roots it walks (SKILLS_ROOTS) and the
+// domain vocabulary it bans (BANNED) by hand. When a new channel/domain ships (see
+// `channels/<domain>/` in the cadence consumer repo) or a new skills root/agent-runner is added,
+// extend both lists here — the gate does not infer either from the product's channel list.
 //
 // Run with `node test/no-domain-skills-gate.mjs` (no build required — this only greps file text).
-import { readFileSync, readdirSync, statSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -34,7 +50,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // packages/lucarne-corpus-mcp/test -> packages/lucarne-corpus-mcp -> packages -> repo root
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
-const SKILLS_DIR = join(REPO_ROOT, ".claude", "skills");
+// Both live skills roots, confirmed via `git ls-tree -r --name-only <branch> | grep -iE
+// '(\.codex|\.claude)/skills'` — no other `<dir>/skills/` root exists in the repo tree today.
+// A root that doesn't exist (e.g. a repo checkout with just one agent runner) is skipped, not an
+// error — see scanRoots() below.
+const SKILLS_ROOTS = [join(REPO_ROOT, ".claude", "skills"), join(REPO_ROOT, ".codex", "skills")];
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -58,6 +78,10 @@ const BANNED = [
   { name: "upvote", re: /upvote/i },
   { name: "downvote", re: /downvote/i },
   { name: "retweet", re: /retweet/i },
+  // LS-48: linkedin + youtube are LIVE domains of this product (cadence ships
+  // `channels/linkedin/`) — a skill built around either would previously have passed clean.
+  { name: "linkedin", re: /linkedin/i },
+  { name: "youtube", re: /youtube/i },
 ];
 
 function walk(dir) {
@@ -86,6 +110,18 @@ function scan(dir) {
     }
   }
   return offenders;
+}
+
+/**
+ * Scan every root in `dirs` that actually exists on disk; roots that don't exist are skipped
+ * without error (e.g. a checkout with only one agent runner's skills dir). Returns the combined
+ * offender list plus which roots were actually walked, so the real-gate check below can report
+ * both.
+ */
+function scanRoots(dirs) {
+  const existingRoots = dirs.filter((d) => statSync(d, { throwIfNoEntry: false })?.isDirectory());
+  const offenders = existingRoots.flatMap((d) => scan(d));
+  return { existingRoots, offenders };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,17 +155,47 @@ const cleanHits = scan(cleanFixtureRoot);
 check("non-vacuity: an innocuous fixture file produces zero hits (detector isn't matching everything)", cleanHits.length === 0, cleanHits.join("\n    "));
 rmSync(cleanFixtureRoot, { recursive: true, force: true });
 
-// ---------------------------------------------------------------------------
-// The real gate: the whole repo's `.claude/skills/` tree must be zero-hit.
-// ---------------------------------------------------------------------------
-check(`${SKILLS_DIR} exists`, statSync(SKILLS_DIR, { throwIfNoEntry: false })?.isDirectory() ?? false);
-
-const skillFiles = walk(SKILLS_DIR);
-check(`scanned at least one file under .claude/skills/ (found ${skillFiles.length})`, skillFiles.length > 0);
-
-const offenders = scan(SKILLS_DIR);
+// LS-48: prove the MULTI-ROOT walk itself actually visits a second root, not just that scan()
+// works on a single directory. Build a throwaway fixture that mimics the real repo shape — a
+// parent dir containing a `.codex/skills/<skill>/SKILL.md` — and confirm scanRoots() (the same
+// function the real gate below calls) reports the planted skill as an existing root AND surfaces
+// its banned-term hit. A gate whose SKILLS_ROOTS array merely *lists* `.codex/skills` without
+// scanRoots() actually walking it would pass this repo's currently-clean tree by accident; this
+// self-test would catch that regression because the fixture's planted term is not clean.
+const multiRootFixtureParent = mkdtempSync(join(tmpdir(), "no-domain-skills-gate-selftest-multiroot-"));
+const codexSkillDir = join(multiRootFixtureParent, ".codex", "skills", "linkedin-outreach");
+mkdirSync(codexSkillDir, { recursive: true });
+writeFileSync(
+  join(codexSkillDir, "SKILL.md"),
+  "A codex-only skill for posting to linkedin and youtube, planted for the self-test.\n",
+);
+const otherRootFixture = join(multiRootFixtureParent, ".claude", "skills");
+mkdirSync(otherRootFixture, { recursive: true }); // exists but empty — proves multi-root isn't just "scan whichever root has hits"
+const multiRootResult = scanRoots([otherRootFixture, join(multiRootFixtureParent, ".codex", "skills")]);
+const multiRootCaughtCodexRoot = multiRootResult.existingRoots.some((r) => r === join(multiRootFixtureParent, ".codex", "skills"));
+const multiRootCaughtLinkedin = multiRootResult.offenders.some((h) => h.includes("[linkedin]"));
+const multiRootCaughtYoutube = multiRootResult.offenders.some((h) => h.includes("[youtube]"));
 check(
-  `grep-clean: zero social/domain-vocab hits (x.com|twitter|tweet|reddit|subreddit|hackernews|ycombinator|karma|upvote|downvote|retweet) across the WHOLE repo's .claude/skills/`,
+  "non-vacuity: multi-root walk finds a .codex/skills-style root and catches a planted social skill's linkedin+youtube terms there",
+  multiRootCaughtCodexRoot && multiRootCaughtLinkedin && multiRootCaughtYoutube,
+  `codexRootWalked=${multiRootCaughtCodexRoot} linkedinCaught=${multiRootCaughtLinkedin} youtubeCaught=${multiRootCaughtYoutube}`,
+);
+rmSync(multiRootFixtureParent, { recursive: true, force: true });
+
+// ---------------------------------------------------------------------------
+// The real gate: every skills root that exists in this repo checkout must be zero-hit.
+// ---------------------------------------------------------------------------
+const { existingRoots, offenders } = scanRoots(SKILLS_ROOTS);
+check(
+  `at least one skills root exists (found ${existingRoots.length}/${SKILLS_ROOTS.length}: ${existingRoots.map((r) => r.replace(REPO_ROOT + "/", "")).join(", ") || "none"})`,
+  existingRoots.length > 0,
+);
+
+const skillFiles = existingRoots.flatMap((d) => walk(d));
+check(`scanned at least one file across the skills roots (found ${skillFiles.length})`, skillFiles.length > 0);
+
+check(
+  `grep-clean: zero social/domain-vocab hits (x.com|twitter|tweet|reddit|subreddit|hackernews|ycombinator|karma|upvote|downvote|retweet|linkedin|youtube) across ALL scanned skills roots (${existingRoots.length} root(s))`,
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 20).join("\n    ")}` : "",
 );
