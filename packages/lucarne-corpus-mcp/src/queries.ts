@@ -139,7 +139,9 @@ export interface SearchArgs {
   type?: "posts" | "users";
   container?: string;
   limit?: number;
-  sort?: "top" | "new" | "best" | "controversial" | "relevance";
+  /** Open string — 'new'/'top'/'best'/'relevance' are recognized conventions; any other source-defined
+   *  sort name is accepted and falls back to capture order in `lucarne-records`' query layer. */
+  sort?: string;
   cursor?: string;
 }
 
@@ -169,11 +171,14 @@ export function search(dir: string, args: SearchArgs): ToolResult<Page<Entity>> 
 
 export interface GetTimelineArgs {
   source: Source;
-  kind: "user_posts" | "hot" | "new" | "top" | "best" | "ask" | "show";
+  /** Open string — 'user_posts' is a recognized convention (needs handle); any other source-defined
+   *  list name is accepted and falls back to capture order in `lucarne-records`' query layer. */
+  kind: string;
   handle?: string;
   container?: string;
   limit?: number;
-  sort?: "top" | "new" | "best" | "controversial" | "relevance";
+  /** Open string — see `SearchArgs.sort`. */
+  sort?: string;
   cursor?: string;
 }
 
@@ -189,7 +194,7 @@ export function getTimeline(dir: string, args: GetTimelineArgs): ToolResult<Page
     cursor: args.cursor,
   });
   if (isEmptyPage(page)) {
-    const where = args.handle ? `@${args.handle}'s ${args.kind}` : `${args.source}'s ${args.kind} list`;
+    const where = args.handle ? `${args.handle}'s ${args.kind}` : `${args.source}'s ${args.kind} list`;
     return notCaptured(
       `a ${args.source} timeline (${where})`,
       `Browse ${where} on ${args.source} in a driven session, then request the timeline again.`,

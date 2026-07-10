@@ -131,6 +131,47 @@ function parse(result) {
   check("get_post via MCP: the not_captured result still carries a browse hint for the arbitrary source", /browse/i.test(data.hint) && data.query.source === "github");
 }
 
+// ── LS-34 (corpus-mcp-open) — the OPEN-KIND/SORT proof: `get_timeline`'s `kind` and `sort` args
+// used to be closed `z.enum([...])`s carrying social-domain literals (Reddit's 'hot'/'controversial',
+// HN's 'ask'/'show'). They are now open strings — an UNKNOWN kind/sort must be accepted by the MCP
+// tool's zod schema (never a validation error) and handled gracefully by the query layer underneath
+// (capture-order fallback / a genuine not_captured miss), exactly like an unrecognized value from any
+// other still-supported source would be. ──
+
+// unknown kind, on an empty/foreign source -> not_captured (a genuine miss), not a zod error.
+{
+  const result = await client.callTool({ name: "get_timeline", arguments: { source: "github", kind: "github-issues" } });
+  check("get_timeline via MCP: an unrecognized kind ('github-issues') is NOT rejected by the tool's zod schema", !result.isError, JSON.stringify(result));
+  const data = parse(result);
+  check("get_timeline via MCP: unrecognized kind on an empty/foreign source returns not_captured, not a schema error", data.status === "not_captured", JSON.stringify(data));
+  check("get_timeline via MCP: the not_captured result echoes the unrecognized kind and still carries a browse hint", /browse/i.test(data.hint) && data.query.kind === "github-issues" && data.query.source === "github");
+}
+
+// unknown kind AND unknown sort together, still on an empty/foreign source -> same not_captured shape.
+{
+  const result = await client.callTool({
+    name: "get_timeline",
+    arguments: { source: "github", kind: "user_posts", handle: "octocat", sort: "most-reactions" },
+  });
+  check("get_timeline via MCP: an unrecognized sort ('most-reactions') is NOT rejected by the tool's zod schema", !result.isError, JSON.stringify(result));
+  const data = parse(result);
+  check("get_timeline via MCP: unrecognized sort on an empty/foreign source returns not_captured, not a schema error", data.status === "not_captured", JSON.stringify(data));
+}
+
+// unknown kind against a source that DOES have captured data -> the query layer falls back to
+// capture order (a graceful ok, not an error and not a spurious miss) rather than throwing on the
+// unrecognized kind literal.
+{
+  const result = await client.callTool({ name: "get_timeline", arguments: { source: "x", kind: "totally-unenumerated-list-name" } });
+  check("get_timeline via MCP: an unrecognized kind against a populated source is NOT rejected by the tool's zod schema", !result.isError, JSON.stringify(result));
+  const data = parse(result);
+  check(
+    "get_timeline via MCP: unrecognized kind against a populated source returns ok, capture-order items (graceful fallback, not a crash)",
+    data.status === "ok" && data.data.items.length === 1 && data.data.items[0].provenance.id === "7001",
+    JSON.stringify(data),
+  );
+}
+
 await client.close();
 await server.close();
 fs.rmSync(DIR, { recursive: true, force: true });

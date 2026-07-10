@@ -31,8 +31,13 @@ const sourceSchema = z
   .describe("The source namespace to query — the value a sensor wrote as each record's `provenance.source`. Any non-empty namespace a sensor captures into is valid.");
 
 const sortSchema = z
-  .enum(["top", "new", "best", "controversial", "relevance"])
-  .describe("Sort order. Not every value is meaningful for every site.");
+  .string()
+  .min(1)
+  .describe(
+    "Sort order for results. 'new'/'top'/'best'/'relevance' are broadly recognized conventions, but " +
+      "any non-empty string a source's own captured ordering supports is accepted — not every value is " +
+      "meaningful for every source, and an unrecognized value falls back to capture order rather than erroring.",
+  );
 
 /** Wrap a result (captured data OR a structured not_captured miss) as MCP tool content. */
 function ok(data: unknown) {
@@ -176,8 +181,15 @@ export function registerTools(server: McpServer, storeDir: string): void {
       inputSchema: {
         source: sourceSchema,
         kind: z
-          .enum(["user_posts", "hot", "new", "top", "best", "ask", "show"])
-          .describe("Which list. 'user_posts' needs handle; some source lists need container."),
+          .string()
+          .min(1)
+          .describe(
+            "Which list to read. 'user_posts' is a recognized convention meaning a single account's own " +
+              "posts (needs handle); 'new'/'top'/'best' are recognized convention names some sources use " +
+              "for their own list orderings. Any other non-empty string names a source-specific list " +
+              "convention and is accepted as-is — some source lists need 'container'; an unrecognized " +
+              "kind falls back to capture order rather than erroring.",
+          ),
         handle: z.string().optional().describe("Account handle for kind='user_posts' (no leading sigil)."),
         container: z.string().optional().describe("Named container for a source list that has one (no leading sigil)."),
         limit: z.number().int().min(1).max(100).optional().describe("Max items per page. Default 25."),
