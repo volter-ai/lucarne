@@ -1,8 +1,11 @@
 // lucarne-interact — the non-bot-like interaction plane (act verbs + enforced pacing).
 // LS-09 scaffolded open/snap/scroll/activate/back/capture/video.* + pacing + the shared video
 // assembler. LS-10 added humanized `type()` (stages only, never Enter) + offline `typingStats` +
-// yield-to-human. LS-11 adds the GATED `send()` — the only code path that presses Enter/submits,
-// default-refuse (byte-identical `decideSend` + the composer-verification safety check). LS-12
+// yield-to-human. LS-11 adds the GATED `send()` — the only code path that presses Enter to
+// submit/act, default-refuse (byte-identical `decideSend` + the composer-verification safety
+// check). LS-28 hardens `activate()`: a structural, default-refuse target classifier
+// (`activate-gate.ts`) refuses any form-submit or account-state control BEFORE the keypress fires
+// — `activate` stays navigation-only; `send()` remains the only path that can actually submit. LS-12
 // adds the presence contract (`src/presence.ts`): the ACT half's per-session driven-target marker
 // (written by every verb) and the OBSERVE half's actor-attribution / tab-tie-break read — it is
 // package-INTERNAL and deliberately NOT re-exported here (see test/presence-export-map.mjs);
@@ -61,6 +64,12 @@ export {
   checkComposerHoldsDraft,
   normalizeComposerText,
 } from "./composer-check.js";
+export {
+  type ActivateDecision,
+  type ActivateTargetDescriptor,
+  classifyActivateTarget,
+  describeActivateRefusal,
+} from "./activate-gate.js";
 export {
   DEFAULT_PACING,
   type PaceKind,
