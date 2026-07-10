@@ -305,6 +305,21 @@ export class InteractSession extends EventEmitter {
     return this.#presence.marker;
   }
 
+  /**
+   * The current page's `url` + `title` — read from the SAME page `#page()` hands every other verb
+   * (`snap`, `capture`, `viewportShot`, ...), so a consumer that also calls those verbs gets
+   * metadata that matches the exact page they read (self-consistent, not a separately-resolved
+   * page that could have navigated in between). Pure read: no navigation, no input, nothing
+   * dispatched to the page. This is how recall (LS-22b) records page metadata alongside a
+   * `snap()`/`capture()`/`viewportShot()` result without opening its own extra connection.
+   */
+  async where(): Promise<{ url: string; title: string }> {
+    return this.#act("where", [], "read", async () => {
+      const p = await this.#page();
+      return { url: p.url(), title: await p.title() };
+    });
+  }
+
   /** Close the underlying playwright-core connection (does not destroy the lucarne session). */
   async close(): Promise<void> {
     if (this.#browser) {
@@ -401,6 +416,22 @@ export class InteractSession extends EventEmitter {
       const p = await this.#page();
       mkdirSync(dirname(outPath), { recursive: true });
       await p.locator(selector).first().screenshot({ path: outPath, timeout: 12000 });
+      return { path: outPath };
+    });
+  }
+
+  /**
+   * LOOK at what's on screen RIGHT NOW: a VIEWPORT screenshot via CDP — invisible to the page.
+   * Contrast with `capture(selector, ...)`: that verb screenshots one ELEMENT's bounding box (for
+   * a tall `body` that's the element's full scroll height, not what's actually visible); this verb
+   * screenshots the viewport only (`fullPage` defaults false), bounded to what a human would see on
+   * screen. Same CDP path as `capture` — still read-only, no navigation, no input.
+   */
+  async viewportShot(outPath: string): Promise<{ path: string }> {
+    return this.#act("viewportShot", [outPath], "read", async () => {
+      const p = await this.#page();
+      mkdirSync(dirname(outPath), { recursive: true });
+      await p.screenshot({ path: outPath, timeout: 12000 }); // viewport-only (fullPage defaults false) — invisible to the page, same CDP path as capture
       return { path: outPath };
     });
   }

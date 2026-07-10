@@ -133,6 +133,29 @@ try {
   const capBytes = fs.existsSync(capPath) ? fs.statSync(capPath).size : 0;
   check("capture(): writes a real PNG to the caller-supplied path", capRes.path === capPath && capBytes > 200, `${capBytes} bytes`);
 
+  // 6b. where() — reports the SAME page's url + title that snap()/capture()/viewportShot() just
+  //     read (self-consistent metadata, LS-22b) — a pure read, no navigation.
+  const whereRes = await s.where();
+  check("where(): reports the live page's url", whereRes.url === BASE + "/", whereRes.url);
+  check("where(): reports the live page's title without throwing", typeof whereRes.title === "string");
+
+  // 6c. viewportShot() — a VIEWPORT screenshot (not element-scoped, not full-page), contrasting
+  //     with capture()'s element-bounding-box shot: assert a valid PNG whose dimensions are the
+  //     bounded VIEWPORT size (same PNG-header check as packages/lucarne/test/acceptance.mjs's
+  //     "screenshot: valid PNG at viewport width" proof), not some arbitrary/full-page size.
+  const viewportPath = path.join(WORK, "viewport.png");
+  const viewportRes = await s.viewportShot(viewportPath);
+  const viewportPng = fs.existsSync(viewportPath) ? fs.readFileSync(viewportPath) : Buffer.alloc(0);
+  const isPng = viewportPng.length > 1000 && viewportPng[0] === 0x89 && viewportPng[1] === 0x50 && viewportPng[2] === 0x4e && viewportPng[3] === 0x47;
+  // PNG IHDR width/height are big-endian u32 at byte offsets 16 and 20.
+  const viewportW = isPng ? viewportPng.readUInt32BE(16) : 0;
+  const viewportH = isPng ? viewportPng.readUInt32BE(20) : 0;
+  check(
+    "viewportShot(): writes a valid PNG bounded to the viewport size (not element/full-page)",
+    viewportRes.path === viewportPath && isPng && viewportW === 1280 && viewportH >= 560 && viewportH <= 720,
+    `${viewportW}x${viewportH}, ${viewportPng.length}B`,
+  );
+
   // 7. video.* — storyboard / clip / captions against the real local <video>
   if (haveSampleVideo) {
     const storyboardDir = path.join(WORK, "storyboard");
@@ -328,10 +351,10 @@ try {
   check("a live InteractSession has a 'send' member (LS-11 landed)", typeof s.send === "function");
 
   // 9. pacing was actually ENFORCED live: every verb paid >= its configured floor, and events fired for each
-  const kindByVerb = { open: "nav", snap: "read", scroll: "scroll", activate: "nav", back: "nav", capture: "read", "video.storyboard": "read", "video.clip": "read", "video.captions": "read" };
+  const kindByVerb = { open: "nav", snap: "read", scroll: "scroll", activate: "nav", back: "nav", capture: "read", where: "read", viewportShot: "read", "video.storyboard": "read", "video.clip": "read", "video.captions": "read" };
   const expectedVerbs = haveSampleVideo
-    ? ["open", "snap", "scroll", "activate", "back", "capture", "video.storyboard", "video.clip", "video.captions"]
-    : ["open", "snap", "scroll", "activate", "back", "capture"];
+    ? ["open", "snap", "scroll", "activate", "back", "capture", "where", "viewportShot", "video.storyboard", "video.clip", "video.captions"]
+    : ["open", "snap", "scroll", "activate", "back", "capture", "where", "viewportShot"];
   for (const verb of expectedVerbs) {
     const e = events.find((ev) => ev.verb === verb);
     check(`on('action'): '${verb}' fired an event`, !!e);

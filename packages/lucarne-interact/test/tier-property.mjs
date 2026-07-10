@@ -39,8 +39,11 @@ check(
 // ── every listed ACT verb exists, as a callable, on the class/instance surface ──
 // 'type' (LS-10) stages humanized keystrokes but never presses Enter. 'send' (LS-11) IS the
 // gated verb that commits a staged draft — it belongs on this list now that it has landed; see
-// test/send-gate.mjs for its default-refuse decision-table proof.
-const REQUIRED_VERBS = ["open", "snap", "scroll", "activate", "back", "capture", "type", "send", "close"];
+// test/send-gate.mjs for its default-refuse decision-table proof. 'where' and 'viewportShot'
+// (LS-22b) are pure READ accessors (kind: "read", no navigation/input) added for recall's
+// self-consistent page metadata — they belong on the read-only side of this surface, same tier
+// as 'snap'/'capture'.
+const REQUIRED_VERBS = ["open", "snap", "scroll", "activate", "back", "capture", "type", "send", "close", "where", "viewportShot"];
 for (const verb of REQUIRED_VERBS) {
   check(`InteractSession.prototype.${verb} is a function`, typeof InteractSession.prototype[verb] === "function");
 }

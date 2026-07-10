@@ -67,6 +67,8 @@ await session.close();
 | `activate(selector)` | `browser.ts:536-537` | keyboard-first activation: focus + Enter, no mouse |
 | `back({ inAppSelectors? })` | `browser.ts:270-274` | in-app Back control, else browser history |
 | `capture(selector, outPath)` | `browser.ts:287-292` | element-scoped screenshot via CDP, invisible to the page |
+| `viewportShot(outPath)` | (new, LS-22b) | viewport-only screenshot via CDP — contrast with `capture`'s element-bounding-box shot; invisible to the page |
+| `where()` | (new, LS-22b) | `{ url, title }` of the SAME page the other verbs read — for self-consistent page metadata |
 | `type(text, opts?)` | `browser.ts:184-195` | humanized per-keystroke typing into the focused field — **stages only, never Enter**; yields to a live human |
 | `send(text, opts)` | `guardrails/enforce.ts:110-132` + `browser.ts:503-534` | the GATED commit: default-refuse; only an explicit approval, or yolo, presses Enter/submits |
 | `video.storyboard(selector, { outDir, frames? })` | `browser.ts:294-317` | keyframes across the video's own duration (a fallback view) |
