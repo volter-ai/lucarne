@@ -28,22 +28,32 @@ export async function listPages(base: string): Promise<PageTarget[]> {
 
 /** Attach to a page target — the first page, or a specific tab by `targetId`. */
 export async function attachPage(base: string, targetId?: string): Promise<CdpConn> {
-  // Poll briefly for a READY page target. Right after a session/tab is created — and
-  // especially under many-session CI load — the `/json` target list can momentarily be
-  // empty or list a page that has no `webSocketDebuggerUrl` yet. Retry the read for up to
-  // ~5s before giving up. A target that NEVER becomes ready still throws below, so a real
-  // regression (wrong id, dead session) is still caught — this only absorbs the startup race.
+  // Poll for a READY page target AND connect to it, RE-FETCHING the target list on each attempt.
+  // Right after a session/tab is created — and especially under many-session CI load — the `/json`
+  // list can momentarily be empty / list a page with no `webSocketDebuggerUrl` yet; and a just-listed
+  // target's ws endpoint can briefly refuse, OR the tab can crash and RELAUNCH with a NEW ws url. By
+  // re-listing each attempt (not caching the first url) a connect retry never keeps dialing a stale/
+  // dead endpoint — it dials whatever the target list currently reports. Bounded to ~5s; a target
+  // that never becomes connectable still throws, so a real regression (wrong id, dead session) is
+  // still caught.
   const deadline = Date.now() + 5000;
-  let page: PageTarget | undefined;
+  let lastErr: unknown;
   for (;;) {
-    const pages = await listPages(base).catch(() => [] as PageTarget[]);
-    page = targetId ? pages.find((t) => t.id === targetId) : pages[0];
-    if (page?.webSocketDebuggerUrl) break;
-    if (Date.now() >= deadline) throw new Error(`lucarne: no CDP page target to attach to${targetId ? ` (${targetId})` : ""}`);
+    const pages = await listPages(base).catch((e) => { lastErr = e; return [] as PageTarget[]; });
+    const page = targetId ? pages.find((t) => t.id === targetId) : pages[0];
+    if (page?.webSocketDebuggerUrl) {
+      const wsUrl = base.replace("http://", "ws://") + "/devtools/" + page.webSocketDebuggerUrl.split("/devtools/")[1];
+      try {
+        return await connectCdp(wsUrl);
+      } catch (e) {
+        lastErr = e; // ws failed on this (possibly stale) target — loop re-fetches a fresh one
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw lastErr instanceof Error ? lastErr : new Error(`lucarne: no CDP page target to attach to${targetId ? ` (${targetId})` : ""}`);
+    }
     await sleep(150);
   }
-  const wsUrl = base.replace("http://", "ws://") + "/devtools/" + page.webSocketDebuggerUrl.split("/devtools/")[1];
-  return connectCdp(wsUrl);
 }
 
 /**

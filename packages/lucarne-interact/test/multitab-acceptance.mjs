@@ -107,19 +107,35 @@ try {
   const snapA = await s2.snap("h1");
   check("constructor { targetId: tabA } → snap() reads TAB A", /Tab A/.test(snapA), snapA);
 
-  // ── 3. useTarget(null) un-binds — falls back to today's original pages()[0]. CDP's page order
-  //    isn't guaranteed (which open tab lands at index 0 is not a contract this test should assume),
-  //    so this assertion is made ORDER-INDEPENDENT: read pages()[0]'s OWN actual header (via the same
-  //    raw playwright connection already open, `ctx`) and assert the unbound snap matches THAT tab's
-  //    content — whichever tab (A or B) actually is pages()[0] — instead of hardcoding "Tab A". ──
-  s2.useTarget(null);
-  const snapUnbound = await s2.snap("h1");
-  const actualFirstPage = ctx.pages()[0];
-  const actualFirstPageHdr = await actualFirstPage.locator("#hdr").innerText();
+  // ── 3. useTarget(null) un-binds → the session falls back to ITS OWN default page (today's original
+  //    unconditional pages()[0]). This must be proven SINGLE-CONNECTION / self-consistently: two
+  //    independent CDP connections do NOT share a pages()[0] ordering (this session's own connection
+  //    and the test's separate `ctx` can disagree on which open tab is index 0), so we NEVER compare
+  //    the unbound read against `ctx.pages()[0]`. Instead, on ONE fresh session on its OWN connection:
+  //    read its unbound default, bind it to the OTHER tab (proving the bind redirects the read to a
+  //    DIFFERENT tab), then un-bind and assert it returns to the SAME default it read before the bind.
+  //    The real invariant — unbound targets the connection's own first page — is asserted without any
+  //    cross-connection page-ordering assumption. ──
+  const tabOf = (snap) => (/Tab A/.test(snap) ? "A" : /Tab B/.test(snap) ? "B" : /Tab C/.test(snap) ? "C" : "?");
+  const sUnbind = new InteractSession(session, { pacing: FAST_PACING, timeoutMs: 15000 });
+  const defaultSnap = await sUnbind.snap("h1");            // unbound → this session's OWN pages()[0]
+  const defaultTab = tabOf(defaultSnap);
+  check("unbound session reads one of the two known tabs (its own connection's pages()[0])", defaultTab === "A" || defaultTab === "B", defaultSnap);
+  // Bind to the tab that is NOT this session's own default, so the bind visibly changes which tab is read.
+  const other = defaultTab === "A" ? { id: tabB.id, tab: "B" } : { id: tabA.id, tab: "A" };
+  sUnbind.useTarget(other.id);
+  const boundSnap = await sUnbind.snap("h1");
   check(
-    "useTarget(null) un-binds → falls back to pages()[0] (today's original default) — matches pages()[0]'s ACTUAL content, order-independent",
-    snapUnbound.includes(actualFirstPageHdr),
-    JSON.stringify({ snapUnbound, actualFirstPageHdr }),
+    "useTarget(other tab) redirects the read to the bound tab, distinct from the unbound default",
+    tabOf(boundSnap) === other.tab && other.tab !== defaultTab,
+    JSON.stringify({ defaultTab, boundTab: tabOf(boundSnap) }),
+  );
+  sUnbind.useTarget(null);
+  const reboundSnap = await sUnbind.snap("h1");
+  check(
+    "useTarget(null) un-binds → the SAME session reads its own default page again (self-consistent, single-connection — no cross-connection page ordering assumed)",
+    tabOf(reboundSnap) === defaultTab,
+    JSON.stringify({ defaultTab, reboundTab: tabOf(reboundSnap) }),
   );
 
   // ── 4. type() + send() land on the BOUND tab (B), never on the other open tab (A) — the
