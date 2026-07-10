@@ -23,6 +23,7 @@ import { type ActivityProbe, type PresenceMarker, PresenceTracker } from "./pres
 export type { PresenceMarker } from "./presence.js";
 import { runTypeLoop } from "./type-loop.js";
 import { type SendFlowOptions, type SendFlowResult, runSendFlow } from "./send-flow.js";
+import { type ActivateTargetDescriptor, classifyActivateTarget, describeActivateRefusal } from "./activate-gate.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -365,13 +366,61 @@ export class InteractSession extends EventEmitter {
     });
   }
 
-  /** Keyboard-first activation: focus the element + Enter — no mouse (browser.ts:536-537). */
+  /**
+   * Keyboard-first activation: focus the element + Enter — no mouse (browser.ts:536-537).
+   *
+   * LS-28: structurally NAVIGATION-ONLY. Before pressing Enter, this classifies the located
+   * element with a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/aria-label
+   * — NOT a general eval surface, see `#probeActivateTarget` below) and REFUSES (throws, fires NO
+   * keypress) any form-submit control, compose/send/post/reply/DM control, or account-state
+   * affordance (like/follow/repost/subscribe/bookmark/block/vote) — see `activate-gate.ts` for the
+   * pure, unit-tested classifier. This closes the hole where `activate` was byte-identical to the
+   * GATED send-submit gesture: `type("...")` + `activate("<submit-selector>")` could previously
+   * publish content or flip account state with zero `decideSend`/approval/guard. Navigation targets
+   * (`<a href>`, disclosure/expand controls, tab/menu nav) are unaffected.
+   */
   async activate(selector: string): Promise<ActivateResult> {
     return this.#act("activate", [selector], "nav", async () => {
       const p = await this.#page();
-      await p.locator(selector).first().press("Enter", { timeout: this.#timeoutMs });
+      const loc = p.locator(selector).first();
+      const descriptor = await this.#probeActivateTarget(loc);
+      const decision = classifyActivateTarget(descriptor);
+      if (!decision.allow) {
+        throw new Error(describeActivateRefusal(selector, decision.reason));
+      }
+      await loc.press("Enter", { timeout: this.#timeoutMs });
       return { activated: true as const };
     });
+  }
+
+  /**
+   * The read-only classification probe for `activate()` (LS-28): a FIXED expression (not a
+   * general eval surface — the callback below is baked into this package's source, never
+   * caller-supplied) that reads the located element's tag/type/role/attributes/ancestry/testid/
+   * aria-label. Dispatches nothing to the page — same read-only character as `snap`/`capture`.
+   */
+  async #probeActivateTarget(loc: import("playwright-core").Locator): Promise<ActivateTargetDescriptor> {
+    return loc.evaluate((el: Element) => {
+      const tag = el.tagName ? el.tagName.toLowerCase() : "";
+      const type = el.getAttribute ? el.getAttribute("type") : null;
+      const role = el.getAttribute ? el.getAttribute("role") : null;
+      const testid = el.getAttribute ? el.getAttribute("data-testid") || el.getAttribute("data-test-id") : null;
+      const ariaLabel = el.getAttribute ? el.getAttribute("aria-label") : null;
+      const href = el.getAttribute ? el.getAttribute("href") : null;
+      const text = (el.textContent || "").trim().slice(0, 120);
+      const form = el.closest ? el.closest("form") : null;
+      const inForm = !!form;
+      let isFormSubmitTrigger = false;
+      const t = (type || "").toLowerCase();
+      if (tag === "button") {
+        // A <button> with NO explicit type defaults to "submit" ONLY inside a <form> (the HTML
+        // spec's default); outside a form it defaults to "button" (does nothing on its own).
+        isFormSubmitTrigger = t === "submit" || (inForm && !type);
+      } else if (tag === "input") {
+        isFormSubmitTrigger = t === "submit" || t === "image";
+      }
+      return { tag, type, role, testid, ariaLabel, href, text, inForm, isFormSubmitTrigger };
+    }, undefined, { timeout: this.#timeoutMs });
   }
 
   /** Human back-navigation — the in-app Back button, else browser history (browser.ts:270-274). */
@@ -502,8 +551,12 @@ export class InteractSession extends EventEmitter {
   }
 
   /**
-   * The GATED send: the ONLY code path in this package that presses Enter / submits (LS-11). This
-   * is the anti-footgun for acting on logged-in accounts — the default is REFUSE; only an
+   * The GATED send: the ONLY code path in this package that presses Enter to SUBMIT composed
+   * content or otherwise ACT on account state (LS-11). `activate()` also presses Enter, but ONLY
+   * after a structural classifier (LS-28, `activate-gate.ts`) refuses any submit/compose or
+   * account-state target — so `activate` cannot reach this gate's job; it is navigation-only.
+   * `back()`'s bounded in-app-Back Enter/`.click()` is likewise a navigation gesture, not a submit.
+   * `send` is the anti-footgun for acting on logged-in accounts — the default is REFUSE; only an
    * explicit approval, or yolo mode, fires the gesture. `send` does not stage text itself; it
    * COMMITS a draft the caller already staged via `type()`.
    *
