@@ -27,6 +27,12 @@
 //     tool this package already shells for `clip`/watched-video assembly (`video/assembler.ts`), so
 //     this adds no new runtime dependency. `videoPoster` was ALREADY ffmpeg-only in the origin app
 //     (`:30-40`) and is kept essentially verbatim.
+//
+//  3. TITLE CLEANING (LS-32). The origin's `cleanTitle` (`recall-summary.ts:13`) stripped
+//     x/twitter's own page-title branding suffixes unconditionally. This package's `cleanTitle` is
+//     now a generic trim+cap only; a caller wanting a site's own suffix stripped passes it as
+//     `RecallSummaryOptions.cleanTitle` (e.g. a downstream domain package's `xCleanTitle`), applied
+//     BEFORE the generic cap — see `normalize`/`cleanEntryTitle` below.
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -36,10 +42,20 @@ import type { RecallActor, RecallSignal } from "./types.js";
 
 const pexecFile = promisify(execFile);
 
-/** Strip x/twitter's page-title suffixes down to the bare content title, and cap length for a
- *  timeline row. Ported verbatim from the origin app's `cleanTitle` (`recall-summary.ts:13`). */
+/** The TITLE_CAP a timeline row's title is trimmed to, regardless of which `cleanTitle` produced
+ *  it (this package's own default, or a caller's `RecallSummaryOptions.cleanTitle` override). */
+const TITLE_CAP = 76;
+
+/**
+ * Generic default title cleaner (LS-32): trims and caps length for a timeline row. This package no
+ * longer strips any site-specific title suffix (the origin app's `cleanTitle`,
+ * `recall-summary.ts:13`, stripped x/twitter's own branding suffix — that behavior moved
+ * DOWNSTREAM to a domain package's own `xCleanTitle`, injected via `RecallSummaryOptions.cleanTitle`
+ * below) — a non-X consumer's titles are no longer silently mangled by an X-shaped regex they never
+ * asked for.
+ */
 export function cleanTitle(t: string | null | undefined): string {
-  return (t || "").replace(/ \/ X$/, "").replace(/ on X.*$/, "").slice(0, 76);
+  return (t || "").trim().slice(0, TITLE_CAP);
 }
 
 async function ffmpegFrame(inputAbs: string, atSeconds: number, out: string): Promise<void> {
@@ -148,6 +164,11 @@ export interface RecallSummaryOptions {
   thumbBudget?: number;
   /** Forwarded to `thumbDataUri` (LS-14 dev/03's platform-forcing test hook). */
   platform?: NodeJS.Platform;
+  /** LS-32: a caller-supplied title cleaner, applied to every entry's raw title/url BEFORE this
+   *  file's own generic `cleanTitle` (trim + length cap) runs — e.g. a downstream domain package's
+   *  `xCleanTitle` stripping x/twitter's own branding suffix. Absent → pass-through (only the
+   *  generic cap applies), same default `cleanTitle` already has on its own. */
+  cleanTitle?: (title: string) => string;
 }
 
 interface NormalizedEntry {
@@ -168,11 +189,18 @@ function parseTs(ts: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-function normalize(signal: RecallSignal): NormalizedEntry {
+/** Compose a caller's own pre-cap cleaner (LS-32 — e.g. a downstream `xCleanTitle` stripping a
+ *  site's branding suffix) with this file's own generic trim+cap. Absent `preClean` → the generic
+ *  cap alone. */
+function cleanEntryTitle(raw: string, preClean: ((title: string) => string) | undefined): string {
+  return cleanTitle(preClean ? preClean(raw) : raw);
+}
+
+function normalize(signal: RecallSignal, preClean: ((title: string) => string) | undefined): NormalizedEntry {
   if (signal.kind === "capture") {
     return {
       kind: "view",
-      title: cleanTitle(signal.title || signal.url),
+      title: cleanEntryTitle(signal.title || signal.url, preClean),
       url: signal.url,
       ts: parseTs(signal.ts),
       screenshot: signal.screenshotFile || null,
@@ -186,7 +214,7 @@ function normalize(signal: RecallSignal): NormalizedEntry {
   if (signal.kind === "video") {
     return {
       kind: "video",
-      title: cleanTitle(signal.url),
+      title: cleanEntryTitle(signal.url, preClean),
       url: signal.url,
       ts: parseTs(signal.ts),
       screenshot: null,
@@ -203,7 +231,7 @@ function normalize(signal: RecallSignal): NormalizedEntry {
   const n = signal.recordsAdded;
   return {
     kind: "wire",
-    title: cleanTitle(signal.url),
+    title: cleanEntryTitle(signal.url, preClean),
     url: signal.url,
     ts: parseTs(signal.ts),
     screenshot: null,
@@ -233,7 +261,7 @@ export async function recallSummary(signals: readonly RecallSignal[], opts: Reca
   const urls = new Set<string>();
   const entries: NormalizedEntry[] = [];
   for (const signal of signals) {
-    const e = normalize(signal);
+    const e = normalize(signal, opts.cleanTitle);
     if (e.kind === "video") out.videos++;
     else if (e.kind === "view") out.captures++;
     else out.wireCaptures += signal.kind === "wire" ? signal.recordsAdded : 0;

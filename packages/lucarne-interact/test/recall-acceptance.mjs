@@ -23,6 +23,10 @@
 // LS-29 (generalize-records): this package bundles no site-specific ARIA extractor of its own
 // anymore (X's extractor moved downstream to a domain package) — this proof now uses a small, fully
 // LOCAL, generic ARIA-shaped extractor (source:"example"-shaped records) instead of importing one.
+//
+// LS-32 (recall-probes): this package likewise bundles no DOM probe of its own anymore — the
+// viewport-honesty/thread-root probes below are LOCAL fixtures, injected via `StartRecallOptions.
+// probes`, standing in for a downstream domain package's own `xVisibleProbe`/`xRootIdFromUrl`.
 import { Lucarne } from "lucarne";
 import { InteractSession } from "../dist/index.js";
 import { startRecall } from "../dist/recall/index.js";
@@ -67,7 +71,7 @@ const THREAD_HTML = `<!doctype html><html><body style="margin:0">
 </body></html>`;
 
 const LANDING_PATH = "/home";
-const THREAD_PATH = `/paulg/status/${ROOT_SID}`; // x-shaped path — rootIdFromUrl matches `/status/<id>` in the URL
+const THREAD_PATH = `/paulg/status/${ROOT_SID}`; // x-shaped path — the injected fixtureRootIdFromUrl (below) matches `/status/<id>` in the URL
 const server = http.createServer((req, res) => {
   if (req.url === LANDING_PATH) {
     res.writeHead(200, { "content-type": "text/html" });
@@ -148,6 +152,35 @@ function extractExampleAriaRecords(ariaText, capture = {}) {
 }
 const fixtureExtractor = { match: (url) => String(url || "").startsWith(BASE), extract: extractExampleAriaRecords };
 
+// LS-32: this package bundles NO DOM probes of its own anymore (`mediaProbe`/`visibleProbe`/
+// `rootIdFromUrl` moved downstream to a domain package's own `xMediaProbe`/`xVisibleProbe`/
+// `xRootIdFromUrl`, injected via `StartRecallOptions.probes`) — where this proof used to rely on
+// the package's own built-in viewport-honesty probe, it now injects a small, fully LOCAL fixture
+// pair matching THREAD_HTML's own `<article>`/`/status/<id>` markup, exactly the shape a downstream
+// domain package's real probes would take. Both remain plain, self-contained, `page.evaluate`-run
+// functions — READ-ONLY DOM reads, no dispatch, no fetch — so Law 3's read-only posture is
+// unchanged by this injection; only WHO supplies the probe body moved, not HOW it's invoked.
+function fixtureVisibleProbe() {
+  const H = innerHeight;
+  const ids = [];
+  for (const a of Array.from(document.querySelectorAll("article"))) {
+    const link = Array.from(a.querySelectorAll('a[href*="/status/"]'))
+      .map((x) => x.getAttribute("href"))
+      .find((h) => /\/status\/\d+/.test(h || ""));
+    const m = link && link.match(/status\/(\d+)/);
+    if (!m) continue;
+    const r = a.getBoundingClientRect();
+    const seen = Math.min(H, r.bottom) - Math.max(0, r.top);
+    if (seen >= 120) ids.push(m[1]);
+  }
+  return ids;
+}
+function fixtureRootIdFromUrl(url) {
+  const m = String(url || "").match(/\/status\/(\d+)/);
+  return m ? m[1] : null;
+}
+const fixtureProbes = { visibleProbe: fixtureVisibleProbe, rootIdFromUrl: fixtureRootIdFromUrl };
+
 // The engine's own recorder (record:true) is a SECOND, independent CDP screencast consumer of the
 // SAME session — the "two screencast consumers" case this proof must survive.
 const engine = new Lucarne({ port: 7823, token: "t", record: true });
@@ -162,6 +195,7 @@ try {
   recall = await startRecall(interact, {
     dataDir: DATA_DIR,
     extractors: [fixtureExtractor],
+    probes: fixtureProbes,
     observers: [(signal) => signals.push(signal)],
   });
 

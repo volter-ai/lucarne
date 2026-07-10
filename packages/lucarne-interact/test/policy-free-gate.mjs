@@ -42,6 +42,22 @@ function grep(pattern, dir = SRC) {
 const policyHits = grep("FEEDS|x\\.com/home|\\.social|channels/");
 check("no cadence policy strings (FEEDS|x.com/home|.social|channels/) in src/", policyHits.length === 0, policyHits.join(" | "));
 
+// ── LS-32: standing "recall's DOM probes are pluggable, not X-hardwired" gate ──
+// `mediaProbe`/`visibleProbe`'s concrete X-shaped DOM queries (a status-link selector, a
+// photo-testid selector, a media-path image selector), `visible-filter.ts`'s old `rootIdFromUrl`
+// (`/status/`), `summary.ts`'s old `cleanTitle` (the x/twitter branding-suffix regex), and
+// `dom-probes.ts`'s old `tabSignatureProbe` firstText selector (`article,.thing,.athing`) all moved
+// DOWNSTREAM to a domain package's own probes, injected via `StartRecallOptions.probes`
+// (`RecallPageProbes`) / `RecallSummaryOptions.cleanTitle`. This package must carry ZERO of those
+// literal, site-shaped fragments in src/recall/ — a re-introduced hardcoded probe body is exactly
+// the shape LS-32 removed.
+const recallProbeLiteralHits = grep('tweetPhoto|/status/|/media/| on X| / X|\\.athing|\\.thing', path.join(SRC, "recall"));
+check(
+  "no X-shaped DOM-probe literals (tweetPhoto|/status/|/media/| on X| / X|.athing|.thing) in src/recall/ — probes are pluggable, this package bundles none",
+  recallProbeLiteralHits.length === 0,
+  recallProbeLiteralHits.join(" | "),
+);
+
 // ── LS-31/S1: standing "no domain vocab in lucarne-interact" gate ──
 // X-specific testid literals (site-authored identifiers, not generic words) — these must live ONLY
 // in a CONSUMER's ActivatePolicy (cadence's CADENCE_ACTIVATE_POLICY), never hardcoded in this

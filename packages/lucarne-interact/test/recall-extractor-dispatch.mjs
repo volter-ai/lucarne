@@ -12,9 +12,22 @@
 // records) instead of importing an X-specific one. The X-specific version of this proof (driving the
 // actual `xAriaExtractor`) now lives in the domain package's own test suite.
 //
+// LS-32: `rootIdFromUrl` is no longer this package's own export (it moved downstream, injected via
+// `RecallPageProbes.rootIdFromUrl`) — the "root id recovered from the capturing page's url" half of
+// this test now uses a small LOCAL fixture function of the same shape, standing in for a caller's
+// own probe exactly the way the fixture extractor above stands in for a caller's own extractor.
+//
 // Run with `node test/recall-extractor-dispatch.mjs` (after `npm run build`).
 import { dispatchExtractors } from "../dist/recall/capture.js";
-import { filterVisibleRecords, rootIdFromUrl } from "../dist/recall/visible-filter.js";
+import { filterVisibleRecords } from "../dist/recall/visible-filter.js";
+
+/** A LOCAL fixture standing in for a caller's own `RecallPageProbes.rootIdFromUrl` (e.g. a domain
+ *  package's `xRootIdFromUrl`) — recovers a bare id from a `/status/<id>`-shaped url. Generic
+ *  test-only fixture, not a package export. */
+const fixtureRootIdFromUrl = (url) => {
+  const m = String(url || "").match(/\/status\/(\d+)/);
+  return m ? m[1] : null;
+};
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -85,10 +98,10 @@ const check = (name, pass, detail = "") => {
   check("every dispatched record carries provenance.via:'screen'", dispatched.every((r) => r.provenance.via === "screen"), JSON.stringify(dispatched.map((r) => r.provenance.via)));
   check("every dispatched record's capture.by matches what recall stamped ('agent')", dispatched.every((r) => r.capture?.by === "agent"));
 
-  const rootId = rootIdFromUrl(url);
-  // rootIdFromUrl matches `/status/(\d+)` — a generic-enough convention this package's viewport
-  // filter still honors regardless of which domain's extractor produced the records.
-  check("rootIdFromUrl recovers the thread root's bare sid from the capturing page's url", rootId === ROOT_SID);
+  const rootId = fixtureRootIdFromUrl(url);
+  // fixtureRootIdFromUrl matches `/status/(\d+)` — a generic-enough convention this package's
+  // viewport filter still honors regardless of which domain's probe produced the root id.
+  check("a caller's rootIdFromUrl probe recovers the thread root's bare sid from the capturing page's url", rootId === ROOT_SID);
 
   // Viewport-honesty: only the REPLY was reported visible this tick; the root (off-screen, but the
   // thread root) must still survive the filter, matching capture.ts's own pipeline order.

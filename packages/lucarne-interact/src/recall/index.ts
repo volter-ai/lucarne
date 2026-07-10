@@ -26,13 +26,14 @@ import { RecallStatusHolder, type RecallStatusSnapshot } from "./status.js";
 import { ACTIVE_TAB_FALLBACK_THRESHOLD, changeSignature, classifyChange, pickBestTab, scrollBucket, type ChangeParts, type ScoredTabCandidate } from "./tab-scoring.js";
 import { adaptivePaceMs, bumpIdle } from "./adaptive-pace.js";
 import { startWireSensor, type WireSensorHandle, type WireSiteAdapter } from "./wire.js";
-import type { RecallExtractor, RecallObserverFn, RecallSignal, RecallToggles, RecallVideoStopReason } from "./types.js";
+import type { RecallExtractor, RecallObserverFn, RecallPageProbes, RecallSignal, RecallToggles, RecallVideoStopReason } from "./types.js";
 
 export type {
   RecallActor,
   RecallCaptureReason,
   RecallExtractor,
   RecallObserverFn,
+  RecallPageProbes,
   RecallSignal,
   RecallToggles,
   RecallVideoStopReason,
@@ -64,8 +65,15 @@ export { cleanTitle, recallSummary, thumbDataUri, videoPoster, type RecallSummar
 export { attributeActor, presenceTieBreakBonus } from "../presence.js";
 export type { PresenceMarker } from "../presence.js";
 export { classifyChange, pickBestTab } from "./tab-scoring.js";
-export { filterVisibleRecords, rootIdFromUrl } from "./visible-filter.js";
-export { dispatchExtractors, type CaptureMeta, type CaptureOutcome } from "./capture.js";
+export { filterVisibleRecords } from "./visible-filter.js";
+export {
+  captureOnce,
+  dispatchExtractors,
+  type CaptureMeta,
+  type CaptureOnceOptions,
+  type CaptureOnceSource,
+  type CaptureOutcome,
+} from "./capture.js";
 export { decideStop, recordWatchedVideo, runVideoWatchLoop } from "./video-watch.js";
 export { MediaCropTracker } from "./media-crop.js";
 export { acquireSingletonLock, releaseSingletonLock, reconcileMedia, sweepOrphanVideoDirs } from "./lock.js";
@@ -89,6 +97,13 @@ export interface StartRecallOptions {
    *  that domain's own adapter(s) (a downstream `xWireAdapter`, for example). Passing
    *  `[]` (or omitting this option) disables wire capture while keeping the screen sensor. */
   wireAdapters?: readonly WireSiteAdapter[];
+  /** Pluggable per-page DOM probes (LS-32) — media crops, viewport-honesty filtering, thread-root
+   *  detection, title cleaning, and the tab-signature's `firstText` selector. This package bundles
+   *  NONE of its own (same LS-29 posture as `extractors`/`wireAdapters`, see `types.ts`'s
+   *  `RecallPageProbes`); a caller wanting X's own media-crop + viewport-honesty behavior passes a
+   *  downstream domain package's own probes (e.g. `xMediaProbe`/`xVisibleProbe`/`xRootIdFromUrl`/
+   *  `xCleanTitle`). Absent → no crops, no viewport filtering, no thread-root, plain titles. */
+  probes?: RecallPageProbes;
   /** Consumer hooks fired for every capture/video/wire signal (the origin app's intent-bus polling is NOT
    *  ported here — see this package's README; a caller wanting that reads its OWN page state). */
   observers?: readonly RecallObserverFn[];
@@ -135,7 +150,11 @@ interface PickedTabResult {
  * presence marker's `drivenTargetId`, if one exists and is still open" — the connection-independent
  * replacement `presence.ts`'s doc header describes.
  */
-async function pickActiveTab(conn: RecallConnection, presenceSnapshot: (() => PresenceMarker | null) | undefined): Promise<PickedTabResult | null> {
+async function pickActiveTab(
+  conn: RecallConnection,
+  presenceSnapshot: (() => PresenceMarker | null) | undefined,
+  signatureSelector: string | null,
+): Promise<PickedTabResult | null> {
   const marker = presenceSnapshot?.() ?? null;
   const pages = await conn.pages();
   const candidates: ScoredTabCandidate[] = [];
@@ -175,7 +194,7 @@ async function pickActiveTab(conn: RecallConnection, presenceSnapshot: (() => Pr
 
   const targetId = targetIdByIndex.get(pages.indexOf(target)) ?? (await conn.targetIdFor(target).catch(() => null));
   if (!targetId) return null;
-  const sig = await target.evaluate(tabSignatureProbe).catch(() => null);
+  const sig = await target.evaluate(tabSignatureProbe, signatureSelector).catch(() => null);
   if (!sig) return null;
   return { page: target, targetId, sig };
 }
@@ -226,6 +245,11 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
 
   const presenceSnapshot: (() => PresenceMarker | null) | undefined =
     opts.presence ?? (typeof sessionOrCdpUrl === "object" && typeof sessionOrCdpUrl.presenceSnapshot === "function" ? () => sessionOrCdpUrl.presenceSnapshot!() : undefined);
+
+  // LS-32: the pluggable per-page probes (media crops, viewport-honesty, thread-root, title
+  // cleaning, signature selector) — this package bundles none of its own; absent fields fall back
+  // to safe no-ops throughout the loop below (see `types.ts`'s `RecallPageProbes`).
+  const probes: RecallPageProbes = opts.probes ?? {};
 
   mkdirSync(opts.dataDir, { recursive: true });
   const lockPath = resolve(opts.dataDir, RECALL_LOCK_FILE);
@@ -294,7 +318,7 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
         }
         status.publish({ enabled: true });
 
-        const pick = await pickActiveTab(conn, presenceSnapshot).catch(() => null);
+        const pick = await pickActiveTab(conn, presenceSnapshot, probes.signatureSelector ?? null).catch(() => null);
         if (!pick) {
           status.publish({ observe: "no_page" });
           idle = bumpIdle(idle);
@@ -306,9 +330,10 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
         const by = attribution.by;
 
         // Video-watch is a BLOCKING branch (records to completion/cap). Skipped on a thread page
-        // (`/status/<id>`) so a playing video there doesn't hijack recall from the comments —
-        // the origin app's `recall.ts:368-373`.
-        const onThread = /\/status\/\d+/.test(sig.url || "");
+        // (recognized via the caller's OWN `probes.rootIdFromUrl` — LS-32; absent means no thread
+        // model, so this never skips) so a playing video there doesn't hijack recall from the
+        // comments — the origin app's `recall.ts:368-373`.
+        const onThread = probes.rootIdFromUrl?.(sig.url) != null;
         if (!onThread && sig.video && !sig.video.paused && sig.video.ct > 0.05) {
           const key = sig.url + "#" + Math.round(sig.video.dur || 0);
           if (!recordedVideoKeys.has(key)) {
@@ -341,7 +366,7 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
           lastParts = parts;
           idle = 0;
           try {
-            const outcome = await runStaticCapture(page, opts.dataDir, opts.extractors, tracker, { reason, by, detail });
+            const outcome = await runStaticCapture(page, opts.dataDir, opts.extractors, tracker, probes, { reason, by, detail });
             emit({
               kind: "capture",
               ts: new Date().toISOString(),
