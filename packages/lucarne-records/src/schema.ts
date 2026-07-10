@@ -85,9 +85,11 @@ export interface Capture {
  * domain-specific fields (author, container, parentUrl, media, handle, bio, …) ride along OPAQUELY
  * via the index signature — this package never inspects them by name (see this file's header). `kind`
  * is an OPEN string (a sensor picks its own convention — "post"/"comment"/"profile" for a social
- * domain, "issue"/"pr" for a code-forge domain, "abstract" for a papers domain, …); `store.ts`
- * special-cases exactly one literal value, `"profile"`, for its `bio`-as-content-alias merge rule —
- * everything else about `kind` is a caller convention, not a closed set this package enforces.
+ * domain, "issue"/"pr" for a code-forge domain, "abstract" for a papers domain, …); `store.ts` carries
+ * ZERO `kind`-literals (LS-33) — it never inspects `kind`'s VALUE, only that two records being merged
+ * share the SAME one. `bio` is honored as a legacy content-length alias for richest-text-wins
+ * regardless of `kind` (`store.ts`'s `textOf`, read-only — the merge always WRITES the winner to
+ * `text`) — everything about `kind` is a caller convention, not a closed set this package enforces.
  */
 export interface CorpusRecord {
   kind: string;
