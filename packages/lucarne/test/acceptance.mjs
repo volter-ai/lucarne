@@ -1371,9 +1371,21 @@ try {
   const tap = (key, code) => { xfw.send(JSON.stringify({ t: "keydown", key, code })); xfw.send(JSON.stringify({ t: "keyup", key, code })); };
   for (const k of ["a", "l", "i", "c", "e"]) tap(k, "Key" + k.toUpperCase());  // username (non-secret)
   await sleep(150);
-  tap("Tab", "Tab");                                                            // flush username + move focus → #pw
+  tap("Tab", "Tab");                                                            // exercises the flush-on-Tab boundary (a Tab keydown flushes the current run — session-media.ts)
+  await sleep(200);                                                             // let the "alice" run's flush (start+flush reads both on #username) complete first
+  // Deterministically place focus on the password field. Redaction classifies each coalesced
+  // type-run by the ACTUALLY-focused field (session-media `readSecrecy` reads document.activeElement
+  // at type-start and unions a flush-time re-read), so what matters is that "hunter2" is typed while
+  // #pw is focused. A synthetic CDP Tab keydown does NOT reliably move DOM focus to the next field in
+  // headless Chrome (CI) — without this, "hunter2" is typed while #username is still focused (a
+  // genuinely non-secret field) and correctly logged UNredacted: no real password-field leak, but a
+  // red test. A real headful user's Tab moves focus for real; this makes the headless synthetic-input
+  // path deterministic WITHOUT weakening the assertion — if flush-on-Tab regressed, "alice"+"hunter2"
+  // would coalesce into ONE run that the flush-time re-read (now on #pw) redacts wholesale, hiding
+  // "alice", so the `blob.indexOf("alice") !== -1` check below still fails on that regression.
+  await xfc.call("Runtime.evaluate", { expression: "document.getElementById('pw').focus()" });
   await sleep(150);
-  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password, same coalesce window
+  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password — #pw is the focused field
   await sleep(1200);                                                            // coalesce + flush
   xfw.close(); xfc.close();
   const types = xfEngine.sessionActivity("xredact").filter((a) => a.kind === "type");

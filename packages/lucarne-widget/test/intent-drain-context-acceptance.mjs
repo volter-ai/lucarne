@@ -46,9 +46,29 @@ const KEY = intentQueueGlobal(NS, QUEUE_NAME);
 
 // ── a tiny local http(s)-scheme server — the probe's fixed expression deliberately skips non-http(s) pages, so
 // throwaway `data:`/`about:` tabs (as this package's OTHER acceptance scripts use) won't do here. ──
+//
+// The fixture DETERMINISTICALLY controls the two signals the drain probe reads — document.visibilityState
+// and document.hasFocus() — via `?vis=`/`?foc=` query params, overriding them with Object.defineProperty.
+// This is REQUIRED because a real browser cannot reliably distinguish two foreground tabs under CI: both
+// headless AND headed xvfb report every tab visible:true + focused:true (no real window occlusion / OS
+// focus), so `bringToFront` produces no DOM-observable difference. By setting the values the probe reads,
+// the test exercises the REAL scoring + drain plumbing end-to-end (host.ts's tab-scoring genuinely reads
+// these getters) with inputs the test controls — page A reports hidden/unfocused, page B visible/focused —
+// robust to any CI environment, without weakening the property under test (best-scored = the visible/focused tab).
 const server = http.createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/html" });
-  res.end("<!doctype html><html><head><title>lucarne-widget intent-drain fixture</title></head><body>fixture page</body></html>");
+  res.end(
+    "<!doctype html><html><head><title>lucarne-widget intent-drain fixture</title></head><body>fixture page" +
+      "<script>(function(){" +
+      "var q=new URLSearchParams(location.search);" +
+      "var vis=q.get('vis')||'visible';" +
+      "var foc=q.get('foc')==='1';" +
+      "try{Object.defineProperty(document,'visibilityState',{get:function(){return vis;},configurable:true});}catch(e){}" +
+      "try{Object.defineProperty(document,'hidden',{get:function(){return vis==='hidden';},configurable:true});}catch(e){}" +
+      "document.hasFocus=function(){return foc;};" +
+      "})();</script>" +
+      "</body></html>",
+  );
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PAGE_URL = `http://127.0.0.1:${server.address().port}/`;
@@ -61,14 +81,10 @@ let session;
 let host;
 let browser;
 try {
-  // HEADED (headless:false overrides the LUCARNE_HEADLESS=1 default above): this test's whole point is
-  // per-tab focus/visibility scoring, and HEADLESS Chrome reports EVERY page as both visible AND
-  // focused (there's no real window occlusion), so `bringToFront` produces no DOM-visible difference
-  // and no signal — neither hasFocus nor visibilityState — can distinguish the tabs. A real (headed)
-  // Chrome window under the acceptance job's `xvfb-run` gives genuine window semantics: bringToFront
-  // makes the front tab document.visibilityState='visible' and background tabs 'hidden', so the
-  // scoring is actually exercised end-to-end. (Chrome-gated regardless — no browser in this sandbox.)
-  session = await engine.create({ backend: "native", profile: "intent-drain-acc", headless: false });
+  // Default (headless) session is fine — the fixture deterministically controls the visibility/focus
+  // signal the probe reads (see the server above), so this test does not depend on real window
+  // focus/occlusion, which neither headless nor headed xvfb can produce reliably for two foreground tabs.
+  session = await engine.create({ backend: "native", profile: "intent-drain-acc" });
   const engineOpts = { baseUrl: `http://127.0.0.1:${ENGINE_PORT}`, token: TOKEN };
 
   // A minimal, neutral built bundle — content is irrelevant here (this test never opens the widget UI), only
@@ -84,10 +100,14 @@ try {
 
   browser = await chromium.connectOverCDP(session.cdpUrl);
   const ctx = browser.contexts()[0];
+  // Page A is the BACKGROUND tab (hidden + unfocused), page B is the FRONT tab (visible + focused) —
+  // driven by the fixture's ?vis=/?foc= overrides, NOT by real browser focus (which CI can't produce
+  // for two foreground tabs). The drain probe reads document.visibilityState/document.hasFocus(), so
+  // these controlled values make the scoring deterministic end-to-end.
   const pageA = await ctx.newPage();
-  await pageA.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
+  await pageA.goto(PAGE_URL + "?vis=hidden&foc=0", { waitUntil: "domcontentloaded" });
   const pageB = await ctx.newPage();
-  await pageB.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
+  await pageB.goto(PAGE_URL + "?vis=visible&foc=1", { waitUntil: "domcontentloaded" });
 
   // Seed each tab's OWN namespaced intent-queue global directly — this is exactly the wire format a mounted
   // widget's own `sendIntent(name, payload)` queues onto (`runtime.ts`), and is what `drainIntentsWithContext`
@@ -96,8 +116,8 @@ try {
   await pageA.evaluate((k) => { window[k] = [{ id: "a1", payload: { action: "pick", from: "A" } }]; }, KEY);
   await pageB.evaluate((k) => { window[k] = [{ id: "b1", payload: { action: "pick", from: "B" } }]; }, KEY);
 
-  // Bring page B to the front — playwright's `bringToFront` activates that target via CDP, so it (and only it)
-  // should report both visible AND focused on the next probe.
+  // Page B is already the deterministically-distinguished front tab (fixture-controlled visible+focused);
+  // a bringToFront is redundant with the override but harmless — kept for realism. Small settle.
   await pageB.bringToFront();
   await sleep(300);
 
@@ -112,15 +132,13 @@ try {
   check("page A's queued intent ('a1') came back on some page's items", !!entryA, JSON.stringify(first));
   check("page B's queued intent ('b1') came back on some page's items", !!entryB, JSON.stringify(first));
 
-  // Distinguish the front tab via document.visibilityState (the session runs HEADED — see the
-  // create({ headless:false }) note above — so bringToFront produces a REAL front/back split:
-  // activated target 'visible', the others 'hidden'). visibilityState is also exactly what the
-  // product's own tab-scoring weights most heavily (`visible ? 2 : 0` dominates `focused ? 1 : 0` in
-  // host.ts's `activeTabInfo`), so asserting through it exercises the real scoring path. (Under a
-  // HEADLESS session this could not work — every page reports visible:true AND focused:true with no
-  // occlusion — which is precisely why this test's session is headed.)
+  // Page B is the single visible tab — deterministically, because the fixture overrode
+  // document.visibilityState per ?vis= (A='hidden', B='visible'), and the drain probe reads that
+  // getter. This exercises the product's real tab-scoring (`visible ? 2 : 0` dominates `focused ? 1 : 0`
+  // in host.ts's `activeTabInfo`) with an input the test controls — robust to any CI env, unlike
+  // relying on real browser focus which reports every foreground tab visible+focused.
   const visibleEntries = first.filter((p) => p.visible === true);
-  check("EXACTLY ONE page reports visible: true (the brought-to-front tab under headed Chrome)", visibleEntries.length === 1, JSON.stringify(first.map((p) => ({ url: p.url, focused: p.focused, visible: p.visible }))));
+  check("EXACTLY ONE page reports visible: true (the fixture-controlled front tab, page B)", visibleEntries.length === 1, JSON.stringify(first.map((p) => ({ url: p.url, focused: p.focused, visible: p.visible }))));
   check(
     "the page brought to the front (B, holding the 'b1' intent) is the one reporting visible: true — never A",
     visibleEntries.length === 1 && visibleEntries[0] === entryB,
@@ -139,8 +157,8 @@ try {
   // ── the read-only sibling: never mutates the (now-empty) queue, and still reports the same focus signal. ──
   await pageA.evaluate((k) => { window[k] = [{ id: "a2", payload: { action: "pick" } }]; }, KEY);
   const info = await host.activeTabInfo();
-  // Assert it resolved to the FRONT tab via visibility (the best-scored page). Under this headed
-  // session bringToFront makes exactly the front tab visible, so `visible` is the reliable discriminator.
+  // Assert it resolved to the FRONT tab via visibility (the best-scored page) — page B, the single
+  // fixture-controlled visible tab. `visible` is the deterministic discriminator here.
   check("activeTabInfo() resolves to the brought-to-front (visible, best-scored) page's info", !!info && info.visible === true, JSON.stringify(info));
   const afterProbe = await host.drainIntentsWithContext(QUEUE_NAME);
   const stillThere = afterProbe.find((p) => Array.isArray(p.items) && p.items.some((it) => it && it.id === "a2"));
