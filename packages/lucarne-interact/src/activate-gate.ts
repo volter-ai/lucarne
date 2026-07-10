@@ -1,22 +1,33 @@
-// activate-gate.ts — LS-28: the structural, default-refuse target classifier for `activate()`.
+// activate-gate.ts — LS-31/S1: the structural, default-REFUSE target classifier for `activate()`.
 //
-// The safety hole this closes: `InteractSession.activate(selector)` was byte-identical to the
-// GATED send-submit gesture (`session.ts`'s `pressSubmit`) — `locator(sel).first().press("Enter")`
-// with only the pacing wrapper, NO `decideSend`/approval/content/rate/burst/composer guard. So
-// `type("banned text")` + `activate("<submit-button-selector>")` could publish a reply/comment/
-// tweet, or flip account state (like/follow/repost/...), with zero gate. Convention ("use `send`
-// to send") is not a structural guarantee — this module makes it one.
+// LS-28 (the previous cut) shaped this as a BLOCKLIST: enumerate known submit/account-state
+// controls, refuse those, and `return { allow: true }` for everything else. The final safety panel
+// found that structure is inherently incomplete — any account-state or publish control NOT on the
+// enumerated list fires UNGATED on Enter: LinkedIn `<button>Connect</button>` (sends a connection
+// request), Reddit `<button>Save</button>`, `Join`/`Endorse`/`Accept`/`Mute`/`Report`/`React`, a bare
+// `<button>Share</button>`/`Toot!` (publish) — none of these were in the old blocklist, so they all
+// DEFAULT-ALLOWED. A blocklist can never be complete against every site's vocabulary.
 //
-// `activate` stays usable for NAVIGATION (open a post/thread, expand replies, follow an in-page
-// link) but STRUCTURALLY REFUSES any target whose activation could (a) submit composed content or
-// (b) change account state. `session.ts#activate()` runs a fixed, read-only in-page probe
-// (tag/type/role/attrs/ancestry/testid/aria-label — NOT a general eval surface) on the located
-// element, then hands the resulting descriptor to `classifyActivateTarget` below — a PURE function,
+// This module INVERTS the structure: default-REFUSE. `classifyActivateTarget` allows exactly three
+// things — (1) is never reached with an override, it's a floor: any form-submit affordance ALWAYS
+// refuses, even against an allowlisting policy; (2) a small set of STRUCTURAL, domain-agnostic
+// navigation/disclosure shapes (real-href links, tabs, disclosure toggles, `<summary>`, `<textarea>`,
+// anchor-menuitems) that are safe by construction, not by word-matching; (3) a caller-supplied,
+// DATA-ONLY `ActivatePolicy` allowlist (host + testid/aria-label) for the one domain-specific case
+// that's legitimately safe but can't be inferred structurally — a per-site compose-OPEN control that
+// reveals a composer without publishing anything (a caller wires its own site's testid/aria-label
+// through the policy — this package never hardcodes one; see test/policy-free-gate.mjs, which fails
+// the build on any site vocabulary creeping back into this module). EVERYTHING else — every
+// account-state affordance, every publish button, by any name, on any site — refuses by default. No
+// blocklist to keep complete; the safe cases are the enumerated ones instead.
+//
+// `activate` stays usable for navigation and consumer-allowlisted compose-open, and STRUCTURALLY
+// REFUSES any target whose activation could (a) submit composed content or (b) change account state.
+// `session.ts#activate()` runs a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/
+// aria-label/pageUrl — NOT a general eval surface) on the located element, then hands the resulting
+// descriptor (plus the caller's optional policy) to `classifyActivateTarget` below — a PURE function,
 // no Playwright, no browser — so the decision logic is fully unit-testable (test/activate-gate.mjs)
 // and runs under `npm test` with no Chrome required.
-//
-// DEFAULT-REFUSE only for the submit/action classes documented on each check below; everything else
-// (plain buttons, `<a href>`, disclosure/expand controls, tab/menu navigation) allows, unchanged.
 
 /** What `session.ts`'s read-only in-page probe reports about the element `activate()` located. */
 export interface ActivateTargetDescriptor {
@@ -42,162 +53,191 @@ export interface ActivateTargetDescriptor {
    * or an `<input type="submit"|"image">`.
    */
   isFormSubmitTrigger: boolean;
+  /** The page's current URL (`page.url()`) at probe time — used to host-scope a consumer policy. */
+  pageUrl: string;
+  /** The element's `aria-expanded` attribute, or null — presence (any value) marks a disclosure toggle. */
+  ariaExpanded?: string | null;
+  /** The element's `aria-haspopup` attribute, or null. Carried on the descriptor for callers/future use; not itself a decision input. */
+  ariaHasPopup?: string | null;
 }
 
 export type ActivateDecision = { allow: true } | { allow: false; reason: string };
 
-// ── per-site known testids (checked verbatim, case-sensitive — the sites' own casing) ──────────
-
-// The core distinction (LS-28 refinement): a control that OPENS a composer (X's reply button)
-// PUBLISHES NOTHING — the actual publish is a SEPARATE, later gesture (X's `tweetButton`, a
-// `<button type=submit>`, ...). Refusing the compose-open button adds zero safety (the draft isn't
-// sent by opening a box) while breaking the documented reply flow. BUT compose-open is allowed ONLY
-// via an explicit, known-safe per-site testid allowlist (`SITE_COMPOSE_OPEN_TESTIDS`, checked FIRST
-// below) — NOT by globally un-refusing the words: a bare-label actionable button with no known
-// testid and no `<form>` (`<button>Post</button>`, `<div role="button">Tweet</div>`) is AMBIGUOUS,
-// and the module's default-refuse contract for this HIGH-severity invariant requires it to REFUSE
-// (a false ALLOW there is an ungated-publish hole). Only two paths allow an actionable control:
-// (a) an explicit compose-open testid, or (b) `<a href>`/`role=link` NAV whose refuse-signal is
-// merely INCIDENTAL text (Reddit's "5 comments"/"reply" link labels — see `isNavLink`).
-
-/** X/Twitter: known PUBLISH controls (these actually SUBMIT composed content). */
-const SITE_SUBMIT_TESTIDS = new Set(["tweetButton", "tweetButtonInline", "tweetButtonInline2", "dmComposerSendButton"]);
+// ── consumer policy (DATA-ONLY: hosts/testids/ariaLabels — no predicates) ──────────────────────────
+//
+// A policy entry is pure data so a consumer physically cannot smuggle logic past the safety floor
+// below — it can only ever say "this host + this testid/aria-label", never "and also allow this
+// other shape of thing". `ActivatePolicy` is how a domain-specific consumer package allowlists a
+// compose-OPEN control (reveals a composer, publishes nothing) that this package has no way to infer
+// structurally, WITHOUT this package itself carrying any site vocabulary (see test/policy-free-gate.mjs).
 
 /**
- * X/Twitter: known COMPOSE-OPEN controls — they reveal/focus a composer but publish nothing. These
- * ALLOW (navigation), and are listed explicitly so the generic net can never catch them. The real
- * publish (`tweetButton*`, above) is what stays refused.
+ * One allowlist entry: matches when the page's hostname suffix-matches one of `hosts` (or `hosts`
+ * is absent/empty, meaning "any host") AND the element's `data-testid` is verbatim in `testids` OR
+ * its `aria-label` is verbatim in `ariaLabels`.
  */
-const SITE_COMPOSE_OPEN_TESTIDS = new Set(["reply"]);
+export interface ActivateAllowEntry {
+  /** Hostname suffixes this entry applies to (e.g. `"x.com"` matches `x.com` and `mobile.x.com`). Absent = any host. */
+  hosts?: readonly string[];
+  /** `data-testid` values (verbatim, case-sensitive) this entry allows. */
+  testids?: readonly string[];
+  /** `aria-label` values (verbatim, case-sensitive) this entry allows. */
+  ariaLabels?: readonly string[];
+}
 
-/** X/Twitter: known account-state affordances. */
-const SITE_ACCOUNT_STATE_TESTIDS = new Set([
-  "like",
-  "unlike",
-  "retweet",
-  "unretweet",
-  "follow",
-  "unfollow",
-  "bookmark",
-  "removeBookmark",
-  "block",
-  "unblock",
-]);
+/** A caller-supplied, data-only allowlist for `activate()`'s CONSUMER ALLOWLIST step (step 3, below). */
+export interface ActivatePolicy {
+  allow?: readonly ActivateAllowEntry[];
+}
 
-// ── generic, site-agnostic accessible-name / testid patterns (fallback for actionable controls
-// that aren't one of the per-site testids above). DEFAULT-REFUSE for the HIGH-severity invariant:
-// an ambiguous actionable button/`[role=button]` whose name carries a submit/publish/compose signal
-// must refuse. ──
+/** `<input>` types that are text-like — pressing Enter inside one triggers implicit form submission. Unset type ("") defaults to "text". */
+const TEXT_LIKE_INPUT_TYPES = new Set(["", "text", "search", "email", "url", "tel", "number"]);
 
 /**
- * A publish/submit/compose CTA by name — INCLUDING the bare, ambiguous words `post`/`reply`/`tweet`/
- * `comment` (as whole words). These are restored to the refuse path deliberately: a bare-label
- * actionable control (`<button>Post</button>`, `<div role="button">Tweet</div>` — LinkedIn/Bluesky/
- * YouTube/SPA-generic publish buttons with no `<form>` and no known testid) would otherwise
- * DEFAULT-ALLOW and let `type(draft)` + `activate(that button)` publish ungated (the security
- * review's exploit class). The ONLY sanctioned way an actionable compose-open control is allowed is
- * an explicit, known-safe per-site testid in `SITE_COMPOSE_OPEN_TESTIDS` (checked FIRST, before this
- * regex) — NOT a global un-refusing of the words. `<a href>`/`role=link` NAV links are separately
- * exempt from this name-match on their INCIDENTAL text (see `isNavLink` below), so Reddit's
- * "5 comments"/"reply" nav-link labels still allow.
+ * A tight, deliberately-narrow word check retained ONLY for step 2's nav-link carve-out: an
+ * explicitly-authored `aria-label` on an otherwise-structural nav link (e.g. `<a href="/i/user/123"
+ * aria-label="Like">`) still refuses — the rare real case of a link-styled account-state affordance.
+ * Bare visible TEXT on a nav link ("5 comments"/"reply" counters) is NOT checked against this — see
+ * `isNavLink`'s use below. This is the only word-based check left in the module; every other
+ * decision is purely structural (tag/role/attrs) or policy-driven.
+ */
+const NAV_LINK_ARIA_LABEL_REFUSE_RE = /\b(send|submit|publish|like|follow|repost|subscribe|vote|block)\b/i;
+
+function safeHostname(pageUrl: string | undefined | null): string | null {
+  if (!pageUrl) return null;
+  try {
+    return new URL(pageUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function hostMatches(hostname: string, host: string): boolean {
+  const h = host.toLowerCase();
+  return hostname === h || hostname.endsWith(`.${h}`);
+}
+
+function entryMatches(entry: ActivateAllowEntry, hostname: string | null, testid: string, ariaLabel: string): boolean {
+  if (entry.hosts && entry.hosts.length > 0) {
+    if (!hostname || !entry.hosts.some((h) => hostMatches(hostname, h))) return false;
+  }
+  const testidMatch = !!testid && !!entry.testids && entry.testids.includes(testid);
+  const ariaLabelMatch = !!ariaLabel && !!entry.ariaLabels && entry.ariaLabels.includes(ariaLabel);
+  return testidMatch || ariaLabelMatch;
+}
+
+/**
+ * Classify a probed `activate()` target: `{ allow: true }` for a structural navigation/disclosure
+ * shape or a policy-allowlisted compose-open control, or `{ allow: false, reason }` for anything
+ * else — which is the DEFAULT. Pure — no I/O, no browser — deterministic on the descriptor + policy.
  *
- * Whole-word (`\b…\b`) matching keeps genuinely different words from tripping it: "replies" (an
- * expand-disclosure label) does NOT match `\breply\b`, "Repost" does NOT match `\bpost\b` (it is an
- * account-state control, caught by the account regex below), "comments" does NOT match `\bcomment\b`.
+ * Decision order (each step can only REFUSE more, never un-refuse an earlier step's refusal):
+ *   1. NON-OVERRIDABLE SAFETY FLOOR — form-submit controls. Checked before, and independently of,
+ *      any policy: a consumer cannot allowlist a form-submit control.
+ *   2. STRUCTURAL NAV ALLOW — domain-agnostic positive shapes (real-href links, tabs, disclosure
+ *      toggles, `<summary>`, `<textarea>`, anchor-menuitems).
+ *   3. CONSUMER ALLOWLIST — `policy.allow`, reached only if the floor didn't refuse.
+ *   4. DEFAULT — refuse.
  */
-const GENERIC_SUBMIT_RE = /\b(?:send|submit|publish|post|reply|tweet|comment)\b|share your/i;
-
-/** An account-state-by-name control (like/follow/repost/subscribe/bookmark/vote/block). */
-const GENERIC_ACCOUNT_STATE_RE = /like|unlike|follow|unfollow|repost|retweet|unretweet|subscribe|unsubscribe|bookmark|block|unblock|upvote|downvote|\bvote\b/i;
-
-/**
- * Classify a probed `activate()` target: `{ allow: true }` for navigation, or
- * `{ allow: false, reason }` for anything that could submit composed content or change account
- * state. Pure — no I/O, no browser — deterministic on the descriptor alone.
- */
-export function classifyActivateTarget(d: ActivateTargetDescriptor): ActivateDecision {
+export function classifyActivateTarget(d: ActivateTargetDescriptor, policy?: ActivatePolicy): ActivateDecision {
   const tag = (d.tag || "").toLowerCase();
   const type = (d.type || "").toLowerCase();
   const role = (d.role || "").toLowerCase();
   const testid = d.testid || "";
+  const ariaLabel = d.ariaLabel || "";
+  const href = d.href || "";
 
-  // 1. Form-submit control — the generic structural heuristic: `<button type=submit>` (or a
-  //    `<button>` with no explicit type, which defaults to "submit" inside a `<form>` — the probe
-  //    folds that into `isFormSubmitTrigger`), or `<input type=submit|image>`. This check does NOT
-  //    require `inForm` to be true — a bare `[type=submit]` control refuses regardless of ancestry.
+  // ── 1. NON-OVERRIDABLE SAFETY FLOOR ────────────────────────────────────────────────────────────
+  // Checked FIRST and BEFORE any policy lookup — no `ActivateAllowEntry` can ever reach a target
+  // that trips this step, because the function returns here before step 3 runs at all.
+
+  // 1a. Form-submit control: `<button type=submit>` (or a `<button>` with no explicit type, which
+  //     defaults to "submit" inside a `<form>` — the probe folds that into `isFormSubmitTrigger`),
+  //     or `<input type=submit|image>`. Does NOT require `inForm` — a bare `[type=submit]` control
+  //     refuses regardless of ancestry.
   if (d.isFormSubmitTrigger || (tag === "button" && type === "submit") || (tag === "input" && (type === "submit" || type === "image"))) {
-    return { allow: false, reason: "form-submit control (button/input type=submit, or the form's default submit trigger)" };
+    return {
+      allow: false,
+      reason:
+        "form-submit control (button/input type=submit, or the form's default submit trigger) — this safety floor cannot be overridden by policy",
+    };
   }
 
-  // 2. Per-site known PUBLISH/SUBMIT testid (X: tweetButton, tweetButtonInline, DM send) — these
-  //    actually publish composed content. Exact-match against a small, deliberate set — checked
-  //    regardless of tag, since these are precise site-authored identifiers (not generic words), so
-  //    there is no navigation-link false-positive risk the way there is for the word-based checks below.
-  if (testid && SITE_SUBMIT_TESTIDS.has(testid)) {
-    return { allow: false, reason: `known publish/submit control (data-testid="${testid}")` };
+  // 1b. A text-like `<input>` inside a `<form>` — pressing Enter there triggers the browser's
+  //     IMPLICIT form submission, even with no explicit submit button. `<textarea>` is EXEMPT:
+  //     Enter inserts a newline there, it never submits a form.
+  if (tag === "input" && d.inForm && TEXT_LIKE_INPUT_TYPES.has(type)) {
+    return {
+      allow: false,
+      reason:
+        "text-like <input> inside a <form> — Enter triggers implicit form submission — this safety floor cannot be overridden by policy",
+    };
   }
 
-  // 3. Per-site known account-state testid (X: like, retweet, follow, bookmark, block, ...).
-  if (testid && SITE_ACCOUNT_STATE_TESTIDS.has(testid)) {
-    return { allow: false, reason: `known account-state control (data-testid="${testid}")` };
-  }
+  // ── 2. STRUCTURAL NAV ALLOW (domain-agnostic positive shapes) ──────────────────────────────────
 
-  // 3b. Per-site known COMPOSE-OPEN testid (X: `reply` — opens the reply composer, publishes
-  //     nothing). ALLOW, short-circuiting before the generic net so this compose-open affordance is
-  //     never mistaken for a publish. The real publish (`tweetButton*`, checked at 2) stays refused;
-  //     the eventual SEND still goes through the gated `send()`.
-  if (testid && SITE_COMPOSE_OPEN_TESTIDS.has(testid)) {
+  // A REAL-href link: non-empty, not "#", not "javascript:" — closes `<a href="#" onclick=like()>`
+  // and `<a href="javascript:void(0)" onclick=...>` disguised-as-nav traps.
+  const hasRealHref = !!href && href !== "#" && !/^javascript:/i.test(href);
+  const isNavLink = (tag === "a" && hasRealHref && (role === "" || role === "link")) || role === "link";
+  if (isNavLink) {
+    // Belt-and-suspenders KEEP from LS-28: an explicitly-authored `aria-label` on a nav link that
+    // matches a tight action-word list still refuses (the rare link-styled account-state control,
+    // e.g. `<a href="/i/user/123" aria-label="Like">`). Bare visible TEXT ("5 comments"/"reply"
+    // counters) is NOT checked here — only the deliberately-authored aria-label.
+    if (ariaLabel && NAV_LINK_ARIA_LABEL_REFUSE_RE.test(ariaLabel)) {
+      return {
+        allow: false,
+        reason: `nav link's explicitly-authored aria-label matches an action word (aria-label="${ariaLabel}")`,
+      };
+    }
     return { allow: true };
   }
 
-  // A plain NAVIGATION link — `<a href>` with no role (or an explicit role="link"), or any element
-  // explicitly marked `role="link"` — is exempt from the generic WORD-based checks below on its
-  // INCIDENTAL visible text / testid. This is what keeps ordinary navigation intact: Reddit's
-  // `"N comments"` thread-open link, or LinkedIn/X's `"N comments"`/`"N replies"` counters, contain
-  // the substrings "comment"/"reply" purely as a COUNT LABEL, not because the link submits or acts —
-  // matches the brief's explicit "ALLOW ... `<a href>`, role=link" navigation rule. An explicit
-  // `aria-label` authored directly onto the link is still honored (the rare real case of a
-  // link-styled account-state affordance, e.g. `<a aria-label="Like">`) — only its bare visible TEXT
-  // and testid are exempted, not a deliberately-authored aria-label. An anchor whose role is
-  // overridden to something action-like (`role="button"`, etc.) is NOT a nav link and gets the full
-  // check, same as any other control.
-  const isNavLink = (tag === "a" && !!d.href && (role === "" || role === "link")) || role === "link";
-  const genericTestid = isNavLink ? "" : testid;
-  // The "accessible name" proxy this probe can cheaply compute: aria-label first, else (for
-  // non-nav-link controls) visible text.
-  const genericName = isNavLink ? d.ariaLabel || "" : [d.ariaLabel, d.text].filter(Boolean).join(" ");
+  // Tab navigation.
+  if (role === "tab") return { allow: true };
 
-  // 4. Generic publish/submit/compose-by-name (testid or accessible-name match). Includes the bare
-  //    ambiguous words post/reply/tweet/comment (whole-word) — the DEFAULT-REFUSE net for a
-  //    bare-label actionable button that isn't caught by the structural form-submit net or an
-  //    explicit compose-open testid (which was already checked, and allows, at 3b above).
-  if (GENERIC_SUBMIT_RE.test(genericTestid) || GENERIC_SUBMIT_RE.test(genericName)) {
-    return {
-      allow: false,
-      reason: "publish/submit/compose control (accessible name/testid matches send|submit|publish|post|reply|tweet|comment)",
-    };
+  // A menu ENTRY that is itself a real-href link (nav menu item) — NOT menuitems wholesale (X's
+  // "Repost"/"Delete"/"Mute" are ACTION menuitems and must stay default-refused).
+  if (role === "menuitem" && tag === "a" && hasRealHref) return { allow: true };
+
+  // Disclosure toggle: the element carries an `aria-expanded` attribute (any value, including
+  // "false" — the attribute's mere presence marks a disclosure control). Opening is non-mutating;
+  // any mutation is a SEPARATE, later activation on the revealed control, itself default-refused.
+  if (d.ariaExpanded !== null && d.ariaExpanded !== undefined) return { allow: true };
+
+  // Native disclosure element.
+  if (tag === "summary") return { allow: true };
+
+  // Compose-focus: Enter inside a `<textarea>` inserts a newline, never submits — spec-safe.
+  if (tag === "textarea") return { allow: true };
+
+  // ── 3. CONSUMER ALLOWLIST — reached only if the floor (step 1) didn't refuse ───────────────────
+  if (policy?.allow && policy.allow.length > 0) {
+    const hostname = safeHostname(d.pageUrl);
+    if (policy.allow.some((entry) => entryMatches(entry, hostname, testid, ariaLabel))) {
+      return { allow: true };
+    }
   }
 
-  // 5. Generic account-state-by-name.
-  if (GENERIC_ACCOUNT_STATE_RE.test(genericTestid) || GENERIC_ACCOUNT_STATE_RE.test(genericName)) {
-    return {
-      allow: false,
-      reason: "account-state control (accessible name/testid matches like|follow|repost|subscribe|bookmark|vote|block)",
-    };
-  }
-
-  // Everything else — `<a href>`, role=link, plain non-submit buttons (disclosure/expand), tab/menu
-  // navigation — is navigation and stays allowed.
-  return { allow: true };
+  // ── 4. DEFAULT: REFUSE ──────────────────────────────────────────────────────────────────────────
+  return {
+    allow: false,
+    reason:
+      "not a recognized navigation/disclosure affordance; actionable controls are refused by default — " +
+      "allowlist known-safe compose-open via InteractSessionOptions.activatePolicy; send via gated send(); " +
+      "do account actions yourself",
+  };
 }
 
 /**
  * The refusal Error message `session.ts#activate()` throws — directs the caller to the actually
- * gated paths (LS-28's binding requirement: no ungated path can submit or change account state).
+ * gated paths (the binding requirement: no ungated path can submit or change account state).
  */
 export function describeActivateRefusal(selector: string, reason: string): string {
   return (
     `activate(): refused — ${reason} (selector: ${selector}). ` +
-    "to send a composed draft use the gated `send()`; account-state actions are not automatable — do them yourself."
+    "to send a composed draft use the gated `send()`; account-state actions are not automatable — do them yourself. " +
+    "known-safe compose-open controls can be allowlisted via InteractSessionOptions.activatePolicy."
   );
 }

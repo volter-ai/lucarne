@@ -4,6 +4,13 @@
 //    channels/ guide lookups must not appear anywhere in src/.
 // 2. Exactly ONE ffmpeg arg-list exists in the package (the shared assembler in
 //    video/assembler.ts) — `clip` must call it rather than carrying its own.
+// 3. LS-31/S1: a standing "no domain vocab in lucarne-interact" gate. The whole point of inverting
+//    `activate-gate.ts` to a structural default-refuse classifier + DATA-ONLY `ActivatePolicy` is
+//    that this package carries ZERO site-specific knowledge — every domain testid/selector lives in
+//    the CONSUMER's policy object (cadence's `CADENCE_ACTIVATE_POLICY`), never in this package's
+//    source. This fails the build if an X testid literal or generic social-platform vocabulary word
+//    ever creeps back into src/ (e.g. a future dev re-adding a per-site allowlist INSIDE this
+//    package, exactly the shape LS-31/S1 removed).
 //
 // Run with `node test/policy-free-gate.mjs` (no build needed — this only greps src/).
 import { execFileSync } from "node:child_process";
@@ -34,6 +41,29 @@ function grep(pattern, dir = SRC) {
 // ── policy-free gate ──
 const policyHits = grep("FEEDS|x\\.com/home|\\.social|channels/");
 check("no cadence policy strings (FEEDS|x.com/home|.social|channels/) in src/", policyHits.length === 0, policyHits.join(" | "));
+
+// ── LS-31/S1: standing "no domain vocab in lucarne-interact" gate ──
+// X-specific testid literals (site-authored identifiers, not generic words) — these must live ONLY
+// in a CONSUMER's ActivatePolicy (cadence's CADENCE_ACTIVATE_POLICY), never hardcoded in this
+// package. `data-testid.*reply` also catches a re-introduced per-site "compose-open testid" set like
+// the one LS-31/S1 deleted (SITE_COMPOSE_OPEN_TESTIDS used to hardcode `data-testid="reply"`).
+const xTestidHits = grep("tweetButton|dmComposerSend|data-testid.*reply");
+check(
+  "no X testid literals (tweetButton|dmComposerSend|data-testid.*reply) in src/",
+  xTestidHits.length === 0,
+  xTestidHits.join(" | "),
+);
+
+// Generic social-platform vocabulary — LS-28's blocklist regexes (GENERIC_SUBMIT_RE,
+// GENERIC_ACCOUNT_STATE_RE) hardcoded exactly this kind of word list; LS-31/S1 deleted them as
+// decision inputs (default-refuse makes them unnecessary). If this vocabulary reappears anywhere in
+// src/, it's a sign the blocklist shape is creeping back in.
+const socialVocabHits = grep("retweet|upvote|downvote|\\bbookmark\\b");
+check(
+  "no social-platform vocabulary (retweet|upvote|downvote|bookmark) in src/",
+  socialVocabHits.length === 0,
+  socialVocabHits.join(" | "),
+);
 
 // ── one shared video assembler; clip() uses it (no second ffmpeg arg-list) ──
 const libx264Hits = grep("libx264");

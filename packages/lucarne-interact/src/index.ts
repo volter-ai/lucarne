@@ -3,9 +3,14 @@
 // assembler. LS-10 added humanized `type()` (stages only, never Enter) + offline `typingStats` +
 // yield-to-human. LS-11 adds the GATED `send()` — the only code path that presses Enter to
 // submit/act, default-refuse (byte-identical `decideSend` + the composer-verification safety
-// check). LS-28 hardens `activate()`: a structural, default-refuse target classifier
-// (`activate-gate.ts`) refuses any form-submit or account-state control BEFORE the keypress fires
-// — `activate` stays navigation-only; `send()` remains the only path that can actually submit. LS-12
+// check). LS-28 first hardened `activate()` with a target classifier; LS-31/S1 INVERTS it from a
+// blocklist (refuse an enumerated set, default-ALLOW the rest — incomplete against any site's full
+// vocabulary of account-state/publish controls) to a structural default-REFUSE allowlist
+// (`activate-gate.ts`): a non-overridable safety floor refuses any form-submit shape first; a small
+// set of domain-agnostic structural shapes (real-href links, tabs, disclosure toggles, `<summary>`,
+// `<textarea>`, anchor-menuitems) allow; a caller-supplied, DATA-ONLY `ActivatePolicy` may allowlist
+// one further compose-open control by host+testid/aria-label; everything else refuses by default —
+// `activate` stays navigation-only; `send()` remains the only path that can actually submit. LS-12
 // adds the presence contract (`src/presence.ts`): the ACT half's per-session driven-target marker
 // (written by every verb) and the OBSERVE half's actor-attribution / tab-tie-break read — it is
 // package-INTERNAL and deliberately NOT re-exported here (see test/presence-export-map.mjs);
@@ -66,7 +71,9 @@ export {
   normalizeComposerText,
 } from "./composer-check.js";
 export {
+  type ActivateAllowEntry,
   type ActivateDecision,
+  type ActivatePolicy,
   type ActivateTargetDescriptor,
   classifyActivateTarget,
   describeActivateRefusal,
