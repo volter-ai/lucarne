@@ -77,7 +77,10 @@ export function getRecord(dir: string, ref: RecordRef): Entity | undefined {
   return findRecord(loadRecords(dir), ref);
 }
 
-type SortKind = "top" | "new" | "best" | "controversial" | "relevance";
+/** Open string — 'new'/'top'/'best' get special-cased ranking below (see `applySort`); ANY other
+ *  string (a source's own sort name, or an unrecognized value) is accepted and preserves capture
+ *  (insertion) order — never rejected structurally. */
+type SortKind = string;
 
 export interface CommentsQuery {
   op: "comments";
@@ -104,7 +107,11 @@ export interface SearchQuery {
 export interface TimelineQuery {
   op: "timeline";
   source: string;
-  kind: "user_posts" | "hot" | "new" | "top" | "best" | "ask" | "show";
+  /** Open string — 'user_posts' is a recognized convention (needs `handle`); 'new'/'top'/'best' are
+   *  recognized convention names some sources use for their own list orderings (see the `sortForList`
+   *  mapping below). ANY other string names a source-specific list and is accepted as-is — an
+   *  unrecognized kind still returns a valid (possibly empty) page in capture order, never an error. */
+  kind: string;
   handle?: string;
   container?: string;
   limit?: number;
