@@ -48,6 +48,25 @@ const BANNED = [
   /\bshow\b/i,
 ];
 
+// LS-38 (kind-agnostic tail): a SECOND class of gate, alongside the vocabulary ban above — this
+// package's `src` must ALSO carry zero bare social-kind FILTER literals (`kind === "post"`,
+// `kind !== "comment"`, etc. — the same class `lucarne-records`' own package-clean-gate bans in
+// `query.ts`, see that file's LS-37 note). `queries.ts`'s `getComments` depth cap used to carry
+// exactly this residue (`e.kind !== "comment" || ...`), which EXEMPTED every non-comment kind from
+// the depth cap entirely — a non-social `kind:"issue-comment"` deep reply leaked past `depth:0` —
+// fixed alongside this gate extension. Scans the WHOLE package `src`. Comments/JSDoc/`.describe()`
+// prose are stripped first — only a CODE-level filter comparison trips this. This is deliberately
+// NOT the same pattern as `getProfile`/`getPost`'s legitimate `kind: args.kind ?? "profile"`
+// DEFAULT-construction (no literal directly follows `kind:`, so it never matches) or their
+// `{ source: args.source, kind, id: args.handle }` call (a bare identifier, not a literal
+// comparison) — those are boundary DEFAULTS a caller can override, not hardcoded filters.
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+const SOCIAL_KIND_FILTER_LITERAL =
+  /\bkind\s*(===|==|!==|!=)\s*["'](post|comment|profile)["']|\bkind\s*:\s*["'](post|comment|profile)["']/;
+
 function walk(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
@@ -79,6 +98,21 @@ check(
   "grep-clean: zero cadence-naming hits AND zero social-platform-tied literals (reddit/hackernews/ycombinator/controversial/hot/ask/show) across the WHOLE package src",
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "",
+);
+
+const kindFilterOffenders = [];
+for (const file of files) {
+  const code = stripComments(readFileSync(file, "utf8"));
+  code.split("\n").forEach((line, i) => {
+    if (SOCIAL_KIND_FILTER_LITERAL.test(line)) kindFilterOffenders.push(`${file}:${i + 1}: ${line.trim()}`);
+  });
+}
+
+check(
+  'grep-clean (LS-38): zero bare social-kind FILTER literals (kind === / !== / : "post"|"comment"|"profile") ' +
+    "across the WHOLE package src (comments stripped) — get_comments' depth cap and every other read path are kind-agnostic, not kind-hardcoded",
+  kindFilterOffenders.length === 0,
+  kindFilterOffenders.length ? kindFilterOffenders.join("\n    ") : "",
 );
 
 const failed = results.filter((r) => !r.pass);

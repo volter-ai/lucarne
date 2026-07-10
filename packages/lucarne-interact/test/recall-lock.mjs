@@ -104,6 +104,47 @@ const WORK = mkdtempSync(path.join(tmpdir(), "lucarne-recall-lock-"));
   check("reconcileMedia on a dir with no store yet -> {seeded:0, fixed:0}, no throw", emptyResult.seeded === 0 && emptyResult.fixed === 0);
 }
 
+// ── media reconcile: KIND-AGNOSTIC (LS-38) — a NON-SOCIAL `kind:"issue"` record's orphaned crop is
+// rebound exactly like a `kind:"post"` one. Before the fix, `reconcileMedia` skipped every record
+// whose `kind !== "post"`, so this same scenario for an "issue" record produced `fixed:0` — a
+// behavioral bug for any non-social consumer of the (kind-agnostic) crop pipeline. This test would
+// fail against that old behavior (revert the `lock.ts` fix to see `fixed === 0` here instead of 1).
+{
+  const dataDir = path.join(WORK, "reconcile-scope-nonsocial");
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(path.join(dataDir, "media-701.png"), "fake-png-bytes-701");
+
+  const issue701 = {
+    kind: "issue",
+    provenance: {
+      source: "github",
+      id: "701",
+      canonicalUrl: "https://github.com/acme/repo/issues/701",
+      fetchedAt: "2026-01-01T00:00:00.000Z",
+      via: "screen",
+    },
+    text: "an issue whose screenshot crop is on disk but never got attached",
+    metrics: {},
+  };
+  appendRecords(dataDir, [issue701]);
+
+  const tracker = new MediaCropTracker(dataDir, () => ({ ok: true }));
+  const result = reconcileMedia(dataDir, tracker);
+  check(
+    "reconcileMedia (LS-38): rebinds an orphaned crop for a NON-social kind:'issue' record, same as kind:'post' (fixed:1, not fixed:0)",
+    result.fixed === 1,
+    JSON.stringify(result),
+  );
+
+  const after = loadRecords(dataDir);
+  const fixedIssue = after.find((r) => r.provenance.id === "701");
+  check(
+    "reconcileMedia (LS-38): the issue record's raw.media now points at its on-disk crop",
+    fixedIssue?.raw?.media?.[0]?.image?.endsWith("media-701.png"),
+    JSON.stringify(fixedIssue?.raw),
+  );
+}
+
 rmSync(WORK, { recursive: true, force: true });
 
 const failed = results.filter((r) => !r.pass);
