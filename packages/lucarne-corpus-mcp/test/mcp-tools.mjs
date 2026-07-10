@@ -158,17 +158,68 @@ function parse(result) {
   check("get_timeline via MCP: unrecognized sort on an empty/foreign source returns not_captured, not a schema error", data.status === "not_captured", JSON.stringify(data));
 }
 
-// unknown kind against a source that DOES have captured data -> the query layer falls back to
-// capture order (a graceful ok, not an error and not a spurious miss) rather than throwing on the
-// unrecognized kind literal.
+// LS-37 (read-kinds generalize): `kind` used to be silently coerced to the social "post" for ANY
+// unrecognized value (the exact hardcoding this issue removes) — a LITERAL match against a populated
+// source still returns ok, capture-order items, but now HONESTLY: because that literal kind was
+// actually captured, not because the query layer assumed it.
+{
+  const result = await client.callTool({ name: "get_timeline", arguments: { source: "x", kind: "post" } });
+  check("get_timeline via MCP: kind:'post' against a populated source is NOT rejected by the tool's zod schema", !result.isError, JSON.stringify(result));
+  const data = parse(result);
+  check(
+    "get_timeline via MCP: kind:'post' against a populated source returns ok, capture-order items for that literal kind",
+    data.status === "ok" && data.data.items.length === 1 && data.data.items[0].provenance.id === "7001",
+    JSON.stringify(data),
+  );
+}
+
+// A kind that matches NOTHING actually captured (the store here only has "profile"/"post") is now a
+// genuine miss — LS-37 removed the "unrecognized kind silently falls back to posts" residue this
+// exact scenario used to hit (pre-fix, this literal string wrongly returned the captured post anyway).
 {
   const result = await client.callTool({ name: "get_timeline", arguments: { source: "x", kind: "totally-unenumerated-list-name" } });
   check("get_timeline via MCP: an unrecognized kind against a populated source is NOT rejected by the tool's zod schema", !result.isError, JSON.stringify(result));
   const data = parse(result);
   check(
-    "get_timeline via MCP: unrecognized kind against a populated source returns ok, capture-order items (graceful fallback, not a crash)",
-    data.status === "ok" && data.data.items.length === 1 && data.data.items[0].provenance.id === "7001",
+    "get_timeline via MCP: an unrecognized kind now returns a genuine not_captured — LS-37 removed the silent 'assume post' fallback this used to hit",
+    data.status === "not_captured",
     JSON.stringify(data),
+  );
+}
+
+// ── LS-37 (read-kinds generalize) — THE CORPUS-MCP-LEVEL PROOF: a non-social kind ("issue") reaches
+// its data through the REAL MCP tool call path (search + get_timeline), status:"ok", not not_captured
+// — not just through the underlying lucarne-records/queries.ts functions directly.
+{
+  appendRecords(DIR, [
+    {
+      kind: "issue",
+      provenance: {
+        source: "github",
+        id: "acme/widget#3",
+        canonicalUrl: "https://github.com/acme/widget/issues/3",
+        fetchedAt: "2026-07-08T12:30:00.000Z",
+        via: "internal-api",
+      },
+      text: "the widget flickers on first paint",
+      metrics: { comments: 0 },
+    },
+  ]);
+
+  const tlResult = await client.callTool({ name: "get_timeline", arguments: { source: "github", kind: "issue" } });
+  const tlData = parse(tlResult);
+  check(
+    "LS-37 get_timeline via MCP (kind:'issue'): a non-social kind returns status:ok, NOT not_captured",
+    tlData.status === "ok" && tlData.data.items.length === 1 && tlData.data.items[0].provenance.id === "acme/widget#3",
+    JSON.stringify(tlData),
+  );
+
+  const searchResult = await client.callTool({ name: "search", arguments: { source: "github", query: "flickers", kind: "issue" } });
+  const searchData = parse(searchResult);
+  check(
+    "LS-37 search via MCP (kind:'issue'): a non-social kind is found by text search, status:ok, NOT not_captured",
+    searchData.status === "ok" && searchData.data.items.length === 1 && searchData.data.items[0].kind === "issue",
+    JSON.stringify(searchData),
   );
 }
 

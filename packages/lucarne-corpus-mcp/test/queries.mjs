@@ -156,11 +156,13 @@ appendRecords(DIR, [profile, textProfile, rootPost, comment1, comment2, userPost
   const posts = search(DIR, { source: "x", query: "lambda" });
   check("search(posts): finds the matching captured post", posts.status === "ok" && posts.data.items.length === 1 && posts.data.items[0].provenance.id === "9101");
 
-  const users = search(DIR, { source: "x", query: "ada", type: "users" });
-  check("search(users): finds the matching captured profile", users.status === "ok" && users.data.items.length === 1 && users.data.items[0].kind === "profile");
+  // LS-37: the old closed `type:"users"` is gone — `kind:"profile"` (open, replaces it) does the
+  // same narrowing, structurally (a caller names the literal kind it wants).
+  const users = search(DIR, { source: "x", query: "ada", kind: "profile" });
+  check("search(kind:'profile'): finds the matching captured profile", users.status === "ok" && users.data.items.length === 1 && users.data.items[0].kind === "profile");
 
   // LS-33: users search over the text-carrying fixture finds it by its `text` field content.
-  const usersByText = search(DIR, { source: "x", query: "rear admiral", type: "users" });
+  const usersByText = search(DIR, { source: "x", query: "rear admiral", kind: "profile" });
   check(
     "search(users, LS-33 text-carrying fixture): finds the profile via its `text` field",
     usersByText.status === "ok" && usersByText.data.items.length === 1 && usersByText.data.items[0].handle === "grace_h",
@@ -178,6 +180,51 @@ appendRecords(DIR, [profile, textProfile, rootPost, comment1, comment2, userPost
 
   const miss = getTimeline(DIR, { source: "x", kind: "user_posts", handle: "someone_never_browsed" });
   check("get_timeline: miss returns not_captured with a browse hint naming the handle", miss.status === "not_captured" && miss.hint.includes("someone_never_browsed"));
+}
+
+// ── LS-37 (read-kinds generalize) — a NON-SOCIAL kind ("issue") reaches its data through these SAME
+// five reshaped functions, not just the underlying lucarne-records primitive directly. Also proves
+// get_profile/get_post's new `kind?` override (defaulted to "profile"/"post") actually routes to a
+// different literal kind when a caller supplies one.
+{
+  const githubIssue = {
+    kind: "issue",
+    provenance: {
+      source: "github",
+      id: "acme/repo#7",
+      canonicalUrl: "https://github.com/acme/repo/issues/7",
+      fetchedAt: "2026-07-08T12:00:00.000Z",
+      via: "internal-api",
+    },
+    text: "build fails on a clean checkout",
+    metrics: { comments: 1 },
+  };
+  appendRecords(DIR, [githubIssue]);
+
+  const timeline = getTimeline(DIR, { source: "github", kind: "issue" });
+  check(
+    "LS-37 get_timeline(kind:'issue'): a non-social kind returns status:ok items, NOT not_captured",
+    timeline.status === "ok" && timeline.data.items.length === 1 && timeline.data.items[0].provenance.id === "acme/repo#7",
+  );
+
+  const found = search(DIR, { source: "github", query: "clean checkout", kind: "issue" });
+  check(
+    "LS-37 search(kind:'issue'): a non-social kind is found by text search, status:ok, NOT not_captured",
+    found.status === "ok" && found.data.items.length === 1 && found.data.items[0].kind === "issue",
+  );
+
+  // getPost's new `kind?` override: read the SAME issue record through `getPost` (named for the
+  // social convention) by overriding its default `"post"` kind to `"issue"`.
+  const asPost = getPost(DIR, { source: "github", idOrUrl: "acme/repo#7", kind: "issue" });
+  check(
+    "LS-37 getPost(kind:'issue' override): reads a non-social top-level item through the get_post tool name",
+    asPost.status === "ok" && asPost.data.kind === "issue",
+  );
+  const asPostDefault = getPost(DIR, { source: "github", idOrUrl: "acme/repo#7" });
+  check(
+    "LS-37 getPost (no kind override): the default 'post' kind does NOT match the issue — proves the override is load-bearing, not a no-op",
+    asPostDefault.status === "not_captured",
+  );
 }
 
 fs.rmSync(DIR, { recursive: true, force: true });

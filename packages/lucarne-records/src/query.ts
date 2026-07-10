@@ -27,6 +27,24 @@
  * also searches `text` (posts already did) so a `kind:"profile"` consumer that stores its body in
  * `text` rather than `bio` (LS-33's `store.ts` change) is searchable too. This package now carries
  * zero `kind==="profile"` literals.
+ *
+ * LS-37 (read-kinds generalize): the ops below used to carry a SECOND, subtler residue on top of
+ * LS-33's — every list op still silently REQUIRED (or silently ASSUMED) the entity kind be literally
+ * `"post"`/`"comment"`, even though `kind` is an open string everywhere else in this package: `comments`
+ * looked its root up as `kind:"post"` and required children to be `kind==="comment"`; `search`'s
+ * default branch and `timeline`'s both dropped every record whose `kind !== "post"`. A schema-blessed
+ * non-social record (a `kind:"issue"` github capture — `schema.ts`'s own header names this exact
+ * example) could be APPENDED just fine but then got ZERO query results back — the read side silently
+ * assumed a domain it never structurally required. Fixed: `comments` is now a pure RELATIONSHIP query
+ * (find the root by id/url regardless of ITS kind, then return every record whose `threadRootUrl`
+ * points at it, regardless of the CHILD's kind either); `search`/`timeline` both take an optional,
+ * open `kind` PARAMETER instead of a hardcoded literal — provided, it filters to exactly that kind;
+ * omitted, every kind is eligible. So this file now carries ZERO hardcoded social-kind FILTER
+ * literals (see `test/package-clean-gate.mjs`'s gate for this, extended alongside this change) — the
+ * ops are kind-PARAMETERIZED, not kind-agnostic-by-accident: a caller who wants "posts only" still
+ * gets exactly that by passing `kind:"post"` explicitly (a downstream social consumer does this
+ * everywhere it relies on the social convention), and a caller with its own kind vocabulary (e.g.
+ * `kind:"issue"`) gets the identical treatment, not a silent drop.
  */
 
 import { decodeCursor, encodeCursor } from "./cursor.js";
@@ -70,6 +88,16 @@ function findRecord(records: readonly Entity[], ref: RecordRef): Entity | undefi
 }
 
 /**
+ * Find a single record by id/source ONLY — no kind requirement at all (unlike `findRecord`/
+ * `RecordRef`, which are keyed on a caller-known kind). LS-37: this is what `comments`' root lookup
+ * uses — the ROOT of a thread can be any kind (a social "post", a github "issue", …), and this
+ * package has no business requiring it be one specific literal to resolve it.
+ */
+function findRecordAnyKind(records: readonly Entity[], source: string, idOrUrl: string): Entity | undefined {
+  return records.find((e) => e.provenance.source === source && (e.provenance.id === idOrUrl || e.provenance.canonicalUrl === idOrUrl));
+}
+
+/**
  * A single-record lookup — the shape of `get_profile`/`get_post`. Store read
  * only: returns `undefined` on a miss, never fetches.
  */
@@ -85,7 +113,8 @@ type SortKind = string;
 export interface CommentsQuery {
   op: "comments";
   source: string;
-  /** A post's native id or canonical URL — resolved via `getRecord` when possible. */
+  /** A root record's native id or canonical URL — resolved kind-agnostically (LS-37: the root can be
+   *  any kind, not just `"post"`). */
   postIdOrUrl: string;
   limit?: number;
   cursor?: string;
@@ -95,7 +124,15 @@ export interface SearchQuery {
   op: "search";
   source: string;
   query: string;
-  type?: "posts" | "users";
+  /** Open string, OPTIONAL (LS-37 — replaces the old closed `type:"posts"|"users"`): when provided,
+   *  restricts matches to records whose own `kind` equals it exactly (e.g. `"post"`, `"profile"`, or
+   *  any source-defined kind like `"issue"`); when absent, every kind captured for `source` is
+   *  eligible. Matching itself is structural, not kind-gated — it checks whichever of `text`/`title`/
+   *  `handle`/`displayName`/`bio` a given record actually carries (conventional indexed fields, read
+   *  defensively), so an identity-shaped record (matched via `handle`/`bio`) and a body-shaped one
+   *  (matched via `text`/`title`) are both searchable through the SAME op, narrowed by `kind` when a
+   *  caller wants only one. */
+  kind?: string;
   /** Conventional indexed field: a container/list name (e.g. a forum board, a repo), matched
    *  against a record's `container.name` when the domain sets one. */
   container?: string;
@@ -107,10 +144,14 @@ export interface SearchQuery {
 export interface TimelineQuery {
   op: "timeline";
   source: string;
-  /** Open string — 'user_posts' is a recognized convention (needs `handle`); 'new'/'top'/'best' are
-   *  recognized convention names some sources use for their own list orderings (see the `sortForList`
-   *  mapping below). ANY other string names a source-specific list and is accepted as-is — an
-   *  unrecognized kind still returns a valid (possibly empty) page in capture order, never an error. */
+  /** Open string. Three convention names are reserved and kind-AGNOSTIC (LS-37: none of them
+   *  requires — or assumes — any particular entity kind): `'user_posts'` (a single handle's own
+   *  records, whatever kind they are), and `'new'`/`'top'`/`'best'` (a source/container-wide ranking
+   *  across every captured kind). ANY other string is the general case (LS-37): it names the LITERAL
+   *  entity `kind` to list — e.g. `'post'` lists `kind:"post"` records exactly as it always
+   *  conventionally has, and `'issue'` lists `kind:"issue"` records the identical way. An unrecognized
+   *  kind still returns a valid (possibly empty) page in capture order, never an error — it just means
+   *  "no captured record has that kind," not "post, by default." */
   kind: string;
   handle?: string;
   container?: string;
@@ -175,6 +216,12 @@ function applySort<T extends Entity>(items: T[], sort: SortKind | undefined): T[
   return items;
 }
 
+function containerMatches(e: Entity, container: string | undefined): boolean {
+  if (!container) return true;
+  const c = e.container as { name?: unknown } | undefined;
+  return strOf(c?.name) === container;
+}
+
 /**
  * The list-op query surface — the shape of `get_comments`/`search`/`get_timeline`,
  * as pure store reads. Always returns a valid `Page<T>`, never raises an error on
@@ -187,62 +234,59 @@ export function queryRecords(dir: string, q: RecordQuery): Page<Entity> {
   const offset = decodeOffset(q.cursor);
 
   if (q.op === "comments") {
-    // reuse the already-loaded `all` — don't re-read the file via getRecord.
-    const post = findRecord(all, { source: q.source, kind: "post", id: q.postIdOrUrl });
-    const rootUrl = post?.provenance.canonicalUrl ?? q.postIdOrUrl;
-    const comments = all.filter((e) => e.kind === "comment" && e.provenance.source === q.source && e.threadRootUrl === rootUrl);
-    comments.sort((a, b) => numOf(a.depth) - numOf(b.depth) || createdAtOf(a) - createdAtOf(b));
-    return paginate(comments, offset, limit);
+    // LS-37: a pure RELATIONSHIP query, kind-agnostic end to end. The root is resolved by id/url
+    // regardless of ITS kind (reuse the already-loaded `all` — don't re-read the file via getRecord),
+    // then every record whose `threadRootUrl` points at the resolved root is returned, regardless of
+    // the CHILD's kind either — a social "comment", a github issue's own comment kind, whatever a
+    // domain calls its reply unit, all match the SAME way `threadRootUrl` already worked for "comment".
+    const root = findRecordAnyKind(all, q.source, q.postIdOrUrl);
+    const rootUrl = root?.provenance.canonicalUrl ?? q.postIdOrUrl;
+    const replies = all.filter((e) => e.provenance.source === q.source && e.threadRootUrl === rootUrl);
+    replies.sort((a, b) => numOf(a.depth) - numOf(b.depth) || createdAtOf(a) - createdAtOf(b));
+    return paginate(replies, offset, limit);
   }
 
   if (q.op === "search") {
-    const type = q.type ?? "posts";
     const needle = q.query.toLowerCase();
-    if (type === "users") {
-      // LS-33: identity-shaped records are selected STRUCTURALLY (carries a `handle`) rather
-      // than by the kind-literal `"profile"` — any domain's identity/user-shaped kind matches,
-      // not just one named `"profile"`. `text` is included alongside the legacy `bio` alias so a
-      // `kind:"profile"` consumer that stores its body in `text` (store.ts's LS-33 change) is
-      // searchable here too, same as a post's text already is below.
-      const profiles = all.filter(
-        (e) =>
-          e.provenance.source === q.source &&
-          typeof e.handle === "string" &&
-          e.handle.length > 0 &&
-          (strOf(e.handle).toLowerCase().includes(needle) ||
-            strOf(e.displayName).toLowerCase().includes(needle) ||
-            strOf(e.bio).toLowerCase().includes(needle) ||
-            strOf(e.text).toLowerCase().includes(needle)),
+    const matches = all.filter((e) => {
+      if (e.provenance.source !== q.source) return false;
+      if (q.kind !== undefined && e.kind !== q.kind) return false;
+      if (!containerMatches(e, q.container)) return false;
+      return (
+        strOf(e.text).toLowerCase().includes(needle) ||
+        strOf(e.title).toLowerCase().includes(needle) ||
+        strOf(e.handle).toLowerCase().includes(needle) ||
+        strOf(e.displayName).toLowerCase().includes(needle) ||
+        strOf(e.bio).toLowerCase().includes(needle)
       );
-      return paginate(applySort(profiles, q.sort), offset, limit);
-    }
-    const posts = all.filter((e) => {
-      if (e.kind !== "post" || e.provenance.source !== q.source) return false;
-      if (q.container) {
-        const container = e.container as { name?: unknown } | undefined;
-        if (strOf(container?.name) !== q.container) return false;
-      }
-      return (e.text ?? "").toLowerCase().includes(needle) || strOf(e.title).toLowerCase().includes(needle);
     });
-    return paginate(applySort(posts, q.sort), offset, limit);
+    return paginate(applySort(matches, q.sort), offset, limit);
   }
 
   // op === 'timeline'
   if (q.kind === "user_posts") {
-    const posts = all.filter((e) => {
-      if (e.kind !== "post" || e.provenance.source !== q.source) return false;
+    // LS-37: kind-agnostic relationship query — every record authored by this handle, whatever kind
+    // it is (a social user's own posts, a github user's own issues/PRs, …), not just `kind:"post"`.
+    const own = all.filter((e) => {
+      if (e.provenance.source !== q.source) return false;
       const author = e.author as { handle?: unknown } | undefined;
       return strOf(author?.handle) === q.handle;
     });
-    posts.sort((a, b) => createdAtOf(b) - createdAtOf(a));
-    return paginate(posts, offset, limit);
+    own.sort((a, b) => createdAtOf(b) - createdAtOf(a));
+    return paginate(own, offset, limit);
   }
-  const listPosts = all.filter((e) => {
-    if (e.kind !== "post" || e.provenance.source !== q.source) return false;
-    if (!q.container) return true;
-    const container = e.container as { name?: unknown } | undefined;
-    return strOf(container?.name) === q.container;
-  });
-  const sortForList: SortKind | undefined = q.kind === "new" ? "new" : q.kind === "top" || q.kind === "best" ? "top" : undefined;
-  return paginate(applySort(listPosts, sortForList), offset, limit);
+  if (q.kind === "new" || q.kind === "top" || q.kind === "best") {
+    // LS-37: kind-agnostic ranking convention — ranks everything captured for this source/container,
+    // regardless of entity kind (these three names are reserved SORT conventions, never a literal
+    // entity kind any record actually carries).
+    const ranked = all.filter((e) => e.provenance.source === q.source && containerMatches(e, q.container));
+    const sortForList: SortKind = q.kind === "new" ? "new" : "top";
+    return paginate(applySort(ranked, sortForList), offset, limit);
+  }
+  // General case (LS-37): `kind` names the LITERAL entity kind to list — no hardcoded `"post"`
+  // assumption. `kind:"post"` behaves exactly as the old hardcoded default always did; any other
+  // kind (`"issue"`, `"pr"`, `"abstract"`, …) is listed the identical way, capture order unless `sort`
+  // requests a ranking.
+  const listed = all.filter((e) => e.kind === q.kind && e.provenance.source === q.source && containerMatches(e, q.container));
+  return paginate(applySort(listed, q.sort), offset, limit);
 }

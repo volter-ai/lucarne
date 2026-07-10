@@ -73,11 +73,16 @@ export function registerTools(server: McpServer, storeDir: string): void {
       inputSchema: {
         source: sourceSchema,
         handle: z.string().describe("Account handle WITHOUT a leading sigil (e.g. no '@' or 'u/'). e.g. 'paulg', 'patio11'."),
+        kind: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Which captured entity kind an identity-shaped record uses. Defaults to 'profile' (the recognized social convention) — override only if a source captures identity records under a different kind name."),
       },
     },
-    async ({ source, handle }) => {
+    async ({ source, handle, kind }) => {
       try {
-        return ok(queries.getProfile(storeDir, { source, handle }));
+        return ok(queries.getProfile(storeDir, { source, handle, kind }));
       } catch (e) {
         return fail(errorMessage(e));
       }
@@ -96,11 +101,16 @@ export function registerTools(server: McpServer, storeDir: string): void {
       inputSchema: {
         source: sourceSchema,
         idOrUrl: z.string().describe("Native post id OR a full canonical URL to the post. Both are accepted."),
+        kind: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Which captured entity kind a top-level item uses. Defaults to 'post' (the recognized social convention) — pass a source-defined kind (e.g. 'issue') to read a different top-level-item kind through this same tool."),
       },
     },
-    async ({ source, idOrUrl }) => {
+    async ({ source, idOrUrl, kind }) => {
       try {
-        return ok(queries.getPost(storeDir, { source, idOrUrl }));
+        return ok(queries.getPost(storeDir, { source, idOrUrl, kind }));
       } catch (e) {
         return fail(errorMessage(e));
       }
@@ -145,23 +155,29 @@ export function registerTools(server: McpServer, storeDir: string): void {
     {
       description:
         "Free-text search over what's been captured so far, returning matches with provenance. NEVER " +
-        "fetches or issues a site search request — it filters the local corpus. type='posts' (default) " +
-        "matches posts; type='users' matches profiles. PAGINATED: returns { items, nextCursor?, " +
-        "truncated }. If nothing captured matches, returns a `not_captured` result suggesting where to " +
-        "browse so matching content gets captured.",
+        "fetches or issues a site search request — it filters the local corpus, matched against " +
+        "whichever of text/title/handle/displayName/bio a record carries. Omit `kind` to search " +
+        "every captured kind; pass `kind` (e.g. 'post' or 'profile' — recognized social examples — " +
+        "or any other source-defined kind like 'issue') to narrow to exactly one. PAGINATED: returns " +
+        "{ items, nextCursor?, truncated }. If nothing captured matches, returns a `not_captured` " +
+        "result suggesting where to browse so matching content gets captured.",
       inputSchema: {
         source: sourceSchema,
         query: z.string().describe("Free-text search query, matched against captured text/title/bio/handle."),
-        type: z.enum(["posts", "users"]).optional().describe("'posts' (default) returns posts; 'users' returns profiles."),
+        kind: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Restrict to one captured entity kind ('post'/'profile' are recognized social examples; any other non-empty string names a source-defined kind and is accepted as-is). Omit to search across every kind."),
         container: z.string().optional().describe("Restrict to a named container (e.g. a forum board) when the source has one — no leading sigil."),
         limit: z.number().int().min(1).max(100).optional().describe("Max results per page. Default 25."),
         sort: sortSchema.optional(),
         cursor: z.string().optional().describe("Opaque cursor from a previous page's nextCursor to continue."),
       },
     },
-    async ({ source, query, type, container, limit, sort, cursor }) => {
+    async ({ source, query, kind, container, limit, sort, cursor }) => {
       try {
-        return ok(queries.search(storeDir, { source, query, type: type ?? "posts", container, limit: limit ?? 25, sort, cursor }));
+        return ok(queries.search(storeDir, { source, query, kind, container, limit: limit ?? 25, sort, cursor }));
       } catch (e) {
         return fail(errorMessage(e));
       }

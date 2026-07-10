@@ -123,6 +123,40 @@ check(
   queryHits.length ? queryHits.join("\n    ") : "",
 );
 
+// LS-37 (read-kinds generalize): a FOURTH, broader class of gate — `query.ts` used to carry bare
+// social-kind FILTER literals (`e.kind === "comment"`, `e.kind !== "post"`, a hardcoded `kind:"post"`
+// ref for the comments-op root lookup, …) that silently required/assumed the social taxonomy on the
+// READ side even though `kind` is an open string everywhere else in this package (a schema-blessed
+// non-social record, e.g. `kind:"issue"`, could be APPENDED but then got zero query results). Every
+// list op is now kind-PARAMETERIZED instead (an optional/required `kind` on the QUERY object, never a
+// literal comparison against one of the three social kind names inside the op's own logic) — see
+// query.ts's own LS-37 header note. This check strips comments first (same posture as the LS-33 check
+// above — a doc comment or a `.describe()` string is allowed to NAME "post"/"comment"/"profile" as a
+// recognized-convention EXAMPLE; only a CODE-level filter literal is banned) and scans for the
+// patterns a hardcoded kind-gate would take: `kind === "post"/"comment"/"profile"`, `kind !== "post"`
+// (the two forms this file actually carried before the fix), and a `kind: "post"/"comment"/"profile"`
+// object-literal property (the old comments-op root `findRecord({..., kind:"post", ...})` shape).
+const SOCIAL_KIND_FILTER_LITERAL =
+  /\bkind\s*(===|==|!==|!=)\s*["'](post|comment|profile)["']|\bkind\s*:\s*["'](post|comment|profile)["']/;
+
+function grepSocialKindFilter(relPath) {
+  const file = join(SRC_DIR, relPath);
+  const code = stripComments(readFileSync(file, "utf8"));
+  const hits = [];
+  code.split("\n").forEach((line, i) => {
+    if (SOCIAL_KIND_FILTER_LITERAL.test(line)) hits.push(`${relPath}:${i + 1}: ${line.trim()}`);
+  });
+  return hits;
+}
+
+const socialKindHits = grepSocialKindFilter("query.ts");
+check(
+  'grep-clean (LS-37): query.ts CODE (comments stripped) carries ZERO bare social-kind FILTER literals ' +
+    '(kind === / !== / : "post"|"comment"|"profile") — the general read ops are kind-parameterized, not kind-hardcoded',
+  socialKindHits.length === 0,
+  socialKindHits.length ? socialKindHits.join("\n    ") : "",
+);
+
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
 process.exit(failed.length ? 1 : 0);
