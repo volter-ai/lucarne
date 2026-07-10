@@ -24,6 +24,26 @@ It's the missing middle between *headless automation* (drivable, but you can't w
         └───────────────────────────────────────────────┘
 ```
 
+## The monorepo
+
+`lucarne` is an **npm-workspaces monorepo** (`packages/*`) — this engine package is
+its first, published citizen, and four newer packages build a
+browse/interact/record/retrieve stack on top of it:
+
+| Package | What it is |
+|---|---|
+| [`lucarne`](./packages/lucarne/README.md) | **the engine** (this README) — sessions you can drive (CDP), watch + control (porthole), and record. |
+| [`lucarne-records`](./packages/lucarne-records/README.md) | the one provenance record language for the platform — a normalized cross-site schema (`Profile`/`Post`/`Comment`) plus a dependency-free `node:fs` record store + query API. |
+| [`lucarne-interact`](./packages/lucarne-interact/README.md) | **non-bot-like interaction: act + observe/record, screen + wire sensors, zero synthetic requests** — a human-paced ACT plane (`open`/`snap`/`scroll`/`activate`/`type`/`send`) over a session's `cdpUrl`, with an enforced pause after every verb, plus a passive, read-only OBSERVE/recall half that only records what a genuine session organically loads. |
+| [`lucarne-widget`](./packages/lucarne-widget/README.md) | the reusable glassmorphic in-page widget infrastructure — mount a durable, draggable, namespaced glass panel inside a session's page; stream state in, drain intents out. |
+| [`lucarne-corpus-mcp`](./packages/lucarne-corpus-mcp/README.md) | an optional, thin, read-only stdio MCP bin over a `lucarne-records` store — answers `get_profile`/`get_post`/`get_comments`/`search`/`get_timeline` from what's already been captured; a miss says so structurally instead of fetching. |
+
+Each package is independently published/versioned. `lucarne-interact` and
+`lucarne-widget` depend on this engine package (the HTTP client, for
+`/inject`); `lucarne-corpus-mcp` depends on `lucarne-records` for its schema
+and store. See each package's own README for its install, usage, and
+**Charter**/**Security posture** sections.
+
 ## Install
 
 ```sh

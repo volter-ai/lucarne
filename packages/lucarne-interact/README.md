@@ -1,15 +1,22 @@
 # lucarne-interact
 
 **The non-bot-like interaction plane** — one human-paced presence over a
-[`lucarne`](https://www.npmjs.com/package/lucarne) session's `cdpUrl`. This
-package's charter (ported from cadence's `browser.ts`, `cadence/src/browser.ts:1-6`)
-is anti-bot-detection, not accessibility-compliance: reads are ARIA-only,
-interaction is keyboard-first, navigation is click-a-link + back (like a
-person), and **every action is followed by an ENFORCED human pause** drawn
-from a normal distribution. If a bot-like action isn't a verb here, it
-**physically cannot happen** — there is intentionally no `click` (synthetic
-mouse), no `goto`/`go` (deep-linking), and no `eval` (arbitrary code) on
-`InteractSession`.
+[`lucarne`](https://www.npmjs.com/package/lucarne) session's `cdpUrl`.
+
+## Charter
+
+This package's charter (ported from cadence's `browser.ts`,
+`cadence/src/browser.ts:1-6`) is anti-bot-detection, not
+accessibility-compliance: reads are ARIA-only, interaction is keyboard-first,
+navigation is click-a-link + back (like a person), and **every action is
+followed by an ENFORCED human pause** drawn from a normal distribution. If a
+bot-like action isn't a verb here, it **physically cannot happen** — there is
+intentionally no `click` (synthetic mouse), no `goto`/`go` (deep-linking), and
+no `eval` (arbitrary code) on `InteractSession`. The boundary: this package
+owns ACT (the human-paced verbs, gated `send`) and OBSERVE/recall (the
+passive, read-only sensors) — *policy* over what a send is allowed to say
+(content rules, rate limits, an approvals ledger) stays the caller's, per
+"What stays cadence policy" below.
 
 LS-09 scaffolded the ACT verbs, enforced pacing, and the shared video
 assembler. LS-10 added humanized typing: `type(text)` stages text via a
@@ -313,6 +320,44 @@ sensors seen" shape a view renders: counts (`captures`/`videos`/
 `wireCaptures`) + a recent, de-duplicated, thumbnailed timeline covering all
 three signal kinds. Thumbnails use **ffmpeg** (`thumbDataUri`/`videoPoster`)
 cross-platform; macOS `sips` is used only as a `darwin` fast path.
+
+## Security posture
+
+Three mechanisms make the "non-bot-like" charter (above) structural, not a
+convention callers have to remember:
+
+1. **Never automate.** `click`, `goto`, and `eval` do not exist as verbs on
+   `InteractSession` — and are rejected by the CLI (see below) before a
+   session is even constructed. Every verb that does exist pays an
+   **enforced** pace (see "Enforced pacing", above), sampled from a normal
+   distribution with a floor (`min`) that cannot be configured to zero.
+2. **Never send without approval.** `send()` (`src/send-gate.ts`'s
+   `decideSend`) is the *only* code path that presses Enter or submits, and it
+   default-**refuses**: only an explicit `approved`/`ack`, or yolo mode,
+   reaches a keypress — and even on a GO decision, a pre-keypress
+   composer-verification check can still refuse (see "The gated `send()`",
+   above).
+3. **The recorder is read-only.** `lucarne-interact/recall` never drives the
+   page — no clicks, no navigation, no typing — only reads.
+
+### The "behave like a user" / zero-synthetic-requests capture law
+
+Recall's two sensors only ever observe traffic and pixels a genuine,
+human-paced session already produced — neither one ever issues a request of
+its own:
+
+- **screen** (`lucarne-interact/recall`) reads ARIA snapshots and pixels
+  (screenshots/crops) off the live page.
+- **wire** (`lucarne-interact/recall`'s `wire.ts`, LS-13W) taps the SAME CDP
+  connection's `Network` domain in **observation-only** mode
+  (`Network.responseReceived`/`Network.getResponseBody`) — it reads bytes the
+  page's own JS already generated. The CDP `Fetch` domain (which pauses and
+  can rewrite/replay a request) is categorically never used —
+  `test/recall-readonly-gates.mjs` greps for it and fails on any hit.
+
+Together the two sensors capture **zero synthetic requests**: recall never
+fetches, replays, paginates, or auto-scrolls on the corpus's behalf — see
+`lucarne-corpus-mcp`'s README for the read side of this same law.
 
 ## CLI
 

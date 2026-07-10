@@ -15,10 +15,11 @@
     "dev": "npm run dev --workspaces --if-present",
     "typecheck": "tsc -b",
     "clean": "tsc -b --clean",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:docs",
     "test:acceptance": "npm run test:acceptance --workspaces --if-present",
     "test:docker": "npm run test:docker --workspaces --if-present",
-    "test:unit": "npm run test:unit --workspaces --if-present",
+    "test:unit": "npm run test:unit --workspaces --if-present && npm run test:docs",
+    "test:docs": "node test/docs-lint.mjs",
     "build:image": "npm run build:image --workspaces --if-present"
   },
   "devDependencies": {

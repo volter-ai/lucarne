@@ -1,11 +1,17 @@
 # lucarne-widget
 
 **The reusable glassmorphic in-page widget infrastructure.** "Mount a durable, draggable, page-CSS-immune
-glass panel inside a page of a session you control; stream state in; drain intents out." Ported from the
-prior single-app implementation's `widget.ts`/`widget-state.ts`/`widget-bridge.ts`/`web/app/` and made
-app-agnostic: **zero app-specific knowledge** — every page global, host element id, and sticky-injection id
-this package mints is derived from a caller-supplied namespace `ns`, so two unrelated consumers can each
-mount their own widget on the same page without cross-talk.
+glass panel inside a page of a session you control; stream state in; drain intents out."
+
+## Charter
+
+Ported from the prior single-app implementation's `widget.ts`/`widget-state.ts`/`widget-bridge.ts`/`web/app/`
+and made app-agnostic: **zero app-specific knowledge** — every page global, host element id, and
+sticky-injection id this package mints is derived from a caller-supplied namespace `ns`, so two unrelated
+consumers can each mount their own widget on the same page without cross-talk. The boundary: this package
+owns the **shell** — chrome (pill/panel/tablist/drag/resize/theme), the host↔iframe envelope, and the
+mount/push/onIntent lifecycle. *What* a consumer puts inside the panel (its own organs/settings, wired to
+its own data) is out of scope here — see "Scope", below.
 
 ## Install
 
