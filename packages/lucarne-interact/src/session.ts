@@ -40,7 +40,9 @@ const DEFAULT_YIELD_THRESHOLD_MS = 1500;
 // whose DOM authors its own testid for that control) passes it via `back({ inAppSelectors })`,
 // which fully overrides this default (see `back()` below) — the browser-history fallback always
 // applies regardless of which selectors are tried first.
-const DEFAULT_BACK_SELECTORS = ['button[aria-label="Back"]'];
+// Exported so a consumer can COMPOSE its own override (`[...GENERIC_BACK_SELECTORS, ...siteSelectors]`)
+// rather than having to duplicate this literal to preserve the generic fallback when overriding.
+export const GENERIC_BACK_SELECTORS = ['button[aria-label="Back"]'];
 // The caption-overlay fallback selectors (browser.ts:394-401), reached only when a video has no
 // `<track>` cues to read (the PRIMARY, generic path — see `#captions` below). These three are
 // GENERIC markers: a bare `[data-testid="captions"]`/`.captions-text` convention several players
@@ -48,7 +50,8 @@ const DEFAULT_BACK_SELECTORS = ['button[aria-label="Back"]'];
 // single site). A SITE-specific overlay class (e.g. YouTube's `.ytp-caption-segment`) is
 // intentionally NOT included here — a consumer passes its own via `captions(selector, {
 // overlaySelectors })`, same override shape as `back()`.
-const DEFAULT_CAPTION_OVERLAY_SELECTORS = ['[data-testid="captions"]', ".captions-text", ".vjs-text-track-cue"];
+// Exported for the same reason as GENERIC_BACK_SELECTORS above.
+export const GENERIC_CAPTION_OVERLAY_SELECTORS = ['[data-testid="captions"]', ".captions-text", ".vjs-text-track-cue"];
 
 export type CdpUrlSource = string | { cdpUrl: string; activity?: ActivityProbe };
 
@@ -569,7 +572,7 @@ export class InteractSession extends EventEmitter {
 
   /** Human back-navigation — the in-app Back button, else browser history (browser.ts:270-274). */
   async back(opts: BackOptions = {}): Promise<BackResult> {
-    const selectors = opts.inAppSelectors?.length ? opts.inAppSelectors : DEFAULT_BACK_SELECTORS;
+    const selectors = opts.inAppSelectors?.length ? opts.inAppSelectors : GENERIC_BACK_SELECTORS;
     return this.#act("back", [opts], "nav", async () => {
       const p = await this.#page();
       const loc = p.locator(selectors.join(", ")).first();
@@ -900,7 +903,7 @@ export class InteractSession extends EventEmitter {
 
   /** The SPEECH channel — read a video's caption transcript from DOM cues (browser.ts:394-401). */
   async #captions(selector: string, opts: CaptionsOptions = {}): Promise<CaptionsResult> {
-    const overlaySelectors = opts.overlaySelectors?.length ? opts.overlaySelectors : DEFAULT_CAPTION_OVERLAY_SELECTORS;
+    const overlaySelectors = opts.overlaySelectors?.length ? opts.overlaySelectors : GENERIC_CAPTION_OVERLAY_SELECTORS;
     return this.#act("video.captions", [selector, opts], "read", async () => {
       const p = await this.#page();
       return p.evaluate(

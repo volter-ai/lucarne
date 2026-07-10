@@ -26,6 +26,7 @@ export {
   type ActivateResult,
   type BackOptions,
   type BackResult,
+  type CaptionsOptions,
   type CaptionsResult,
   type CaptureResult,
   type CdpUrlSource,
@@ -43,6 +44,12 @@ export {
   type TypeOptions,
   type TypeResult,
   type VideoVerbs,
+  // The GENERIC selector defaults `back()`/`captions()` fall back to when a caller doesn't override
+  // (LS-36) — exported so a consumer can COMPOSE its own site-specific override
+  // (`[...GENERIC_BACK_SELECTORS, ...siteSelectors]`) instead of duplicating the generic literal to
+  // keep it alongside a site addition.
+  GENERIC_BACK_SELECTORS,
+  GENERIC_CAPTION_OVERLAY_SELECTORS,
 } from "./session.js";
 export {
   type DecideSendApproval,
