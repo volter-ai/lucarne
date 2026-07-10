@@ -21,6 +21,17 @@
  * sites. `Comment`/`Profile` are gone (they were the closed social schema, moved downstream) — the
  * `depth` filter in `getComments` below now reads `depth` DEFENSIVELY off the general `Entity` shape
  * (`CorpusRecord`'s index signature types it `unknown`) instead of casting to a closed `Comment` type.
+ *
+ * LS-37 (read-kinds generalize): `lucarne-records`' query layer used to silently require/assume the
+ * social kind names (`"post"`/`"comment"`/`"profile"`) on every list/lookup op, even though `kind` is
+ * an open string everywhere else — a schema-blessed non-social record could be appended but never
+ * queried back. That hardcoding lived in the PRIMITIVE (`query.ts`), not here, and is gone now (see
+ * that file's own LS-37 note). This file's job is unchanged: keep the five tool NAMES stable (the
+ * shipped skills call them) while sourcing what used to be implicit social literals from OPEN,
+ * OPTIONAL params DEFAULTED to the social convention (`getProfile`'s/`getPost`'s new `kind?`,
+ * `search`'s `type` replaced by an open `kind?`) — an overridable boundary default, never a
+ * hardcoded block. `get_comments` needs no such param: `queryRecords`'s `comments` op is now a pure
+ * kind-agnostic relationship query underneath it.
  */
 import { getRecord, queryRecords } from "lucarne-records";
 import type { Entity, Page } from "lucarne-records";
@@ -63,13 +74,20 @@ function notCaptured(what: string, browseHint: string, query: Record<string, unk
 export interface GetProfileArgs {
   source: Source;
   handle: string;
+  /** LS-37: OPEN, optional, DEFAULTED to `"profile"` — the social convention this tool is named
+   *  after. The literal now lives here, as an overridable tool-boundary default, not as a hardcoded
+   *  requirement inside `lucarne-records`' query layer: a caller with a different identity-shaped
+   *  kind (rare — most non-social identity records still just call themselves "profile") can pass its
+   *  own. */
+  kind?: string;
 }
 
 export function getProfile(dir: string, args: GetProfileArgs): ToolResult<Entity> {
-  const rec = getRecord(dir, { source: args.source, kind: "profile", id: args.handle });
-  if (!rec || rec.kind !== "profile") {
+  const kind = args.kind ?? "profile";
+  const rec = getRecord(dir, { source: args.source, kind, id: args.handle });
+  if (!rec || rec.kind !== kind) {
     return notCaptured(
-      `a ${args.source} profile for handle "${args.handle}"`,
+      `a ${args.source} ${kind} for handle "${args.handle}"`,
       `Visit the profile page for "${args.handle}" on ${args.source} in a driven session.`,
       { op: "get_profile", ...args },
     );
@@ -82,13 +100,19 @@ export function getProfile(dir: string, args: GetProfileArgs): ToolResult<Entity
 export interface GetPostArgs {
   source: Source;
   idOrUrl: string;
+  /** LS-37: OPEN, optional, DEFAULTED to `"post"` — same posture as `GetProfileArgs.kind` above: an
+   *  overridable default at this tool's boundary, not a hardcoded requirement in the query layer. A
+   *  non-social consumer reaches a different top-level-item kind (e.g. a github "issue") via this
+   *  same tool by passing `kind:"issue"`, or via `search`/`get_timeline`/`get_record` directly. */
+  kind?: string;
 }
 
 export function getPost(dir: string, args: GetPostArgs): ToolResult<Entity> {
-  const rec = getRecord(dir, { source: args.source, kind: "post", id: args.idOrUrl });
+  const kind = args.kind ?? "post";
+  const rec = getRecord(dir, { source: args.source, kind, id: args.idOrUrl });
   if (!rec) {
     return notCaptured(
-      `a ${args.source} post "${args.idOrUrl}"`,
+      `a ${args.source} ${kind} "${args.idOrUrl}"`,
       `Visit that captured post/item on ${args.source} in a driven session.`,
       { op: "get_post", ...args },
     );
@@ -136,7 +160,11 @@ export function getComments(dir: string, args: GetCommentsArgs): ToolResult<Page
 export interface SearchArgs {
   source: Source;
   query: string;
-  type?: "posts" | "users";
+  /** LS-37: OPEN, optional — replaces the old closed `type?: "posts"|"users"`. Omit to search every
+   *  captured kind for this source; pass a literal kind (`"post"`, `"profile"`, or any source-defined
+   *  kind like `"issue"`) to narrow to it. `"post"`/`"profile"` are recognized social examples, not a
+   *  closed set the query layer enforces. */
+  kind?: string;
   container?: string;
   limit?: number;
   /** Open string — 'new'/'top'/'best'/'relevance' are recognized conventions; any other source-defined
@@ -150,7 +178,7 @@ export function search(dir: string, args: SearchArgs): ToolResult<Page<Entity>> 
     op: "search",
     source: args.source,
     query: args.query,
-    type: args.type,
+    kind: args.kind,
     container: args.container,
     limit: args.limit,
     sort: args.sort,
@@ -160,7 +188,7 @@ export function search(dir: string, args: SearchArgs): ToolResult<Page<Entity>> 
     return notCaptured(
       `a ${args.source} search for "${args.query}"`,
       `Browse ${args.source} (search or the relevant pages) in a driven session so matching ` +
-        `${args.type === "users" ? "profiles" : "posts"} are captured, then search again.`,
+        `${args.kind ? `${args.kind} records` : "records"} are captured, then search again.`,
       { op: "search", ...args },
     );
   }
