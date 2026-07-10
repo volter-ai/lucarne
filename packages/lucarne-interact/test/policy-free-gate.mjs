@@ -12,9 +12,19 @@
 //    ever creeps back into src/ (e.g. a future dev re-adding a per-site allowlist INSIDE this
 //    package, exactly the shape LS-31/S1 removed).
 //
+// LS-36 adds a standing gate for the broader CLASS this bug belonged to: site-specific DOM
+// selectors (a site-authored `data-testid` VALUE, a site-player CSS class, a site hostname, a
+// site URL-path shape) hardcoded anywhere in this "general" interaction layer. X's
+// `[data-testid="app-bar-back"]` (session.ts's old `back()` default) and YouTube's
+// `.ytp-caption-segment` (session.ts's old `#captions` overlay fallback) were exactly this shape —
+// both are now CONSUMER-provided overrides (`back({ inAppSelectors })` /
+// `captions(selector, { overlaySelectors })`), sourced from cadence's own config, never
+// hardcoded here. See the "LS-36" section below.
+//
 // Run with `node test/policy-free-gate.mjs` (no build needed — this only greps src/).
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,6 +90,110 @@ check(
   socialVocabHits.length === 0,
   socialVocabHits.join(" | "),
 );
+
+// ── LS-36: standing "no site-specific DOM selectors in lucarne-interact" gate ──
+// This is the CLASS gate: it must catch not just the two literals LS-36 removed (X's
+// `app-bar-back` testid, YouTube's `.ytp-caption-segment`) but the SHAPE — any future site-authored
+// testid value, site-player class, site hostname, or site URL-path pattern hardcoded into src/.
+//
+// `grepCode` is `grep` with comment-only lines dropped, so illustrative doc-comment EXAMPLES of the
+// generic, consumer-supplied `ActivatePolicy` mechanism (activate-gate.ts's `ActivateAllowEntry`
+// doc, which uses `"x.com"`/`old.reddit` as prose examples of what a CONSUMER's policy object can
+// contain — never a value this package itself reads or acts on) don't false-positive the gate. A
+// real hostname literal appearing in actual CODE (not a comment) still gets caught.
+function grepCode(pattern, dir = SRC) {
+  return grep(pattern, dir).filter((line) => {
+    const content = line.replace(/^[^:]*:\d+:/, "");
+    return !/^\s*(\/\/|\*|\/\*)/.test(content);
+  });
+}
+
+// 1. Site-authored `data-testid="<value>"` literals. The generic testid-READING mechanism
+//    (activate-gate.ts's classifier, session.ts's `el.getAttribute("data-testid")`) is fine — it
+//    reads whatever testid is PRESENT, never hardcodes a site's VALUE. What's banned is a literal
+//    `data-testid="..."` STRING baked into this package. A tiny allowlist covers values that are
+//    genuinely generic conventions (not one site's authored vocabulary) — currently just
+//    `"captions"`, session.ts's generic caption-overlay marker (kept alongside `.captions-text`/
+//    video.js's own `.vjs-text-track-cue`; YouTube's `.ytp-caption-segment` was removed — see #2).
+const GENERIC_TESTID_VALUES = new Set(["captions"]);
+function findTestidOffenders(dir = SRC) {
+  const offenders = [];
+  for (const line of grepCode('data-testid="[^"]+"', dir)) {
+    for (const m of line.matchAll(/data-testid="([^"]+)"/g)) {
+      if (!GENERIC_TESTID_VALUES.has(m[1])) offenders.push(`${line} (value="${m[1]}")`);
+    }
+  }
+  return offenders;
+}
+const testidOffenders = findTestidOffenders();
+check(
+  'no site-authored data-testid="<value>" literals in src/ (only the generic "captions" value is allowlisted)',
+  testidOffenders.length === 0,
+  testidOffenders.join(" | "),
+);
+
+// 2. Site-player CSS classes — YouTube's `.ytp-` prefix is the one this class of bug actually
+//    shipped (session.ts's old caption-overlay fallback). `.vjs-` (video.js) is a generic
+//    open-source library used by many unrelated sites, not one site's authorship — NOT banned.
+const sitePlayerClassHits = grepCode("\\.ytp-");
+check("no YouTube player classes (.ytp-) in src/", sitePlayerClassHits.length === 0, sitePlayerClassHits.join(" | "));
+
+// 3. Site hostnames, in actual code (not doc-comment prose — see grepCode above).
+const HOSTNAME_PATTERN = "x\\.com|twitter\\.com|youtube|reddit|hackernews";
+const hostnameHits = grepCode(HOSTNAME_PATTERN);
+check(
+  "no site hostname literals (x.com|twitter.com|youtube|reddit|hackernews) in src/ code (doc-comment examples of the generic ActivatePolicy mechanism are exempt)",
+  hostnameHits.length === 0,
+  hostnameHits.join(" | "),
+);
+
+// 4. Site URL-path shapes — `/status/` (X's tweet-permalink path shape) anywhere in src/, not just
+//    src/recall/ (the narrower LS-32 check above only scoped that directory).
+const statusPathHits = grepCode("/status/");
+check("no '/status/' URL-path literal anywhere in src/", statusPathHits.length === 0, statusPathHits.join(" | "));
+
+// ── non-vacuity demo: prove checks 1-4 actually FAIL when a site literal is present ──
+// Runs the same grep-based logic against a throwaway fixture file containing exactly the shapes
+// LS-36 removed (X's testid, YouTube's class, X's hostname, X's URL path) planted in real CODE
+// (not a comment) — if the gate can't catch its own fixture, it isn't actually standing.
+const demoDir = mkdtempSync(path.join(tmpdir(), "policy-free-gate-demo-"));
+try {
+  writeFileSync(
+    path.join(demoDir, "fixture.ts"),
+    [
+      'const DEFAULT_BACK_SELECTORS = [\'[data-testid="app-bar-back"]\'];',
+      'for (const cs of [".ytp-caption-segment"]) {}',
+      'const HOSTS = ["x.com"];',
+      'const REPLY = "/status/123/reply";',
+    ].join("\n"),
+  );
+  const demoTestidOffenders = findTestidOffenders(demoDir);
+  const demoClassHits = grepCode("\\.ytp-", demoDir);
+  const demoHostHits = grepCode(HOSTNAME_PATTERN, demoDir);
+  const demoStatusHits = grepCode("/status/", demoDir);
+  check(
+    "non-vacuity: the data-testid check FAILS against a fixture containing X's app-bar-back literal",
+    demoTestidOffenders.length > 0,
+    `${demoTestidOffenders.length} offender(s) found in fixture, as expected`,
+  );
+  check(
+    "non-vacuity: the site-player-class check FAILS against a fixture containing .ytp-caption-segment",
+    demoClassHits.length > 0,
+    `${demoClassHits.length} hit(s) found in fixture, as expected`,
+  );
+  check(
+    "non-vacuity: the hostname check FAILS against a fixture containing x.com in code",
+    demoHostHits.length > 0,
+    `${demoHostHits.length} hit(s) found in fixture, as expected`,
+  );
+  check(
+    "non-vacuity: the /status/ check FAILS against a fixture containing an X status path",
+    demoStatusHits.length > 0,
+    `${demoStatusHits.length} hit(s) found in fixture, as expected`,
+  );
+} finally {
+  rmSync(demoDir, { recursive: true, force: true });
+}
 
 // ── one shared video assembler; clip() uses it (no second ffmpeg arg-list) ──
 const libx264Hits = grep("libx264");

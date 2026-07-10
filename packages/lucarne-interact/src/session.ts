@@ -34,9 +34,24 @@ const DEFAULT_CLIP_MAX_MS = 5 * 60 * 1000; // the hard 5-minute clip ceiling (br
 // if the last detected human input landed under 1500ms ago.
 const DEFAULT_YIELD_CHECK_EVERY_CHARS = 12;
 const DEFAULT_YIELD_THRESHOLD_MS = 1500;
-// The two in-app "Back" affordances the origin app recognized (browser.ts:270-271) — generic ARIA/testid
-// patterns, not a per-site policy; callers can override entirely via `back({ inAppSelectors })`.
-const DEFAULT_BACK_SELECTORS = ['button[aria-label="Back"]', '[data-testid="app-bar-back"]'];
+// The in-app "Back" affordance this package recognizes BY DEFAULT: a generic ARIA pattern only —
+// no site-authored `data-testid` value (that's per-site vocabulary, not a generality this package
+// gets to assume). A downstream consumer with a site-specific in-app Back control (e.g. a channel
+// whose DOM authors its own testid for that control) passes it via `back({ inAppSelectors })`,
+// which fully overrides this default (see `back()` below) — the browser-history fallback always
+// applies regardless of which selectors are tried first.
+// Exported so a consumer can COMPOSE its own override (`[...GENERIC_BACK_SELECTORS, ...siteSelectors]`)
+// rather than having to duplicate this literal to preserve the generic fallback when overriding.
+export const GENERIC_BACK_SELECTORS = ['button[aria-label="Back"]'];
+// The caption-overlay fallback selectors (browser.ts:394-401), reached only when a video has no
+// `<track>` cues to read (the PRIMARY, generic path — see `#captions` below). These three are
+// GENERIC markers: a bare `[data-testid="captions"]`/`.captions-text` convention several players
+// use, and video.js's own `.vjs-text-track-cue` (video.js is a generic open-source library, not a
+// single site). A SITE-specific overlay class (e.g. YouTube's `.ytp-caption-segment`) is
+// intentionally NOT included here — a consumer passes its own via `captions(selector, {
+// overlaySelectors })`, same override shape as `back()`.
+// Exported for the same reason as GENERIC_BACK_SELECTORS above.
+export const GENERIC_CAPTION_OVERLAY_SELECTORS = ['[data-testid="captions"]', ".captions-text", ".vjs-text-track-cue"];
 
 export type CdpUrlSource = string | { cdpUrl: string; activity?: ActivityProbe };
 
@@ -183,10 +198,20 @@ export interface CaptionsResult {
   err?: string;
 }
 
+export interface CaptionsOptions {
+  /**
+   * Selectors tried (in order, first match wins) for the caption-OVERLAY fallback path — only
+   * reached when the video has no `<track>` cues (see `#captions`). Overrides the generic default
+   * (`[data-testid="captions"]`/`.captions-text`/`.vjs-text-track-cue`) entirely. A consumer with a
+   * site-specific overlay (e.g. YouTube's `.ytp-caption-segment`) passes it here.
+   */
+  overlaySelectors?: string[];
+}
+
 export interface VideoVerbs {
   storyboard(selector: string, opts: StoryboardOptions): Promise<StoryboardResult>;
   clip(selector: string, outPath: string): Promise<ClipResult>;
-  captions(selector: string): Promise<CaptionsResult>;
+  captions(selector: string, opts?: CaptionsOptions): Promise<CaptionsResult>;
 }
 
 /** The `on('action', e)` payload — emitted after EVERY verb, success or failure. */
@@ -257,7 +282,7 @@ export class InteractSession extends EventEmitter {
     this.video = {
       storyboard: (selector, videoOpts) => this.#storyboard(selector, videoOpts),
       clip: (selector, outPath) => this.#clip(selector, outPath),
-      captions: (selector) => this.#captions(selector),
+      captions: (selector, captionsOpts) => this.#captions(selector, captionsOpts),
     };
   }
 
@@ -547,7 +572,7 @@ export class InteractSession extends EventEmitter {
 
   /** Human back-navigation — the in-app Back button, else browser history (browser.ts:270-274). */
   async back(opts: BackOptions = {}): Promise<BackResult> {
-    const selectors = opts.inAppSelectors?.length ? opts.inAppSelectors : DEFAULT_BACK_SELECTORS;
+    const selectors = opts.inAppSelectors?.length ? opts.inAppSelectors : GENERIC_BACK_SELECTORS;
     return this.#act("back", [opts], "nav", async () => {
       const p = await this.#page();
       const loc = p.locator(selectors.join(", ")).first();
@@ -877,46 +902,50 @@ export class InteractSession extends EventEmitter {
   }
 
   /** The SPEECH channel — read a video's caption transcript from DOM cues (browser.ts:394-401). */
-  async #captions(selector: string): Promise<CaptionsResult> {
-    return this.#act("video.captions", [selector], "read", async () => {
+  async #captions(selector: string, opts: CaptionsOptions = {}): Promise<CaptionsResult> {
+    const overlaySelectors = opts.overlaySelectors?.length ? opts.overlaySelectors : GENERIC_CAPTION_OVERLAY_SELECTORS;
+    return this.#act("video.captions", [selector, opts], "read", async () => {
       const p = await this.#page();
-      return p.evaluate(async (s: string) => {
-        let v = document.querySelector(s) as HTMLVideoElement | null;
-        if (v && v.tagName !== "VIDEO") v = v.querySelector("video");
-        if (!v) v = document.querySelector("video");
-        if (!v) return { ok: false as const, source: "none", transcript: "", err: "no <video>" };
-        let track: TextTrack | null = null;
-        for (const t of v.textTracks) {
-          if (t.kind === "captions" || t.kind === "subtitles") {
-            track = t;
-            break;
+      return p.evaluate(
+        async ({ s, overlay }: { s: string; overlay: string[] }) => {
+          let v = document.querySelector(s) as HTMLVideoElement | null;
+          if (v && v.tagName !== "VIDEO") v = v.querySelector("video");
+          if (!v) v = document.querySelector("video");
+          if (!v) return { ok: false as const, source: "none", transcript: "", err: "no <video>" };
+          let track: TextTrack | null = null;
+          for (const t of v.textTracks) {
+            if (t.kind === "captions" || t.kind === "subtitles") {
+              track = t;
+              break;
+            }
           }
-        }
-        if (track) track.mode = "hidden";
-        await new Promise((r) => setTimeout(r, 800));
-        if (track && track.cues && track.cues.length) {
+          if (track) track.mode = "hidden";
+          await new Promise((r) => setTimeout(r, 800));
+          if (track && track.cues && track.cues.length) {
+            return {
+              ok: true as const,
+              source: "textTrack",
+              cues: track.cues.length,
+              transcript: [...track.cues]
+                .map((c: any) => String(c.text).replace(/<[^>]+>/g, "").replace(/\n/g, " "))
+                .join(" "),
+            };
+          }
+          for (const cs of overlay) {
+            const el = document.querySelector(cs);
+            if (el && el.textContent && el.textContent.trim()) {
+              return { ok: true as const, source: "overlay:" + cs, transcript: el.textContent.trim() };
+            }
+          }
           return {
             ok: true as const,
-            source: "textTrack",
-            cues: track.cues.length,
-            transcript: [...track.cues]
-              .map((c: any) => String(c.text).replace(/<[^>]+>/g, "").replace(/\n/g, " "))
-              .join(" "),
+            source: "none",
+            transcript: "",
+            note: "no caption cues — captions off, or a custom renderer",
           };
-        }
-        for (const cs of [".ytp-caption-segment", '[data-testid="captions"]', ".captions-text", ".vjs-text-track-cue"]) {
-          const el = document.querySelector(cs);
-          if (el && el.textContent && el.textContent.trim()) {
-            return { ok: true as const, source: "overlay:" + cs, transcript: el.textContent.trim() };
-          }
-        }
-        return {
-          ok: true as const,
-          source: "none",
-          transcript: "",
-          note: "no caption cues — captions off, or a custom renderer",
-        };
-      }, selector);
+        },
+        { s: selector, overlay: overlaySelectors },
+      );
     });
   }
 
