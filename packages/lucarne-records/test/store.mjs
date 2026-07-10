@@ -429,7 +429,9 @@ const SEED_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-query-te
   const searchPosts = queryRecords(SEED_DIR, { op: "search", source: "example", query: "lambda" });
   check("queryRecords(search, posts): text search finds the matching post", searchPosts.items.length === 1 && searchPosts.items[0].provenance.id === "9101");
 
-  const searchUsers = queryRecords(SEED_DIR, { op: "search", source: "example", query: "ada", type: "users" });
+  // LS-37: `type:"users"` is gone — a `kind` filter (open, replaces the old closed type) does the
+  // same narrowing, structurally (a caller names the literal kind it wants, not a closed "users" flag).
+  const searchUsers = queryRecords(SEED_DIR, { op: "search", source: "example", query: "ada", kind: "profile" });
   check("queryRecords(search, users): handle/displayName search finds the profile", searchUsers.items.length === 1 && searchUsers.items[0].kind === "profile");
 
   const searchNoMatch = queryRecords(SEED_DIR, { op: "search", source: "example", query: "no-such-term-anywhere" });

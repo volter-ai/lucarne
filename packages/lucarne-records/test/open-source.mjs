@@ -93,8 +93,9 @@ check("getRecord: resolves the github issue by its native id (open source works 
 const gotByUrl = getRecord(DIR, { source: "arxiv", kind: "abstract", id: "https://arxiv.org/abs/2601.00001" });
 check("getRecord: resolves the arxiv abstract by canonicalUrl", !!gotByUrl && gotByUrl.provenance.id === "2601.00001");
 
-// search's `posts` op is a conventional (kind:"post") op, same convention as the pre-LS-29 social
-// query surface — so the search-generality proof uses a kind:"post" record on a non-x source.
+// search's default match is now a fully OPEN, kind-parameterized op (LS-37 — no more implicit
+// kind:"post" requirement); this particular proof still uses a kind:"post" record on a non-x source,
+// same convention as the pre-LS-29 social query surface, to show the convention itself still works.
 const githubDiscussionPost = {
   kind: "post",
   provenance: {
@@ -110,6 +111,94 @@ const githubDiscussionPost = {
 appendRecords(DIR, [githubDiscussionPost]);
 const searchPage = queryRecords(DIR, { op: "search", source: "github", query: "arbitrary sources" });
 check("queryRecords(search): finds a github (non-x) post's text — search is not x-specific", searchPage.items.length === 1 && searchPage.items[0].provenance.source === "github");
+
+// ── LS-37 (read-kinds generalize) — THE CONCRETE REFUTATION-CLOSER: the generality panel's finding
+// was that the read/query side of this package silently required/assumed the social kind names
+// ("post"/"comment"/"profile") even though `kind` is open everywhere else — a schema-blessed
+// non-social record (like `githubIssue` above, already proven APPENDABLE) got ZERO results back from
+// `timeline`/`search`/`comments`. This block proves a foreign kind ("issue", and a second, different
+// one, "pr") is now fully QUERYABLE through the exact same general ops a social "post" uses — not
+// just storable. (Non-vacuous, confirmed by hand against the pre-fix `query.ts`: every `check` below
+// FAILED — empty pages — before this change; see the LS-37 commit/PR description.)
+const githubIssue2 = {
+  kind: "issue",
+  provenance: {
+    source: "github",
+    id: "volter-ai/lucarne#99",
+    canonicalUrl: "https://github.com/volter-ai/lucarne/issues/99",
+    fetchedAt: "2026-07-08T12:20:00.000Z",
+    via: "internal-api",
+  },
+  text: "flaky test in the query suite",
+  metrics: { comments: 1 },
+  labels: ["bug", "flaky"],
+};
+const githubPr = {
+  kind: "pr",
+  provenance: {
+    source: "github",
+    id: "volter-ai/lucarne#100",
+    canonicalUrl: "https://github.com/volter-ai/lucarne/pull/100",
+    fetchedAt: "2026-07-08T12:21:00.000Z",
+    via: "internal-api",
+  },
+  text: "fix the flaky query test",
+  metrics: {},
+};
+// the issue's own reply unit — deliberately named "issue-comment", NOT the social "comment" kind, to
+// prove the relationship (comments) op's child match is genuinely kind-agnostic, not just accepting
+// one alternate hardcoded literal instead of another.
+const githubIssueComment = {
+  kind: "issue-comment",
+  provenance: {
+    source: "github",
+    id: "ic-1",
+    canonicalUrl: "https://github.com/volter-ai/lucarne/issues/99#issuecomment-1",
+    fetchedAt: "2026-07-08T12:22:00.000Z",
+    via: "internal-api",
+  },
+  author: { login: "octocat" },
+  text: "reproduced on CI, looking into it",
+  parentUrl: "https://github.com/volter-ai/lucarne/issues/99",
+  threadRootUrl: "https://github.com/volter-ai/lucarne/issues/99",
+  depth: 0,
+  createdAt: "2026-07-08T12:23:00.000Z",
+};
+appendRecords(DIR, [githubIssue2, githubPr, githubIssueComment]);
+
+// timeline: kind:"issue" returns BOTH captured issues (this one + `githubIssue` from above) — the
+// pre-fix hardcoded `e.kind !== "post"` drop would have silently returned an EMPTY page instead.
+const issueTimeline = queryRecords(DIR, { op: "timeline", source: "github", kind: "issue" });
+const issueIds = issueTimeline.items.map((e) => e.provenance.id).sort();
+check(
+  "LS-37 queryRecords(timeline, kind:'issue'): a non-social kind IS returned in full (proves `timeline` is kind-parameterized, not kind:'post'-hardcoded)",
+  issueTimeline.items.length === 2 && JSON.stringify(issueIds) === JSON.stringify(["volter-ai/lucarne#42", "volter-ai/lucarne#99"]),
+  JSON.stringify(issueIds),
+);
+
+// timeline: kind:"pr" returns the pr — a SECOND, different non-social kind, through the identical op,
+// with no per-kind special-casing anywhere in `query.ts`.
+const prTimeline = queryRecords(DIR, { op: "timeline", source: "github", kind: "pr" });
+check(
+  "LS-37 queryRecords(timeline, kind:'pr'): a second, different non-social kind is ALSO returned through the identical op",
+  prTimeline.items.length === 1 && prTimeline.items[0].provenance.id === "volter-ai/lucarne#100",
+);
+
+// search: kind:"issue" narrows the free-text match to the matching issue only.
+const issueSearch = queryRecords(DIR, { op: "search", source: "github", query: "flaky", kind: "issue" });
+check(
+  "LS-37 queryRecords(search, kind:'issue'): a kind-narrowed text search over a non-social kind finds it",
+  issueSearch.items.length === 1 && issueSearch.items[0].kind === "issue" && issueSearch.items[0].provenance.id === "volter-ai/lucarne#99",
+);
+
+// comments/relationship: the issue's OWN differently-named child kind ("issue-comment") is returned by
+// the exact same relationship op a social thread uses — the root lookup and the child match are BOTH
+// kind-agnostic (no `kind:"post"` root requirement, no `kind==="comment"` child requirement).
+const issueComments = queryRecords(DIR, { op: "comments", source: "github", postIdOrUrl: "volter-ai/lucarne#99" });
+check(
+  "LS-37 queryRecords(comments): a non-social root ('issue') resolves and its non-social child kind ('issue-comment') is returned — the relationship query never required kind:'post'/'comment'",
+  issueComments.items.length === 1 && issueComments.items[0].kind === "issue-comment" && issueComments.items[0].text === githubIssueComment.text,
+);
 
 // ── MERGE: domain fields survive a merge unmolested (shallow top-level donor-wins spread) ──
 {
