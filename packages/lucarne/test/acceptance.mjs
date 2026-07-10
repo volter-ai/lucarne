@@ -47,25 +47,6 @@ const firstPage = async (browser, timeoutMs = 10000) => {
   }
 };
 
-// A synthetic CDP `el.focus()` eval does not necessarily have "landed" (i.e. be
-// observable to a subsequent, independently-dispatched synthetic input event) by
-// the time its own round trip resolves — under many-session CI load a blind fixed
-// sleep after the eval is not a reliable bound. Poll-verify `document.activeElement.id`
-// (read-only) instead of sleeping-and-hoping, so callers only proceed once the intended
-// element is PROVABLY focused — the same guarantee a real user's click/Tab gives for free.
-const pollFocusedId = async (cdp, id, timeoutMs = 3000) => {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const r = await cdp.call("Runtime.evaluate", {
-      expression: "document.activeElement && document.activeElement.id",
-      returnByValue: true,
-    });
-    if (r.result?.value === id) return;
-    if (Date.now() >= deadline) throw new Error(`P0 setup: focus never landed on #${id}`);
-    await sleep(100);
-  }
-};
-
 // Wait until the coalesced "alice" type-run has actually been FLUSHED and recorded (unredacted),
 // so its flush-time secrecy re-read provably ran while #u was still focused — BEFORE we move focus
 // to #pw. Removes the race where a load-delayed async end-read sees the later #pw focus and
@@ -1377,6 +1358,35 @@ try {
 // the coalesce window. 1.4.0 captured secrecy only at type-START, and Tab did NOT flush — so
 // "alice<Tab>hunter2" coalesced into ONE run classified by the username field and the
 // password leaked UNredacted. Fix: flush on Tab/Enter + union flush-time secrecy.
+//
+// DETERMINISM DESIGN (do not "simplify" any piece back to a sleep — each kills a specific race):
+//  * GATE: after Tab, wait until the "alice" run is RECORDED (value === "alice") before moving
+//    focus to #pw. flushType's async end-read (session-media.ts) must observe #u focused; the
+//    recorded unredacted event is the only observable proof it already executed. Moving focus
+//    only after that proof makes aliceKept deterministic instead of a cross-connection race.
+//  * KEEPALIVES: while waiting, tap a filler key ("k") every ~100ms. WORKING engine: Tab already
+//    flushed "alice", so keepalives start a NEW run that later absorbs hunter2 and is
+//    deterministically redacted (its final idle-flush end-read reads #pw, where focus parks) —
+//    invisible to the conjuncts. REGRESSED engine (no Tab flush): every keepalive RESETS the
+//    800ms idle timer, holding the "alice…" buffer OPEN, so (1) the gate's timeout can be
+//    generous WITHOUT the idle flush separating the runs (no masking), and (2) the gate can only
+//    be satisfied by a genuine Tab-triggered flush — an idle flush is unreachable while
+//    keepalives flow.
+//  * On gate timeout, PROCEED — never throw. The timeout path IS the regression-detection path:
+//    hunter2 then joins the still-open cross-field run → plaintext "…hunter2" under 1.4.0
+//    start-only secrecy (hunterGone fails), or a wholesale-redacted single run under
+//    union-intact-but-no-Tab-flush ("alice" event gone, aliceKept fails).
+//  * #pw focus is poll-verified (a synthetic CDP focus eval isn't reliably observable by later
+//    synthetic input under CI load), with keepalives continuing so a regressed engine's idle
+//    timer can't fire during this wait either.
+//  * FINAL READ: poll until the password run is provably recorded (a redacted event, or a
+//    plaintext hunter2) instead of a blind sleep — kills both the read-before-flush flake and
+//    the vacuous pass where "hunter2" is absent only because its run hadn't flushed yet. Its
+//    result is a REQUIRED conjunct (pwFlushed).
+// No sleep between "alice" and Tab: the porthole WS is ordered and onInput is synchronous per
+// message, so Tab always flushes the complete "alice" buffer; the old sleep(150) only widened
+// the window in which a stalled regressed engine could idle-flush a pure "alice" (a false gate
+// satisfy).
 const xfEngine = new Lucarne({ port: 7937, token: TOKEN, record: false, activity: true });
 await xfEngine.listen();
 try {
@@ -1386,42 +1396,41 @@ try {
   const xfw = new WS(`ws://127.0.0.1:${7937}/sessions/xredact/view/ws?token=${TOKEN}`);
   await new Promise((r, j) => { xfw.on("open", r); xfw.on("error", j); });
   const tap = (key, code) => { xfw.send(JSON.stringify({ t: "keydown", key, code })); xfw.send(JSON.stringify({ t: "keyup", key, code })); };
+  const xfTypes = () => xfEngine.sessionActivity("xredact").filter((a) => a.kind === "type");
+  // Bounded soft poll: returns whether pred came true; NEVER throws (timeout is a legitimate
+  // branch here). onTick runs between checks — used for the coalesce-window keepalives.
+  const softPoll = async (pred, timeoutMs, onTick) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (await pred()) return true;
+      if (Date.now() >= deadline) return false;
+      onTick?.();
+      await sleep(100);
+    }
+  };
   for (const k of ["a", "l", "i", "c", "e"]) tap(k, "Key" + k.toUpperCase());  // username (non-secret)
-  await sleep(150);
-  tap("Tab", "Tab");                                                            // exercises the flush-on-Tab boundary (a Tab keydown flushes the current run — session-media.ts)
-  // Poll-confirm (not slept-for) that the "alice" run's flush has landed UNREDACTED, i.e. its
-  // async flush-time secrecy re-read provably ran while #u was still focused. flushType unions
-  // start||end secrecy (session-media.ts), and the end-read is an async round trip — under CI
-  // load it can be DELAYED until after the #pw.focus() below lands, so a blind fixed sleep here
-  // is itself a race: the end-read can see #pw (secret) and over-redact "alice", failing the
-  // `blob.indexOf("alice") !== -1` conjunct further down. Bounded; throws a clear setup error if
-  // it never lands, rather than silently proceeding into the focus move.
-  await pollActivity(xfEngine, "xredact", (acts) => acts.some((a) => a.value === "alice"), 3000, "alice flushed unredacted");
-  // Deterministically place focus on the password field. Redaction classifies each coalesced
-  // type-run by the ACTUALLY-focused field (session-media `readSecrecy` reads document.activeElement
-  // at type-start and unions a flush-time re-read), so what matters is that "hunter2" is typed while
-  // #pw is focused. A synthetic CDP Tab keydown does NOT reliably move DOM focus to the next field in
-  // headless Chrome (CI) — without this, "hunter2" is typed while #username is still focused (a
-  // genuinely non-secret field) and correctly logged UNredacted: no real password-field leak, but a
-  // red test. A real headful user's Tab moves focus for real; this makes the headless synthetic-input
-  // path deterministic WITHOUT weakening the assertion — if flush-on-Tab regressed, "alice"+"hunter2"
-  // would coalesce into ONE run that the flush-time re-read (now on #pw) redacts wholesale, hiding
-  // "alice", so the `blob.indexOf("alice") !== -1` check below still fails on that regression.
-  // The `#pw.focus()` eval is POLL-VERIFIED (not slept-for): a fixed sleep here was itself a race —
-  // under many-session CI load the eval is not necessarily reflected by a blind wait, so we poll
-  // read-only `document.activeElement.id` until it's provably "pw" (bounded; throws a clear setup
-  // error if it never lands, rather than silently typing into the wrong field).
+  tap("Tab", "Tab");   // WORKING engine: flushes the "alice" run NOW (session-media.ts Tab branch)
+  const gateOk = await softPoll(() => xfTypes().some((t) => t.value === "alice"), 4000, () => tap("k", "KeyK"));
+  console.log(`  · xf gate: ${gateOk ? "alice Tab-flush observed" : "TIMED OUT — no Tab flush? proceeding to coalesce probe"}`);
   await xfc.call("Runtime.evaluate", { expression: "document.getElementById('pw').focus()" });
-  await pollFocusedId(xfc, "pw");
+  const focused = await softPoll(async () => {
+    const r = await xfc.call("Runtime.evaluate", { expression: "document.activeElement && document.activeElement.id", returnByValue: true });
+    return r.result?.value === "pw";
+  }, 3000, () => tap("k", "KeyK"));
+  if (!focused) throw new Error("P0 setup: focus never landed on #pw");
   for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password — #pw is the focused field
-  await sleep(1200);                                                            // coalesce + flush
+  // The final run flushes on the 800ms idle timer in EVERY variant (working: the redacted
+  // keepalive+hunter2 run; regressed: the coalesced run — plaintext or wholesale-redacted).
+  const pwFlushed = await softPoll(() => xfTypes().some((t) => t.value === "‹redacted›" || String(t.value).includes("hunter2")), 6000);
   xfw.close(); xfc.close();
-  const types = xfEngine.sessionActivity("xredact").filter((a) => a.kind === "type");
+  const types = xfTypes();
   const blob = JSON.stringify(types);
-  const hasTypes = types.length > 0, aliceKept = blob.indexOf("alice") !== -1, hunterGone = blob.indexOf("hunter2") === -1;
+  const hasTypes = types.length > 0;
+  const hunterGone = blob.indexOf("hunter2") === -1;          // SAFETY: no plaintext leak anywhere
+  const aliceKept = types.some((t) => t.value === "alice");   // STRUCTURE: Tab flushed alice as its OWN unredacted run
   check("activity(P0): a password typed AFTER a Tab from a non-secret field is NOT leaked (cross-field)",
-    hasTypes && hunterGone && aliceKept,
-    `hasTypes=${hasTypes} hunterGone=${hunterGone} aliceKept=${aliceKept} types=${blob}`);
+    hasTypes && hunterGone && aliceKept && pwFlushed,
+    `hasTypes=${hasTypes} hunterGone=${hunterGone} aliceKept=${aliceKept} pwFlushed=${pwFlushed} gateOk=${gateOk} types=${blob}`);
   await xfEngine.destroy(xf.id);
 } finally {
   await xfEngine.close().catch(() => {});
