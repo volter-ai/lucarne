@@ -4,11 +4,28 @@ The one provenance record language for the lucarne platform: a normalized
 cross-site schema (`Profile`/`Post`/`Comment`), opaque `Page<T>`/cursor
 pagination helpers, and a pure `node:fs` record store + query API.
 
-Dependency-free, zero network. This package never issues an HTTP request, opens
-a socket, or touches a browser — it is pure data shape + pure disk I/O, so both
-a recorder (`lucarne-interact`) and a read-only query surface
-(`lucarne-corpus-mcp`) can depend on it without inheriting each other's runtime
-weight.
+## Charter
+
+This package owns record **shape** and **storage**, and nothing past that
+boundary: no site-specific parsing (that's `lucarne-records/sites`, LS-05), no
+browser, and no network client. That narrow charter is exactly what lets both
+a writer (`lucarne-interact`'s recall) and a read-only reader
+(`lucarne-corpus-mcp`) depend on this one package without inheriting each
+other's runtime weight.
+
+## Security posture
+
+**Dependency-free, zero network.** This package never issues an HTTP request,
+opens a socket, or touches a browser — it is pure data shape + pure disk I/O.
+That is a security property, not just a footprint one: a recorder process and
+any number of reader processes can pull in this package's store/query surface
+without pulling in a network-capable runtime alongside it — there is nothing
+here to compromise into an egress path. On disk, `appendRecords` writes to a
+`.tmp` file and `renameSync`s it over `records.jsonl` — an atomic swap on
+POSIX — so a reader never observes a torn file and a crash mid-write can't
+truncate the live store (see "Concurrency", below). Every record is run
+through `validate.ts`'s runtime gate: one missing `provenance` field fails
+validation, structurally, not just at the type level.
 
 ## What's here
 

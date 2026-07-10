@@ -3,9 +3,25 @@
 An **optional**, thin, **read-only** stdio MCP bin over a `lucarne-records`
 store. It exposes the reshaped `claude-socials` read surface —
 `get_profile`/`get_post`/`get_comments`/`search`/`get_timeline` — as **pure
-store reads**. It never fetches, replays a site endpoint, opens a WebSocket
-bridge, drives an extension, or opens a browser. Its only I/O is: (1) reading
-`records.jsonl` off disk via `lucarne-records`, and (2) stdio JSON-RPC (MCP).
+store reads**.
+
+## Charter
+
+This bin's boundary: it never fetches, replays a site endpoint, opens a
+WebSocket bridge, drives an extension, or opens a browser. Its only I/O is:
+(1) reading `records.jsonl` off disk via `lucarne-records`, and (2) stdio
+JSON-RPC (MCP). See "Why this exists" below for the law this boundary serves.
+
+## Security posture
+
+**Read-only, no capture.** This bin cannot make anything happen on a site —
+it only answers from what `lucarne-interact`'s recall has already passively
+captured into the `lucarne-records` store. A miss returns a structured
+`not_captured` result, never a fetch (see "Why this exists", below, for the
+"behave like a user" law this serves). This posture is categorical, not
+best-effort — see "Categorical no-egress law", below, whose
+`test/no-egress.mjs` monkeypatches every Node socket primitive and proves
+both the hit and miss paths never attempt a network call.
 
 ## Why this exists (the "behave like a user" law)
 
