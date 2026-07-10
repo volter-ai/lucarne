@@ -116,38 +116,46 @@ for (const [label, d] of [
   check(`${label}: REFUSE`, r.allow === false, JSON.stringify(r));
 }
 
-// generic PUBLISH/SUBMIT-by-name coverage — STRONG CTAs only (send/submit/publish + the "post
-// reply"/"post comment" confirm phrase). These are unambiguous publish acts and must REFUSE.
+// generic PUBLISH/SUBMIT/COMPOSE-by-name coverage — includes the BARE ambiguous words
+// post/reply/tweet/comment (whole-word). An ambiguous actionable button/[role=button] with a
+// publish/compose signal DEFAULT-REFUSES (the HIGH-severity invariant). These must all REFUSE.
 for (const [label, d] of [
   ["generic 'Send' (DM) button", { ...base(), tag: "button", ariaLabel: "Send" }],
   ["generic 'Submit' button (no type=submit attr, label-only)", { ...base(), tag: "div", role: "button", ariaLabel: "Submit" }],
   ["generic 'Publish' button", { ...base(), tag: "button", text: "Publish" }],
-  ["X 'Post reply' confirm label (the publish phrase, not a bare 'Reply')", { ...base(), tag: "button", ariaLabel: "Post reply" }],
-  ["'Post comment' confirm label (publish phrase)", { ...base(), tag: "button", text: "Post comment" }],
+  ["X 'Post reply' confirm label", { ...base(), tag: "button", ariaLabel: "Post reply" }],
+  ["'Post comment' confirm label", { ...base(), tag: "button", text: "Post comment" }],
+  ["'Share your thoughts' composer-placeholder button (bare, no known testid)", { ...base(), tag: "button", ariaLabel: "Share your thoughts" }],
 ]) {
   const r = classifyActivateTarget(d);
   check(`${label}: REFUSE`, r.allow === false, JSON.stringify(r));
 }
 
-// ── LS-28 refinement: compose-OPEN affordances PUBLISH NOTHING — they reveal/focus a composer, so
-// they ALLOW (navigation). The bare ambiguous words `reply`/`comment`/`tweet`/`post` no longer
-// refuse; the genuine publish (tweetButton, <button type=submit>) stays refused (proven above). ──
+// ── SECURITY-REVIEW EXPLOIT CLASS (must REFUSE): a bare-label actionable button/[role=button] with
+// NO <form> and NO known testid is the LinkedIn/Bluesky/YouTube/SPA-generic publish control that a
+// naive "un-refuse the bare words" design would let publish ungated. `type(draft)`+`activate(it)`
+// must be structurally refused by DEFAULT — an explicit per-site compose-open testid (below) is the
+// ONLY sanctioned allow for an actionable compose control. ──
 for (const [label, d] of [
-  // X's reply button — opens the reply composer, publishes nothing. Explicit compose-open testid.
-  ["X [data-testid=reply] (opens the reply composer)", { ...base(), tag: "button", testid: "reply", ariaLabel: "Reply" }],
-  // A plain compose-open button labeled "Reply"/"Comment" (no type=submit, no known submit testid).
-  ["plain 'Reply' compose-open <button> (not type=submit)", { ...base(), tag: "button", ariaLabel: "Reply" }],
-  ["plain 'Comment' compose-open <button> (not type=submit)", { ...base(), tag: "button", text: "Comment" }],
-  ["plain 'Post' <button> (ambiguous bare word, not a known publish control)", { ...base(), tag: "button", ariaLabel: "Post" }],
-  // A "Reply" navigation link / role=link (X/Reddit affordance that reveals the composer).
-  ["'Reply' <a href> compose-open link", { ...base(), tag: "a", href: "#reply", text: "Reply" }],
-  ["'Reply' role=link compose-open affordance", { ...base(), tag: "div", role: "link", ariaLabel: "Reply" }],
-  // "Share your thoughts" composer-placeholder trigger — opens a box, publishes nothing.
-  ["'Share your thoughts' composer-open trigger", { ...base(), tag: "button", ariaLabel: "Share your thoughts" }],
+  ["<button>Post</button> (bare publish button, no form/testid)", { ...base(), tag: "button", text: "Post" }],
+  ["<button type=button>Comment</button> (bare, explicit non-submit type)", { ...base(), tag: "button", type: "button", text: "Comment" }],
+  ['<div role="button">Reply</div> (bare role=button)', { ...base(), tag: "div", role: "button", text: "Reply" }],
+  ['<div role="button">Tweet</div> (bare role=button)', { ...base(), tag: "div", role: "button", text: "Tweet" }],
 ]) {
   const r = classifyActivateTarget(d);
-  check(`${label}: ALLOW (compose-open, publishes nothing)`, r.allow === true, JSON.stringify(r));
+  check(`EXPLOIT-CLASS — ${label}: REFUSE (default-refuse, hole stays closed)`, r.allow === false, JSON.stringify(r));
 }
+
+// ── compose-OPEN is allowed ONLY via the explicit per-site testid allowlist (checked FIRST, before
+// the refuse regex). This is what keeps X's documented reply-open flow working WITHOUT re-opening
+// the bare-label hole above. ──
+{
+  const d = { ...base(), tag: "button", testid: "reply", ariaLabel: "Reply" };
+  const r = classifyActivateTarget(d);
+  check("X [data-testid=reply] (explicit compose-open testid, opens the composer): ALLOW", r.allow === true, JSON.stringify(r));
+}
+
+// 5. `<a href>` → allow
 
 // 5. `<a href>` → allow
 {
@@ -239,6 +247,12 @@ for (const [label, d] of [
     ["<button type=submit> comment form", { ...base(), tag: "button", type: "submit", inForm: true, isFormSubmitTrigger: true, text: "save" }],
     ["like (account-state)", { ...base(), tag: "button", testid: "like", ariaLabel: "Like" }],
     ["follow (account-state)", { ...base(), tag: "button", testid: "follow", ariaLabel: "Follow" }],
+    // The security-review bare-label exploit class — no <form>, no testid, ambiguous label — must
+    // ALSO be part of the binding invariant (a false ALLOW here is an ungated-publish hole).
+    ["<button>Post</button> (bare publish button)", { ...base(), tag: "button", text: "Post" }],
+    ["<button type=button>Comment</button> (bare)", { ...base(), tag: "button", type: "button", text: "Comment" }],
+    ['<div role="button">Reply</div> (bare)', { ...base(), tag: "div", role: "button", text: "Reply" }],
+    ['<div role="button">Tweet</div> (bare)', { ...base(), tag: "div", role: "button", text: "Tweet" }],
   ];
   for (const [label, d] of SUBMIT_CONTROLS) {
     const r = classifyActivateTarget(d);
@@ -258,7 +272,12 @@ assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "dmCompo
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", type: "submit", inForm: true, isFormSubmitTrigger: true }).allow, false);
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "like" }).allow, false);
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "follow" }).allow, false);
-// compose-open / navigation now allows:
+// bare-label exploit class stays refused (default-refuse):
+assert.equal(classifyActivateTarget({ ...base(), tag: "button", text: "Post" }).allow, false);
+assert.equal(classifyActivateTarget({ ...base(), tag: "button", type: "button", text: "Comment" }).allow, false);
+assert.equal(classifyActivateTarget({ ...base(), tag: "div", role: "button", text: "Reply" }).allow, false);
+assert.equal(classifyActivateTarget({ ...base(), tag: "div", role: "button", text: "Tweet" }).allow, false);
+// compose-open (explicit testid) / navigation allows:
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "reply" }).allow, true);
 assert.equal(classifyActivateTarget({ ...base(), tag: "a", href: "/next" }).allow, true);
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", ariaLabel: "Show 3 more replies" }).allow, true);

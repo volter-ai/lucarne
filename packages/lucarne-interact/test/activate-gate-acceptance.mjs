@@ -47,6 +47,10 @@ const PAGE_HTML = `<!doctype html><html><body>
   <button id="replyBtn" data-testid="reply" aria-label="Reply" onclick="window.__replyOpened=true;document.getElementById('replyBox').style.display='block';document.getElementById('replyBox').focus()">Reply</button>
   <textarea id="replyBox" style="display:none"></textarea>
 
+  <!-- SECURITY-REVIEW EXPLOIT CLASS: a bare-label publish button — NO <form>, NO known testid. It
+       must DEFAULT-REFUSE; if activated it would publish. Sentinel proves it never fires. -->
+  <button id="barePost" onclick="window.__barePublished=true">Post</button>
+
   <a id="next" href="/next">go to next page</a>
   <button id="expandBtn" onclick="window.__expanded=true">Show 3 more replies</button>
 
@@ -55,6 +59,7 @@ const PAGE_HTML = `<!doctype html><html><body>
     window.__tweetClicked = false;
     window.__likeClicked = false;
     window.__replyOpened = false;
+    window.__barePublished = false;
     window.__expanded = false;
   </script>
 </body></html>`;
@@ -106,6 +111,7 @@ try {
         tweetClicked: window.__tweetClicked,
         likeClicked: window.__likeClicked,
         replyOpened: window.__replyOpened,
+        barePublished: window.__barePublished,
         expanded: window.__expanded,
         taValue: document.getElementById("ta")?.value,
       }));
@@ -181,6 +187,21 @@ try {
     check("activate([data-testid=reply]): does NOT throw (compose-open publishes nothing)", threw === null, String(threw));
     check("activate([data-testid=reply]): the reply composer WAS opened (real activation happened)", after.replyOpened === true, JSON.stringify(after));
     check("activate([data-testid=reply]): nothing was published — form/tweet/like sentinels all still false", after.formSubmitted === false && after.tweetClicked === false && after.likeClicked === false, JSON.stringify(after));
+  }
+
+  // SECURITY-REVIEW EXPLOIT CLASS end-to-end: a bare-label <button>Post</button> (no <form>, no
+  // known testid) must be structurally REFUSED — otherwise type(draft)+activate(it) publishes
+  // ungated. This is the hole the "un-refuse the bare words" first cut left open.
+  {
+    let threw = null;
+    try {
+      await s.activate("#barePost");
+    } catch (e) {
+      threw = e;
+    }
+    const after = await readFlags();
+    check("activate(#barePost, bare <button>Post</button>): THROWS (default-refuse)", threw instanceof Error, String(threw));
+    check("activate(#barePost): the bare publish button's onclick NEVER fired (hole stays closed)", after.barePublished === false, JSON.stringify(after));
   }
 
   // Navigation STILL works: a plain expand/disclosure button (label doesn't match any refuse pattern).
