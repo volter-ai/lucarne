@@ -248,12 +248,13 @@ visibility probes, and (for a playing video) its own CDP screencast tap.
 ```ts
 import { InteractSession } from "lucarne-interact";
 import { startRecall } from "lucarne-interact/recall";
-import { xAriaExtractor } from "lucarne-records/sites";
+import { xAriaExtractor, xWireAdapter } from "./records"; // a caller's own domain package
 
 const interact = new InteractSession(session);
 const recall = await startRecall(interact, {
   dataDir: "/path/to/store",
   extractors: [xAriaExtractor], // { match(url), extract(aria, capture) => records }
+  wireAdapters: [xWireAdapter], // { match(url), dispatch(requestUrl, payload) => records } — optional, defaults to []
   observers: [(signal) => console.log(signal.kind, signal)],
 });
 // ... drive/observe the session ...
@@ -261,9 +262,13 @@ await recall.stop();
 ```
 
 - **Extractors are plugins** (`{ match(url), extract(aria, capture) =>
-  records }`) — cadence passes the X ARIA extractor from
-  `lucarne-records/sites`. Recall dispatches every matching extractor and
+  records }`) — this package bundles none of its own; a caller passes its own
+  site-specific ARIA extractor(s) (e.g. cadence's X ARIA extractor, in
+  `cadence/src/records/`). Recall dispatches every matching extractor and
   writes the resulting records through `lucarne-records`'s `appendRecords`.
+  Likewise `wireAdapters` (LS-13W) — this package bundles no site-specific
+  wire adapter either; the default is `[]` (wire capture is a no-op until a
+  caller registers a domain's own adapter).
 - **Observers are consumer hooks** — `(signal) => void`, fired for every
   capture/video event. Cadence's intent-bus polling (`window.__cadence`
   picks/approvals/draft-requests, `recall.ts:337-367`) is **not** ported

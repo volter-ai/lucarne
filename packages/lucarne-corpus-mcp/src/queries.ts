@@ -15,9 +15,17 @@
  * The three bridge-diagnostic tools (`x_debug`/`reload_extension`/
  * `bridge_status`, `tools.ts:207-246`) have no analog here — there is no
  * bridge to diagnose — and are intentionally NOT ported (§1.3a).
+ *
+ * LS-29 (generalize-records): `Source` is now an open `string` — `lucarne-records` no longer closes
+ * the source set, so this bin can point at ANY sensor's namespace, not just a closed list of named
+ * sites. `Comment`/`Profile` are gone (they were the closed social schema, moved downstream) — the
+ * `depth` filter in `getComments` below now reads `depth` DEFENSIVELY off the general `Entity` shape
+ * (`CorpusRecord`'s index signature types it `unknown`) instead of casting to a closed `Comment` type.
  */
 import { getRecord, queryRecords } from "lucarne-records";
-import type { Comment, Entity, Page, Profile, Source } from "lucarne-records";
+import type { Entity, Page } from "lucarne-records";
+
+type Source = string;
 
 export interface NotCaptured {
   status: "not_captured";
@@ -57,7 +65,7 @@ export interface GetProfileArgs {
   handle: string;
 }
 
-export function getProfile(dir: string, args: GetProfileArgs): ToolResult<Profile> {
+export function getProfile(dir: string, args: GetProfileArgs): ToolResult<Entity> {
   const rec = getRecord(dir, { source: args.source, kind: "profile", id: args.handle });
   if (!rec || rec.kind !== "profile") {
     return notCaptured(
@@ -108,10 +116,11 @@ export function getComments(dir: string, args: GetCommentsArgs): ToolResult<Page
   });
   // `depth` filters the returned page down further (a post-filter, honest
   // about the fact this is a store read, not a re-query): 0 = top-level replies only.
+  // Read defensively (LS-29): `depth` is a conventional field, not a typed one, on the general Entity.
   const items =
     args.depth === undefined
       ? page.items
-      : page.items.filter((e) => e.kind !== "comment" || (e as Comment).depth <= args.depth!);
+      : page.items.filter((e) => e.kind !== "comment" || typeof e.depth !== "number" || e.depth <= args.depth!);
   if (items.length === 0) {
     return notCaptured(
       `comments on ${args.source} post "${args.postIdOrUrl}"`,

@@ -107,10 +107,20 @@ try {
   const snapA = await s2.snap("h1");
   check("constructor { targetId: tabA } → snap() reads TAB A", /Tab A/.test(snapA), snapA);
 
-  // ── 3. useTarget(null) un-binds — falls back to today's original pages()[0] ──
+  // ── 3. useTarget(null) un-binds — falls back to today's original pages()[0]. CDP's page order
+  //    isn't guaranteed (which open tab lands at index 0 is not a contract this test should assume),
+  //    so this assertion is made ORDER-INDEPENDENT: read pages()[0]'s OWN actual header (via the same
+  //    raw playwright connection already open, `ctx`) and assert the unbound snap matches THAT tab's
+  //    content — whichever tab (A or B) actually is pages()[0] — instead of hardcoding "Tab A". ──
   s2.useTarget(null);
   const snapUnbound = await s2.snap("h1");
-  check("useTarget(null) un-binds → falls back to pages()[0] (today's original default)", /Tab A/.test(snapUnbound), snapUnbound);
+  const actualFirstPage = ctx.pages()[0];
+  const actualFirstPageHdr = await actualFirstPage.locator("#hdr").innerText();
+  check(
+    "useTarget(null) un-binds → falls back to pages()[0] (today's original default) — matches pages()[0]'s ACTUAL content, order-independent",
+    snapUnbound.includes(actualFirstPageHdr),
+    JSON.stringify({ snapUnbound, actualFirstPageHdr }),
+  );
 
   // ── 4. type() + send() land on the BOUND tab (B), never on the other open tab (A) — the
   // core anti-footgun this ticket exists for: a send must never fire on the wrong tab. ──

@@ -25,7 +25,7 @@ import { acquireSingletonLock, RECALL_LOCK_FILE, reconcileMedia, releaseSingleto
 import { RecallStatusHolder, type RecallStatusSnapshot } from "./status.js";
 import { ACTIVE_TAB_FALLBACK_THRESHOLD, changeSignature, classifyChange, pickBestTab, scrollBucket, type ChangeParts, type ScoredTabCandidate } from "./tab-scoring.js";
 import { adaptivePaceMs, bumpIdle } from "./adaptive-pace.js";
-import { startWireSensor, xWireAdapter, type WireSensorHandle, type WireSiteAdapter } from "./wire.js";
+import { startWireSensor, type WireSensorHandle, type WireSiteAdapter } from "./wire.js";
 import type { RecallExtractor, RecallObserverFn, RecallSignal, RecallToggles, RecallVideoStopReason } from "./types.js";
 
 export type {
@@ -70,7 +70,7 @@ export { decideStop, recordWatchedVideo, runVideoWatchLoop } from "./video-watch
 export { MediaCropTracker } from "./media-crop.js";
 export { acquireSingletonLock, releaseSingletonLock, reconcileMedia, sweepOrphanVideoDirs } from "./lock.js";
 export { adaptivePaceMs, DEFAULT_ADAPTIVE_PACE } from "./adaptive-pace.js";
-export { dispatchWireAdapters, isXGraphqlUrl, searchTypeFromUrl, startWireSensor, xOperationNameOf, xWireAdapter, type WireSensorHandle, type WireSensorOptions, type WireSiteAdapter } from "./wire.js";
+export { dispatchWireAdapters, startWireSensor, type WireSensorHandle, type WireSensorOptions, type WireSiteAdapter } from "./wire.js";
 
 /** A lucarne session object shape, or an `InteractSession`-like one that ALSO exposes
  *  `presenceSnapshot()` (duck-typed — recall never imports `InteractSession`/`session.ts` itself,
@@ -80,13 +80,14 @@ export type RecallSessionSource = string | { cdpUrl: string; presenceSnapshot?: 
 export interface StartRecallOptions {
   /** Where captures land: ARIA text, screenshots, media crops, the shared `lucarne-records` store. */
   dataDir: string;
-  /** Per-site extractor plugins (e.g. `lucarne-records/sites`'s `xAriaExtractor`) — the SCREEN
-   *  sensor's plugins. */
+  /** Per-site extractor plugins (a caller's own site-specific ARIA extractor, e.g. an X extractor)
+   *  — the SCREEN sensor's plugins. This package bundles none of its own (LS-29). */
   extractors: readonly RecallExtractor[];
   /** Per-site WIRE adapters (LS-13W) — the second, independent passive sensor's plugins, run
-   *  alongside the screen sensor on the same connection. Defaults to `[xWireAdapter]` (x's
-   *  operationName -> pure-parser dispatch, `wire.ts`). Pass `[]` to disable wire capture entirely
-   *  while keeping the screen sensor. */
+   *  alongside the screen sensor on the same connection. Defaults to `[]` (LS-29 — this package
+   *  bundles no site-specific adapter of its own); a caller wanting wire capture for a domain passes
+   *  that domain's own adapter(s) (a downstream `xWireAdapter`, for example). Passing
+   *  `[]` (or omitting this option) disables wire capture while keeping the screen sensor. */
   wireAdapters?: readonly WireSiteAdapter[];
   /** Consumer hooks fired for every capture/video/wire signal (the origin app's intent-bus polling is NOT
    *  ported here — see this package's README; a caller wanting that reads its OWN page state). */
@@ -259,12 +260,14 @@ export async function startRecall(sessionOrCdpUrl: RecallSessionSource, opts: St
   };
 
   // The WIRE sensor (LS-13W) — a SECOND, independent passive sensor on this SAME connection,
-  // observing the site app's own GraphQL responses via CDP's `Network` domain. It runs alongside
-  // the screen sensor's loop below, not inside it: its capture is event-driven off CDP callbacks,
-  // never gated on the screen sensor's own active-tab pick/pace. Default ON — a caller not wanting
-  // it passes `wireAdapters: []`; the ambient `isEnabled`/`isWireEnabled` toggle still applies (the
-  // wire sensor never turns ITSELF off, same law as the screen sensor).
-  const wireAdapters = opts.wireAdapters ?? [xWireAdapter];
+  // observing the site app's own GraphQL/JSON responses via CDP's `Network` domain. It runs
+  // alongside the screen sensor's loop below, not inside it: its capture is event-driven off CDP
+  // callbacks, never gated on the screen sensor's own active-tab pick/pace. LS-29: this package
+  // bundles no site-specific adapter of its own, so the default is `[]` (wire capture is a no-op
+  // until a caller registers a domain's own adapter, e.g. a downstream `xWireAdapter`); the ambient
+  // `isEnabled`/`isWireEnabled` toggle still applies once adapters ARE registered (the wire sensor
+  // never turns ITSELF off, same law as the screen sensor).
+  const wireAdapters = opts.wireAdapters ?? [];
   const wireIsEnabled = (): boolean => {
     if (opts.toggles?.isWireEnabled) return !!opts.toggles.isWireEnabled();
     return opts.toggles?.isEnabled ? !!opts.toggles.isEnabled() : true;

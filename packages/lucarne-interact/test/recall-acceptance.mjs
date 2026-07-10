@@ -19,10 +19,14 @@
 //   4. scroll -> capture-on-change fires with reason:'scrolled'.
 //   5. a perf check: recall keeps making forward progress (a fresh capture within a generous bound)
 //      even while the engine's own CCTV recorder is also tapping the same CDP screencast endpoint.
+//
+// LS-29 (generalize-records): this package bundles no site-specific ARIA extractor of its own
+// anymore (X's extractor moved downstream to a domain package) — this proof now uses a small, fully
+// LOCAL, generic ARIA-shaped extractor (source:"example"-shaped records) instead of importing one.
 import { Lucarne } from "lucarne";
 import { InteractSession } from "../dist/index.js";
 import { startRecall } from "../dist/recall/index.js";
-import { extractXAriaRecords, loadRecords } from "lucarne-records";
+import { loadRecords } from "lucarne-records";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
@@ -82,12 +86,67 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const LANDING_URL = `${BASE}${LANDING_PATH}`;
 const THREAD_URL = `${BASE}${THREAD_PATH}`;
 
-// The real X ARIA extractor's `match` keys on `x.com`/`twitter.com` hostnames — this proof serves a
-// LOCAL fixture at 127.0.0.1, so we wrap the REAL extraction (`extractXAriaRecords`, the
-// load-bearing parse) behind a `match` that accepts this fixture's own base url. The parsing/record-
-// mapping logic under test is unchanged — only the host predicate is adapted to the local stand-in
-// for x.com (cadence passes the unmodified `xAriaExtractor` against real x.com in production).
-const fixtureExtractor = { match: (url) => String(url || "").startsWith(BASE), extract: extractXAriaRecords };
+// LS-29: this package bundles no site-specific ARIA extractor of its own (a real domain extractor,
+// e.g. an X one, lives downstream) — a small, fully LOCAL, generic ARIA-shaped extractor stands in
+// here, parsing the SAME `- article "...":` / `/url: /<handle>/status/<id>` / `text: "..."` line
+// shape Playwright's `ariaSnapshot()` produces for THREAD_HTML above (this line shape is a Playwright
+// convention, not a site-specific one) — post-vs-comment is decided the same way a real extractor
+// would: the article matching the CAPTURING page's own `/status/<id>` is the post, every other
+// article is a comment.
+function extractExampleAriaRecords(ariaText, capture = {}) {
+  const lines = String(ariaText || "").split("\n");
+  const pm = String(capture.page || "").match(/\/status\/(\d+)/);
+  const pageSid = pm ? pm[1] : null;
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const m = lines[i].match(/^(\s*)- article/);
+    if (!m) {
+      i++;
+      continue;
+    }
+    const base = m[1].length;
+    const childPad = " ".repeat(base + 2);
+    const block = [lines[i]];
+    let j = i + 1;
+    while (j < lines.length) {
+      const ind = (lines[j].match(/^(\s*)/) || [, ""])[1].length;
+      if (lines[j].trim() && ind <= base) break;
+      block.push(lines[j]);
+      j++;
+    }
+    i = j;
+    let handle = null;
+    let sid = null;
+    for (const l of block) {
+      const p = l.match(/\/url:\s*\/([A-Za-z0-9_]+)\/status\/(\d+)/);
+      if (p) {
+        handle = p[1];
+        sid = p[2];
+        break;
+      }
+    }
+    if (!sid) continue;
+    const text = [];
+    for (const l of block.slice(1)) {
+      if (!l.startsWith(childPad + "- ")) continue;
+      const t = l.slice((childPad + "- ").length);
+      const tm = t.match(/^text:\s*"?([^"]*)"?$/);
+      if (tm && tm[1] && !/^@/.test(tm[1])) text.push(tm[1]);
+    }
+    const kind = pageSid ? (sid === pageSid ? "post" : "comment") : "post";
+    out.push({
+      kind,
+      provenance: { source: "example", id: sid, canonicalUrl: `${BASE}/${handle}/status/${sid}`, fetchedAt: new Date().toISOString(), via: "screen" },
+      text: text.join(" ").trim(),
+      metrics: {},
+      capture,
+      ...(kind === "post" ? { stub: false } : {}),
+    });
+  }
+  return out;
+}
+const fixtureExtractor = { match: (url) => String(url || "").startsWith(BASE), extract: extractExampleAriaRecords };
 
 // The engine's own recorder (record:true) is a SECOND, independent CDP screencast consumer of the
 // SAME session — the "two screencast consumers" case this proof must survive.

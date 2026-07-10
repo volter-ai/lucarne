@@ -1,45 +1,62 @@
 /**
  * The read/query API over a `lucarne-records` store — STORE READS ONLY.
  *
- * Reshaped from the SHAPE of `claude-socials/packages/mcp-server/src/tools.ts`'s
- * five ops (LS-03): `get_profile`/`get_post` are single-entity lookups → here,
- * `getRecord`; `get_comments`/`search`/`get_timeline` are paginated list ops →
- * here, `queryRecords` returning `Page<T>`. Unlike `tools.ts`, NONE of this
- * fetches anything — every op is a pure read over what `appendRecords` already
- * persisted. A miss is just an empty/absent result; deciding what to do about a
- * miss (e.g. "browse to it") is a caller concern (LS-06's job, not this one's).
+ * Reshaped from the SHAPE of `claude-socials/packages/mcp-server/src/tools.ts`'s five ops (LS-03):
+ * `get_profile`/`get_post` are single-entity lookups → here, `getRecord`; `get_comments`/`search`/
+ * `get_timeline` are paginated list ops → here, `queryRecords` returning `Page<T>`. Unlike
+ * `tools.ts`, NONE of this fetches anything — every op is a pure read over what `appendRecords`
+ * already persisted. A miss is just an empty/absent result; deciding what to do about a miss (e.g.
+ * "browse to it") is a caller concern (LS-06's job, not this one's).
+ *
+ * LS-29 (generalize-records): `source`/`kind` are now OPEN strings (this package no longer closes
+ * either set — see `schema.ts`). The list ops themselves (`comments`/`search`/`timeline`) stay
+ * THREAD/TIMELINE-SHAPED — they're inherently about threads/containers/timelines, a convention this
+ * package still offers but no longer enforces structurally. Every domain field they filter/sort on
+ * (`container`, `handle`, `author.handle`, `depth`, `threadRootUrl`, `title`, per-key metrics) is now
+ * a CONVENTIONAL indexed field, not a typed one — `CorpusRecord`'s index signature types them
+ * `unknown`, so every read below is defensive (a `typeof` narrow or a small helper), never a bare
+ * cast. A caller whose domain doesn't use these conventions just gets `undefined` back from them,
+ * never a crash.
  */
 
 import { decodeCursor, encodeCursor } from "./cursor.js";
 import { loadRecords } from "./store.js";
-import type { Comment, Entity, EntityKind, Page, Post, Profile, Source } from "./schema.js";
+import type { Entity, Page } from "./schema.js";
 
-/** Identifies a single entity to fetch with `getRecord`. */
+/** Identifies a single record to fetch with `getRecord`. */
 export interface RecordRef {
-  source: Source;
-  kind: EntityKind;
+  source: string;
+  kind: string;
   /**
    * Matched against, in order: `provenance.id` (native id), `provenance.canonicalUrl`
    * (so a caller can pass a URL exactly as `tools.ts`'s `idOrUrl` did), and for
    * `kind:'profile'` only, `handle` (so `get_profile`'s handle-keyed lookup has a
-   * direct match too).
+   * direct match too — `handle` is a conventional indexed field, read defensively).
    */
   id: string;
 }
 
-/** Find a single entity within an ALREADY-loaded record array (no disk read). */
+function strOf(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function numOf(v: unknown): number {
+  return typeof v === "number" ? v : 0;
+}
+
+/** Find a single record within an ALREADY-loaded record array (no disk read). */
 function findRecord(records: readonly Entity[], ref: RecordRef): Entity | undefined {
   return records.find((e) => {
     if (e.kind !== ref.kind || e.provenance.source !== ref.source) return false;
     if (e.provenance.id === ref.id) return true;
     if (e.provenance.canonicalUrl === ref.id) return true;
-    if (e.kind === "profile" && e.handle === ref.id) return true;
+    if (e.kind === "profile" && strOf(e.handle) === ref.id) return true;
     return false;
   });
 }
 
 /**
- * A single-entity lookup — the shape of `get_profile`/`get_post`. Store read
+ * A single-record lookup — the shape of `get_profile`/`get_post`. Store read
  * only: returns `undefined` on a miss, never fetches.
  */
 export function getRecord(dir: string, ref: RecordRef): Entity | undefined {
@@ -50,7 +67,7 @@ type SortKind = "top" | "new" | "best" | "controversial" | "relevance";
 
 export interface CommentsQuery {
   op: "comments";
-  source: Source;
+  source: string;
   /** A post's native id or canonical URL — resolved via `getRecord` when possible. */
   postIdOrUrl: string;
   limit?: number;
@@ -59,10 +76,11 @@ export interface CommentsQuery {
 
 export interface SearchQuery {
   op: "search";
-  source: Source;
+  source: string;
   query: string;
   type?: "posts" | "users";
-  /** Reddit-shaped: a subreddit name, matched against `Post.container.name`. */
+  /** Conventional indexed field: a container/list name (e.g. a forum board, a repo), matched
+   *  against a record's `container.name` when the domain sets one. */
   container?: string;
   limit?: number;
   sort?: SortKind;
@@ -71,7 +89,7 @@ export interface SearchQuery {
 
 export interface TimelineQuery {
   op: "timeline";
-  source: Source;
+  source: string;
   kind: "user_posts" | "hot" | "new" | "top" | "best" | "ask" | "show";
   handle?: string;
   container?: string;
@@ -106,17 +124,25 @@ function paginate<T>(items: T[], offset: number, limit: number): Page<T> {
   };
 }
 
-function scoreOf(e: Post | Profile): number {
-  if (e.kind === "post") return e.metrics.score ?? 0;
-  return e.metrics.karma ?? e.metrics.followers ?? 0;
+/** Conventional ranking signal: a record's normalized `metrics.score` when present, else the single
+ *  largest numeric value anywhere in `metrics` (whatever a domain's own primary ranking signal is
+ *  named — followers, stars, upvotes, … — this package doesn't hardcode any domain's own metric
+ *  vocabulary). Read defensively (metrics values are `number | null | undefined`). */
+function scoreOf(e: Entity): number {
+  const m = e.metrics as Record<string, unknown> | undefined;
+  if (!m) return 0;
+  if (typeof m.score === "number") return m.score;
+  let max = 0;
+  for (const v of Object.values(m)) if (typeof v === "number" && v > max) max = v;
+  return max;
 }
 
 function createdAtOf(e: Entity): number {
   const t = e.createdAt;
-  return t ? Date.parse(t) || 0 : 0;
+  return typeof t === "string" && t ? Date.parse(t) || 0 : 0;
 }
 
-function applySort<T extends Post | Profile>(items: T[], sort: SortKind | undefined): T[] {
+function applySort<T extends Entity>(items: T[], sort: SortKind | undefined): T[] {
   if (sort === "new") return [...items].sort((a, b) => createdAtOf(b) - createdAtOf(a));
   if (sort === "top" || sort === "best") return [...items].sort((a, b) => scoreOf(b) - scoreOf(a));
   // 'controversial'/'relevance'/undefined: no ranking signal in a pure store
@@ -140,10 +166,8 @@ export function queryRecords(dir: string, q: RecordQuery): Page<Entity> {
     // reuse the already-loaded `all` — don't re-read the file via getRecord.
     const post = findRecord(all, { source: q.source, kind: "post", id: q.postIdOrUrl });
     const rootUrl = post?.provenance.canonicalUrl ?? q.postIdOrUrl;
-    const comments = all.filter(
-      (e): e is Comment => e.kind === "comment" && e.provenance.source === q.source && e.threadRootUrl === rootUrl,
-    );
-    comments.sort((a, b) => (a.depth - b.depth) || (createdAtOf(a) - createdAtOf(b)));
+    const comments = all.filter((e) => e.kind === "comment" && e.provenance.source === q.source && e.threadRootUrl === rootUrl);
+    comments.sort((a, b) => numOf(a.depth) - numOf(b.depth) || createdAtOf(a) - createdAtOf(b));
     return paginate(comments, offset, limit);
   }
 
@@ -152,37 +176,42 @@ export function queryRecords(dir: string, q: RecordQuery): Page<Entity> {
     const needle = q.query.toLowerCase();
     if (type === "users") {
       const profiles = all.filter(
-        (e): e is Profile =>
+        (e) =>
           e.kind === "profile" &&
           e.provenance.source === q.source &&
-          (e.handle.toLowerCase().includes(needle) ||
-            (e.displayName ?? "").toLowerCase().includes(needle) ||
-            (e.bio ?? "").toLowerCase().includes(needle)),
+          (strOf(e.handle).toLowerCase().includes(needle) ||
+            strOf(e.displayName).toLowerCase().includes(needle) ||
+            strOf(e.bio).toLowerCase().includes(needle)),
       );
       return paginate(applySort(profiles, q.sort), offset, limit);
     }
-    const posts = all.filter(
-      (e): e is Post =>
-        e.kind === "post" &&
-        e.provenance.source === q.source &&
-        (!q.container || e.container?.name === q.container) &&
-        (e.text.toLowerCase().includes(needle) || (e.title ?? "").toLowerCase().includes(needle)),
-    );
+    const posts = all.filter((e) => {
+      if (e.kind !== "post" || e.provenance.source !== q.source) return false;
+      if (q.container) {
+        const container = e.container as { name?: unknown } | undefined;
+        if (strOf(container?.name) !== q.container) return false;
+      }
+      return (e.text ?? "").toLowerCase().includes(needle) || strOf(e.title).toLowerCase().includes(needle);
+    });
     return paginate(applySort(posts, q.sort), offset, limit);
   }
 
   // op === 'timeline'
   if (q.kind === "user_posts") {
-    const posts = all.filter(
-      (e): e is Post => e.kind === "post" && e.provenance.source === q.source && e.author.handle === q.handle,
-    );
+    const posts = all.filter((e) => {
+      if (e.kind !== "post" || e.provenance.source !== q.source) return false;
+      const author = e.author as { handle?: unknown } | undefined;
+      return strOf(author?.handle) === q.handle;
+    });
     posts.sort((a, b) => createdAtOf(b) - createdAtOf(a));
     return paginate(posts, offset, limit);
   }
-  const listPosts = all.filter(
-    (e): e is Post =>
-      e.kind === "post" && e.provenance.source === q.source && (!q.container || e.container?.name === q.container),
-  );
+  const listPosts = all.filter((e) => {
+    if (e.kind !== "post" || e.provenance.source !== q.source) return false;
+    if (!q.container) return true;
+    const container = e.container as { name?: unknown } | undefined;
+    return strOf(container?.name) === q.container;
+  });
   const sortForList: SortKind | undefined = q.kind === "new" ? "new" : q.kind === "top" || q.kind === "best" ? "top" : undefined;
   return paginate(applySort(listPosts, sortForList), offset, limit);
 }

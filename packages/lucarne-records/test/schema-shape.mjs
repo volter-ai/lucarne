@@ -1,12 +1,15 @@
 // LS-03 dev/02 — type/shape parity + provenance-required validation.
+// LS-29 (generalize-records): fixtures generalized off the social domain (source:"x"→"example",
+// "hackernews"→"example2") to prove the GENERAL core, not a social-specific one — this package no
+// longer closes the `source`/`kind` sets (see schema.ts/validate.ts). The closed-source assertion is
+// FLIPPED (an arbitrary source string now PASSES; only an EMPTY source fails) and the per-kind
+// (author/parentUrl/depth/handle) required-field checks are dropped — those are a domain package's
+// concern now (`cadence/src/records/schema.ts`'s own type guards), not this validator's.
 //
-// Fixtures mirror the shapes at
-// `claude-socials/packages/shared/src/schema.ts:25-35,148-152` (Provenance,
-// Profile/Post/Comment, Page<T>). Every fixture round-trips through JSON
-// (simulating a disk write/read, exactly how the store persists records) and
-// must still validate as the right Entity. A record missing `provenance` (or
-// missing a required provenance field) must FAIL validation — that's the
-// load-bearing assertion this file proves, not just typed away.
+// Every fixture round-trips through JSON (simulating a disk write/read, exactly how the store
+// persists records) and must still validate as a general record. A record missing `provenance` (or
+// missing a required provenance field) must FAIL validation — that's the load-bearing assertion this
+// file proves, not just typed away.
 //
 // Run with `node test/schema-shape.mjs` (after `npm run build`).
 import assert from "node:assert/strict";
@@ -25,9 +28,9 @@ const roundTrip = (v) => JSON.parse(JSON.stringify(v));
 const profile = {
   kind: "profile",
   provenance: {
-    source: "x",
+    source: "example",
     id: "u_paulg",
-    canonicalUrl: "https://x.com/paulg",
+    canonicalUrl: "https://example.test/paulg",
     fetchedAt: "2026-07-08T12:00:00.000Z",
     via: "dom",
   },
@@ -40,13 +43,13 @@ const profile = {
 const post = {
   kind: "post",
   provenance: {
-    source: "x",
+    source: "example",
     id: "1234567890123456789",
-    canonicalUrl: "https://x.com/paulg/status/1234567890123456789",
+    canonicalUrl: "https://example.test/paulg/status/1234567890123456789",
     fetchedAt: "2026-07-08T12:00:01.000Z",
     via: "internal-api",
   },
-  author: { handle: "paulg", profileUrl: "https://x.com/paulg" },
+  author: { handle: "paulg", profileUrl: "https://example.test/paulg" },
   text: "A programming language is low overhead if you can write good software fast in it.",
   createdAt: "2026-07-01T09:00:00.000Z",
   metrics: { score: 500, reposts: 20, replies: 5, views: 10000 },
@@ -55,17 +58,17 @@ const post = {
 const comment = {
   kind: "comment",
   provenance: {
-    source: "hackernews",
+    source: "example2",
     id: "40000001",
-    canonicalUrl: "https://news.ycombinator.com/item?id=40000001",
+    canonicalUrl: "https://example2.test/item?id=40000001",
     fetchedAt: "2026-07-08T12:00:02.000Z",
     via: "internal-api",
   },
-  author: { handle: "patio11", profileUrl: "https://news.ycombinator.com/user?id=patio11" },
+  author: { handle: "patio11", profileUrl: "https://example2.test/user?id=patio11" },
   text: "This matches my experience running SaaS pricing experiments.",
   metrics: { score: 42, replies: 2 },
-  parentUrl: "https://news.ycombinator.com/item?id=39999999",
-  threadRootUrl: "https://news.ycombinator.com/item?id=39999999",
+  parentUrl: "https://example2.test/item?id=39999999",
+  threadRootUrl: "https://example2.test/item?id=39999999",
   depth: 0,
 };
 
@@ -125,8 +128,17 @@ const comment = {
   delete postMissingFetchedAt.provenance.fetchedAt;
   check("validation: a Post whose provenance is missing `fetchedAt` fails isEntity", !isEntity(postMissingFetchedAt));
 
-  const commentBadSource = { ...comment, provenance: { ...comment.provenance, source: "not-a-real-site" } };
-  check("validation: a Comment with an invalid provenance.source fails isEntity", !isEntity(commentBadSource));
+  // LS-29: source is OPEN — any non-empty string is a legitimate namespace (a domain package, not
+  // this one, decides what sources exist). An arbitrary source now PASSES; only an EMPTY source fails.
+  const commentArbitrarySource = { ...comment, provenance: { ...comment.provenance, source: "not-a-real-site" } };
+  check("validation: an ARBITRARY provenance.source now PASSES isEntity (source is open, not a closed allow-list)", isEntity(commentArbitrarySource));
+  const commentEmptySource = { ...comment, provenance: { ...comment.provenance, source: "" } };
+  check("validation: an EMPTY provenance.source still fails isEntity (non-empty string is still required)", !isEntity(commentEmptySource));
+
+  const commentEmptyKind = { ...comment, kind: "" };
+  check("validation: an empty `kind` fails isEntity (kind is open but must be a non-empty string)", !isEntity(commentEmptyKind));
+  const commentArbitraryKind = { ...comment, kind: "arbitrary-domain-kind" };
+  check("validation: an ARBITRARY `kind` (not profile/post/comment) PASSES isEntity (kind is open, not a closed set)", isEntity(commentArbitraryKind));
 
   const commentViaScreen = { ...comment, provenance: { ...comment.provenance, via: "screen" } };
   check("validation: via:'screen' IS valid now that LS-04 extended the schema", isEntity(commentViaScreen));

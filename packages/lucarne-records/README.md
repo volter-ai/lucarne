@@ -1,17 +1,21 @@
 # lucarne-records
 
-The one provenance record language for the lucarne platform: a normalized
-cross-site schema (`Profile`/`Post`/`Comment`), opaque `Page<T>`/cursor
-pagination helpers, and a pure `node:fs` record store + query API.
+A domain-agnostic capture-corpus record store: a general provenance record shape
+(`CorpusRecord`/`Entity`), opaque `Page<T>`/cursor pagination helpers, and a pure
+`node:fs` record store + query API. Any capture sensor — social, code-forge,
+papers, anything else — writes into the SAME `records.jsonl`; this package
+never inspects a record's domain-specific fields by name.
 
 ## Charter
 
 This package owns record **shape** and **storage**, and nothing past that
-boundary: no site-specific parsing (that's `lucarne-records/sites`, LS-05), no
-browser, and no network client. That narrow charter is exactly what lets both
-a writer (`lucarne-interact`'s recall) and a read-only reader
-(`lucarne-corpus-mcp`) depend on this one package without inheriting each
-other's runtime weight.
+boundary: no domain-specific parsing, no browser, and no network client. That
+narrow charter is exactly what lets both a writer (`lucarne-interact`'s
+recall) and a read-only reader (`lucarne-corpus-mcp`) depend on this one
+package without inheriting each other's runtime weight — and what lets a
+downstream domain package (e.g. `cadence/src/records/`) build its own typed
+projection (a social schema, an X ARIA/GraphQL parser family, …) on top of
+this general core without this package knowing anything about that domain.
 
 ## Security posture
 
@@ -29,70 +33,69 @@ validation, structurally, not just at the type level.
 
 ## What's here
 
-- **`schema.ts`** — `Provenance`, `Profile`, `Post`, `Comment`, `Entity`,
-  `Page<T>` and their supporting types. Ported from
-  `claude-socials/packages/shared/src/schema.ts`. Every entity carries
+- **`schema.ts`** — `Provenance`, `Capture`, `CorpusRecord` (aliased as
+  `Entity`), `Page<T>` and their supporting types. `Provenance.source` is an
+  OPEN, non-empty string (any sensor's namespace — "x", "github", "arxiv", …);
+  `CorpusRecord.kind` is likewise an open string. Every record carries
   `provenance` — structural, not advisory (see `validate.ts`).
   `Provenance.via` is `'internal-api'` (a passively CDP-captured wire
-  response) | `'dom'` | `'screen'` (a passive ARIA capture — LS-04); `Post`/
-  `Comment` carry an optional SCREEN-sensor `capture` pointer (ported from
-  `cadence/src/types.ts:17-24`'s `Capture`), and `Post` carries an explicit
+  response) | `'dom'` | `'screen'` (a passive ARIA capture); a record may
+  carry an optional SCREEN-sensor `capture` pointer and an explicit
   `stub?: boolean` — the authoritative real/stub signal `store.ts`'s
-  `mergeEntity` reads for its stub-never-degrades invariant.
+  `mergeEntity` reads for its stub-never-degrades invariant. Every OTHER
+  top-level field (author, container, handle, bio, labels, …) rides along
+  OPAQUELY via `CorpusRecord`'s index signature — this package never reads or
+  writes any of them by name. A downstream domain package refines
+  `CorpusRecord` with its own named interfaces over the same top-level field
+  names (see `cadence/src/records/schema.ts` for the pattern).
 - **`cursor.ts`** — `encodeCursor`/`decodeCursor`: opaque base64-of-JSON
-  pagination tokens. Ported verbatim from
-  `claude-socials/packages/shared/src/cursor.ts`.
+  pagination tokens.
 - **`validate.ts`** — `isEntity`/`assertEntity`: the runtime gate every record
-  passes through. A record missing `provenance`, or missing any of
-  `provenance`'s required fields, fails validation — not just at the type
-  level, at runtime.
+  passes through, validating the GENERAL CORE only (`source`/`kind` non-empty
+  strings, `via` a closed capture-mechanism enum, the handful of general
+  optional fields well-typed when present). A record missing `provenance`, or
+  missing any of `provenance`'s required fields, fails validation — not just
+  at the type level, at runtime. A domain package layers its own closed-set /
+  per-kind validation on top of this (its own type guards), if it wants one.
 - **`store.ts`** — `appendRecords`/`loadRecords`: an on-disk JSONL store,
-  merged by identity (`source:kind:id`). Generalizes cadence's
-  `appendUnits`/`loadUnits` (`cadence/src/units.ts:105-142`) onto the
-  normalized schema, preserving both merge invariants:
-  - **richest-text-wins** — the record with more text (or, for a `Profile`,
-    more `bio`) replaces a thinner one for the same identity.
+  merged by identity (`source:kind:id`), preserving both merge invariants:
+  - **richest-text-wins** — the record with more `text` (or the legacy `bio`
+    content alias, for any `kind`) replaces a thinner one for the same
+    identity.
   - **stub-never-degrades** — a record known to be real is never overwritten by
-    a stub for the same identity. Cadence decided this from an explicit
-    `Unit.stub` flag, never from text length (an image/video-only post is real
-    with empty text). So an explicit stub signal is honored first — a top-level
-    `stub:boolean` or `raw.stub`, which `unitToRecord` (LS-04) always sets — and
-    when present it is authoritative with real-ness **sticky** (a known-real
-    record never loses to a stub, even when the real one is text-less). Only
-    when no explicit signal exists does the merge fall back to a structural
-    heuristic (empty text/bio AND no real metric).
-- **`query.ts`** — `getRecord`/`queryRecords`: pure reads over the store,
-  reshaped from the shape of `claude-socials/packages/mcp-server/src/tools.ts`'s
-  five ops. `getRecord` is the single-entity lookup (`get_profile`/`get_post`'s
-  shape); `queryRecords` is the paginated list op (`get_comments`/`search`/
-  `get_timeline`'s shape), always returning a `Page<T>`. Neither fetches
+    a stub for the same identity, decided from an EXPLICIT `stub` signal
+    (never from text length — an image/video-only post is real with empty
+    text) when one is present; real-ness is **sticky**. Only when no explicit
+    signal exists does the merge fall back to a structural heuristic (empty
+    text/bio AND no real metric).
+  - Every OTHER top-level (domain) field merges via a shallow, donor-wins
+    spread — a domain field a caller's own record carries survives a merge
+    unmolested (see `test/open-source.mjs`).
+- **`query.ts`** — `getRecord`/`queryRecords`: pure reads over the store.
+  `getRecord` is the single-record lookup; `queryRecords` is the paginated
+  list op (`comments`/`search`/`timeline`), always returning a `Page<T>`.
+  These list ops stay thread/timeline-SHAPED as a CONVENTION this package
+  still offers, but every domain field they filter/sort on (`container`,
+  `handle`, `author.handle`, `depth`, `threadRootUrl`, `title`, metrics keys)
+  is read DEFENSIVELY, not typed — a caller whose domain doesn't use these
+  conventions just gets `undefined` back, never a crash. Neither op fetches
   anything — a miss is just an empty result or `undefined`.
-- **`unit-to-record.ts`** (LS-04) — `unitToRecord()`: maps cadence's fact-unit
-  shape (`Unit = Post | Comment | StubPost`, `cadence/src/types.ts:42-69`) onto
-  this package's `Entity` schema, with `provenance.via: 'screen'`. This is the
-  seam recall's screen sensor (LS-13) writes through: `id:'x:<sid>'` splits
-  into `provenance.{source,id}`, `permalink`→`canonicalUrl`, `handle`→
-  `author.handle`, a comment's `parent`→its thread linkage (`parentUrl`/
-  `threadRootUrl`), and a stub `Unit` maps to an honest `text:''` record with
-  the explicit `stub` signal set (see `store.ts`'s stub-never-degrades above)
-  — always set explicitly, on both real and stub units, so a real text-less
-  post (e.g. image-only) is never later mistaken for a stub.
 
 ## On-disk format
 
 A store is a directory. `appendRecords`/`loadRecords` read and write exactly one
-durable file inside it: `<dir>/records.jsonl` — one JSON-encoded `Entity` per
+durable file inside it: `<dir>/records.jsonl` — one JSON-encoded record per
 line, one line per distinct `source:kind:id` identity (not one line per capture
-— merges happen in place). A transient `<dir>/records.jsonl.tmp` exists only for
-the instant of a write. Any other file in that directory is not this package's
-concern.
+— merges happen in place), ANY domain's records living in the SAME file. A
+transient `<dir>/records.jsonl.tmp` exists only for the instant of a write.
+Any other file in that directory is not this package's concern.
 
 ## Concurrency: one writer process, many readers
 
-This store targets the platform's §1.6 architecture: **one recorder process is
-the only writer** (its two sensors — screen + wire — write through the same
-in-process `appendRecords`), and any number of **separate reader processes**
-(e.g. `lucarne-corpus-mcp`) call `loadRecords`/`getRecord`/`queryRecords`.
+This store targets a single-writer/many-readers architecture: **one recorder
+process is the only writer** (its sensors write through the same in-process
+`appendRecords`), and any number of **separate reader processes** (e.g.
+`lucarne-corpus-mcp`) call `loadRecords`/`getRecord`/`queryRecords`.
 
 `appendRecords` writes the full store to `records.jsonl.tmp` and then
 `renameSync`s it over `records.jsonl` — an **atomic swap on POSIX**. Two
@@ -123,22 +126,29 @@ doesn't yet understand. Only non-JSON garbage is discarded.
 import {
   appendRecords, loadRecords, recordKey, mergeEntity,
   getRecord, queryRecords,
-  isEntity, assertEntity,
+  isEntity, assertEntity, isRecordShaped,
   encodeCursor, decodeCursor,
-  unitToRecord, unitsToRecords,
 } from "lucarne-records";
 
 // appendRecords(dir: string, entities: readonly Entity[]): number   -- count of NEW identities added
 // loadRecords(dir: string): Entity[]                                -- every currently-merged record
 // getRecord(dir: string, ref: RecordRef): Entity | undefined
 // queryRecords(dir: string, q: RecordQuery): Page<Entity>
-// unitToRecord(unit: Unit): Post | Comment                          -- cadence Unit -> a via:'screen' record
 ```
 
-## Out of scope here (later tasks)
+## Building a domain on top
 
-- Per-site parsers (`lucarne-records/sites`) — LS-05.
-- An MCP bin over this store — LS-06.
+A domain package (e.g. `cadence/src/records/`) refines `CorpusRecord` with its
+own named interfaces over the same top-level field names — a `Post`/`Comment`/
+`Profile` union with a closed `Source`, its own site-specific parsers (an ARIA
+extractor, a GraphQL response parser family), its own type guards
+(`isSocialPost`/…) for narrowing a general record at a read seam. None of that
+lives here; this package stays domain-agnostic on purpose.
+
+## Out of scope here
+
+- Domain-specific schema + parsers (moved downstream, e.g. `cadence/src/records/`).
+- An MCP bin over this store (`lucarne-corpus-mcp`).
 
 ## Build / test
 

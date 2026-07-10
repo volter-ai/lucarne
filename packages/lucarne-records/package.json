@@ -1,7 +1,7 @@
 {
   "name": "lucarne-records",
-  "version": "0.1.0",
-  "description": "The one provenance record language: schema (Profile/Post/Comment), cursor/Page<T> helpers, and a pure node:fs record store + query API. Dependency-free, no network.",
+  "version": "0.2.0",
+  "description": "The general capture-corpus record language: a domain-agnostic CorpusRecord schema (open source/kind, opaque top-level domain fields), cursor/Page<T> helpers, and a pure node:fs record store + query API. Dependency-free, no network. Social/X-specific schema + parsers live downstream (e.g. cadence/src/records/).",
   "type": "module",
   "license": "MIT",
   "author": "Aaron Volter",
@@ -40,8 +40,8 @@
     "build": "tsc -b",
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/unit-to-record.mjs && node test/sites-x-aria.mjs && node test/sites-x-graphql.mjs",
-    "test:unit": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/unit-to-record.mjs && node test/sites-x-aria.mjs && node test/sites-x-graphql.mjs && node test/package-clean-gate.mjs"
+    "test": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/open-source.mjs",
+    "test:unit": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/open-source.mjs && node test/package-clean-gate.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

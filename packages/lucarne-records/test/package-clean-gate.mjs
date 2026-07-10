@@ -7,6 +7,14 @@
 // itself, post-split) must be able to depend on this package without it reading like a fork of a
 // still-named product.
 //
+// LS-29 (generalize-records): EXTENDED with a second class of bans — this package is now
+// domain-AGNOSTIC (a general capture-corpus store), so the SOCIAL domain must be equally absent from
+// its `src`: no reddit/hackernews/tweet/subreddit/karma vocabulary baked in (that schema + those
+// parsers moved to `cadence/src/records/`). Doc comments that need to NAME a domain as an EXAMPLE
+// (e.g. "a source string like 'x'/'reddit'/'hackernews'") are reworded to avoid the literal banned
+// tokens (e.g. "a code-forge/social/papers source") — same posture as the cadence-token ban above:
+// the general engine can talk ABOUT domains in the abstract, never bake one in by name.
+//
 // Run with `node test/package-clean-gate.mjs` (no build required — this only greps source text).
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -23,8 +31,19 @@ const check = (name, pass, detail = "") => {
 
 // CASE-INSENSITIVE on the cadence tokens so a capitalized residual ("Cadence", "CADENCE-…") is
 // caught too, not just lowercase `cadence`. `.social` stays case-sensitive (it's a literal path
-// fragment, never capitalized).
-const BANNED = [/cadence/i, /__cadence/i, /\.social/];
+// fragment, never capitalized). The LS-29 domain tokens are case-insensitive too, for the same
+// reason (a capitalized "Reddit"/"HackerNews" residual is just as much a regression as lowercase).
+const BANNED = [
+  /cadence/i,
+  /__cadence/i,
+  /\.social/,
+  /reddit/i,
+  /hackernews/i,
+  /ycombinator/i,
+  /tweet/i,
+  /subreddit/i,
+  /karma/i,
+];
 
 function walk(dir) {
   const out = [];
@@ -53,7 +72,11 @@ for (const file of files) {
   }
 }
 
-check("grep-clean: zero 'cadence' | '__cadence' | '.social' hits across the WHOLE package src", offenders.length === 0, offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "");
+check(
+  "grep-clean: zero cadence/social-app tokens AND zero social-domain tokens (reddit/hackernews/ycombinator/tweet/subreddit/karma) across the WHOLE package src",
+  offenders.length === 0,
+  offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "",
+);
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
