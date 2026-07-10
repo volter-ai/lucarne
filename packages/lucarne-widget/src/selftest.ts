@@ -256,6 +256,18 @@ async function runChecks(
   await clickPill(page, HOST);
   await sleep(400);
 
+  // ── PRE-RELOAD MARKER — localizes a future regression: if this fails, push→render is broken generally (not
+  // specific to reload); if only "survives-reload-populated" (below) fails while THIS passes, the break is
+  // reload-specific (the re-mounted iframe not receiving/applying pushes). Reported as its own named check so a
+  // future CI failure immediately says which half of the pipeline broke instead of leaving it to be inferred. ──
+  const preReloadText = await iframeText(page, HOST);
+  const hasPreReloadMarker = !!preReloadText && preReloadText.includes(fixtures.marker);
+  record(
+    "pre-reload marker: the pushed fixture content actually renders BEFORE any reload (localizes push→render vs. reload-specific breaks)",
+    hasPreReloadMarker,
+    JSON.stringify({ hasMarker: hasPreReloadMarker }),
+  );
+
   // ── 3. SIZE-STABLE — sample the rect repeatedly once settled; each sample is also timed (feeds RESPONSIVE). ──
   const sizes: Array<[number, number]> = [];
   let maxMs = 0;

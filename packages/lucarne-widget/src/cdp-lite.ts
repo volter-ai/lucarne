@@ -92,6 +92,24 @@ export async function attachPage(cdpUrl: string, target: PageTarget): Promise<Cd
   };
 }
 
+/**
+ * Pages genuinely UNREACHABLE to a mounted shell — browser-internal UI (`about:`/`chrome:`) a sticky injection
+ * (`Page.addScriptToEvaluateOnNewDocument`) never meaningfully runs against. This stays the default for
+ * `evaluateOnAllPages`/`evaluateOnAllPagesCollecting` below (unchanged from before) — `drainOnce`'s intent-drain
+ * and `probeAllPages`'s tab-scoring (`host.ts`) both keep treating a `data:` tab as "not a real page to poll"
+ * (`probeAllPages`'s own `probeExpr` additionally, and independently, enforces that in-page via a
+ * `location.protocol` check — see its comment in `host.ts`). But `push()`/`remove()` (`host.ts`) — the two
+ * calls that reach a MOUNTED shell to deliver/tear it down, not to poll a "real user tab" — override this via
+ * `MOUNT_REACHABLE_SKIP_URL_PREFIXES` below: the sticky-injection mount() applies to a `data:` page exactly
+ * like any http(s) page (this package's own `WidgetHost.selftest` drives its throwaway proof tab that way,
+ * `selftest.ts`'s `DATA` constant), so content delivery/teardown must reach it too — leaving `data:` in THIS
+ * default meant a shell could mount on such a tab but never receive a single pushed patch, silently.
+ */
+const DEFAULT_SKIP_URL_PREFIXES = ["data:", "about:", "chrome:"];
+
+/** For `push()`/`remove()` only (see `DEFAULT_SKIP_URL_PREFIXES` above): skip genuinely browser-internal pages, but NOT `data:` — a mounted shell on a `data:` tab must still receive pushes / be torn down. */
+export const MOUNT_REACHABLE_SKIP_URL_PREFIXES = ["about:", "chrome:"];
+
 /** Evaluate `expression` in every open, non-throwaway page of the session. Best-effort per page — one dead tab never blocks the rest. */
 export async function evaluateOnAllPages(cdpUrl: string, expression: string, opts: { skipUrlPrefixes?: string[] } = {}): Promise<void> {
   await evaluateOnAllPagesCollecting(cdpUrl, expression, opts);
@@ -99,7 +117,7 @@ export async function evaluateOnAllPages(cdpUrl: string, expression: string, opt
 
 /** Same as `evaluateOnAllPages`, but collects each reachable page's result (skipping pages that errored). Used by the intent-queue drain, which needs the array each page's queue produced. */
 export async function evaluateOnAllPagesCollecting(cdpUrl: string, expression: string, opts: { skipUrlPrefixes?: string[] } = {}): Promise<unknown[]> {
-  const skip = opts.skipUrlPrefixes ?? ["data:", "about:", "chrome:"];
+  const skip = opts.skipUrlPrefixes ?? DEFAULT_SKIP_URL_PREFIXES;
   const out: unknown[] = [];
   let pages: PageTarget[];
   try {

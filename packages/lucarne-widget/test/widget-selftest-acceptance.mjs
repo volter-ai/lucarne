@@ -64,11 +64,14 @@ try {
   });
 
   // ── the FIVE assertions, individually reported (each is exactly one check() call below, sourced 1:1 from
-  // `result.checks` — WidgetHost.selftest is the thing under test, this script only relays its verdicts). ──
+  // `result.checks` — WidgetHost.selftest is the thing under test, this script only relays its verdicts). Plus
+  // a diagnostic-only "pre-reload marker" check (selftest.ts) that LOCALIZES a future
+  // survives-reload-populated failure: if it fails too, push→render is broken generally, not reload-specific. ──
   const byPrefix = (prefix) => result.checks.find((c) => c.name.startsWith(prefix));
   const singleton = byPrefix("singleton:");
   const topFrameOnly = byPrefix("top-frame-only:");
   const sizeStable = byPrefix("size-stable:");
+  const preReloadMarker = byPrefix("pre-reload marker:");
   const survivesReloadPopulated = byPrefix("survives-reload-populated:");
   const responsive = byPrefix("responsive:");
 
@@ -76,6 +79,7 @@ try {
   if (singleton) check(`1/5 ${singleton.name}`, singleton.pass, singleton.detail);
   if (topFrameOnly) check(`2/5 ${topFrameOnly.name}`, topFrameOnly.pass, topFrameOnly.detail);
   if (sizeStable) check(`3/5 ${sizeStable.name}`, sizeStable.pass, sizeStable.detail);
+  if (preReloadMarker) check(`(diagnostic, localizes 4/5) ${preReloadMarker.name}`, preReloadMarker.pass, preReloadMarker.detail);
   if (survivesReloadPopulated) check(`4/5 ${survivesReloadPopulated.name}`, survivesReloadPopulated.pass, survivesReloadPopulated.detail);
   if (responsive) check(`5/5 ${responsive.name}`, responsive.pass, responsive.detail);
   check("WidgetHost.selftest's own overall verdict (result.pass)", result.pass === true, JSON.stringify(result));

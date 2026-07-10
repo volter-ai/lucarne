@@ -9,7 +9,7 @@
 // `cdpUrl` (see `cdp-lite.ts`) — a small, FIXED set of expressions this package builds itself, not a re-exposed
 // arbitrary-eval surface (the engine's own `/eval` REPL was retired, not generalized — §1.5).
 import { LucarneClient } from "lucarne";
-import { evaluateOnAllPages, evaluateOnAllPagesCollecting } from "./cdp-lite.js";
+import { evaluateOnAllPages, evaluateOnAllPagesCollecting, MOUNT_REACHABLE_SKIP_URL_PREFIXES } from "./cdp-lite.js";
 import { type Identity, widgetMessage } from "./envelope.js";
 import { injectorSource } from "./injector.js";
 import { assertNs, guardGlobal, hostElementId, iframeGlobal, intentQueueGlobal, shellStickyId } from "./ns.js";
@@ -171,13 +171,17 @@ export class WidgetHost {
    * identity-stamped envelope (`widget-bridge.ts`'s `toWidget`/`toWidgets`, generalized: `ns` rides along too).
    * Content is never frozen anywhere — every push is a live, best-effort delivery; a page without the shell
    * mounted yet, or that navigated away mid-delivery, is silently skipped (matches the original's `try{}catch{}`
-   * per-page posture) and will pick up the next push once it (re)mounts.
+   * per-page posture) and will pick up the next push once it (re)mounts. Uses
+   * `MOUNT_REACHABLE_SKIP_URL_PREFIXES` (not `evaluateOnAllPages`'s narrower default) so a shell mounted on a
+   * `data:` page — the sticky injector mounts there exactly like any http(s) page, and this package's own
+   * `WidgetHost.selftest` drives its throwaway proof tab that way — actually receives pushed content instead of
+   * silently never being reached.
    */
   async push(patch: unknown): Promise<void> {
     if (this.removed) return;
     const msg = widgetMessage(this.ns, this.identity, patch);
     const expr = `(function(){ var f = window[${JSON.stringify(iframeGlobal(this.ns))}]; if (f && f.contentWindow) { try { f.contentWindow.postMessage(${JSON.stringify(msg)}, '*'); } catch(e){} } })()`;
-    await evaluateOnAllPages(this.cdpUrl, expr);
+    await evaluateOnAllPages(this.cdpUrl, expr, { skipUrlPrefixes: MOUNT_REACHABLE_SKIP_URL_PREFIXES });
   }
 
   /**
@@ -335,7 +339,9 @@ export class WidgetHost {
   /**
    * Drop the durable shell registration (the engine stops re-applying it + forgets it on disk) and tear the
    * widget out of every live tab (host element + the re-mount guard interval) — `widget.ts`'s `remove` command,
-   * generalized. Idempotent: safe to call more than once, and stops every timer this host started.
+   * generalized. Idempotent: safe to call more than once, and stops every timer this host started. Uses
+   * `MOUNT_REACHABLE_SKIP_URL_PREFIXES` (see `push()` above) so a shell mounted on a `data:` page is actually
+   * torn down, not silently left behind.
    */
   async remove(): Promise<void> {
     if (this.removed) return;
@@ -353,6 +359,6 @@ export class WidgetHost {
       if (window[${JSON.stringify(guard)}]) { clearInterval(window[${JSON.stringify(guard)}]); window[${JSON.stringify(guard)}] = null; }
       window[${JSON.stringify(iframeG)}] = null;
     })()`;
-    await evaluateOnAllPages(this.cdpUrl, expr);
+    await evaluateOnAllPages(this.cdpUrl, expr, { skipUrlPrefixes: MOUNT_REACHABLE_SKIP_URL_PREFIXES });
   }
 }
