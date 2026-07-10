@@ -26,6 +26,7 @@ export {
   type CdpUrlSource,
   type ClipResult,
   type InteractSessionOptions,
+  type OpenOptions,
   type OpenResult,
   type PresenceMarker,
   type ScrollResult,
