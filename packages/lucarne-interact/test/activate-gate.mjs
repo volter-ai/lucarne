@@ -39,7 +39,10 @@ const base = () => ({
 
 // An UNRELATED policy — scoped to a different host/testid entirely — used throughout the
 // CLASS-refusal matrix to prove refusal is STRUCTURAL, not "just because no policy was supplied".
-const UNRELATED_POLICY = { allow: [{ hosts: ["unrelated-host.example"], testids: ["someOtherThing"], ariaLabels: ["Some Other Label"] }] };
+const UNRELATED_POLICY = {
+  allow: [{ hosts: ["unrelated-host.example"], testids: ["someOtherThing"], ariaLabels: ["Some Other Label"], selectors: [".unrelated-allow"] }],
+  deny: [{ hosts: ["unrelated-host.example"], selectors: [".unrelated-deny"] }],
+};
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 1. CLASS-REFUSAL MATRIX — account-state / publish controls, by name, across sites — INCLUDING an
@@ -264,6 +267,153 @@ for (const [label, d] of CLASS_REFUSAL_MATRIX) {
   const submitDisguised = { ...base(), tag: "button", type: "submit", inForm: true, isFormSubmitTrigger: true, testid: "reply", pageUrl: "https://x.com/home" };
   const r = classifyActivateTarget(submitDisguised, policy);
   check("POLICY cannot rescue a form-submit shape even under a matching host+testid", r.allow === false, JSON.stringify(r));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// 5. SECURITY-REVIEW FIX PROOFS (LS-31/S1 follow-up) — D1 (deny + own-title defense-in-depth on
+//    real-href GET-action anchors), D2 (role="link" now requires a real href), D3 (a narrow
+//    selector-based allow rescue for a known-safe control that structurally reads as unsafe), plus
+//    the floor/deny precedence proofs the review asked for.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// ── D1(i): a real-href GET-action anchor with NO aria-label/title (HN's actual DOM shape — the
+//    "upvote"-style title lives on a CHILD element the probe never reads) REFUSES once a consumer
+//    denies it by selector. `matchedSelectors` here stands in for what a real `element.matches()`
+//    probe would report for this element against the policy's deny selector — this file tests the
+//    pure classifier, not the DOM read itself (that's session.ts's job, exercised end-to-end in
+//    test/activate-gate-acceptance.mjs). ──
+{
+  const HN_DENY_POLICY = { deny: [{ hosts: ["news.ycombinator.com"], selectors: ["a.clicky", 'a[href^="vote?"]'] }] };
+  const hnVoteAnchor = {
+    ...base(),
+    tag: "a",
+    href: "vote?id=1&how=up&auth=abcd1234",
+    role: null,
+    ariaLabel: null,
+    title: null,
+    text: "",
+    pageUrl: "https://news.ycombinator.com/item?id=1",
+    matchedSelectors: ["a.clicky", 'a[href^="vote?"]'],
+  };
+  const rDenied = classifyActivateTarget(hnVoteAnchor, HN_DENY_POLICY);
+  check("D1 — HN vote anchor (a#up_1.clicky[href^='vote'], no aria-label/title) REFUSES via a consumer deny selector", rDenied.allow === false, JSON.stringify(rDenied));
+  check("D1 — HN vote-anchor deny refusal reason names the deny mechanism", rDenied.allow === false && /policy\.deny/.test(rDenied.reason), rDenied.reason);
+
+  // Without the deny policy, this exact real-href anchor would structurally ALLOW (no aria-label/title
+  // to catch it) — this is precisely the hole D1 closes; documented here, not exercised as a "pass".
+  const rNoDenyPolicy = classifyActivateTarget(hnVoteAnchor, undefined);
+  check("D1 — the SAME HN vote anchor with NO deny policy: ALLOWS structurally (documents the exact hole `policy.deny` closes)", rNoDenyPolicy.allow === true, JSON.stringify(rNoDenyPolicy));
+
+  // HN's thread-open and per-comment reply links are real-href anchors too, but don't match the deny
+  // selectors — they must keep ALLOWing under the SAME deny-bearing policy.
+  const hnThreadLink = { ...base(), tag: "a", href: "item?id=1", text: "39 comments", pageUrl: "https://news.ycombinator.com/", matchedSelectors: [] };
+  const rThread = classifyActivateTarget(hnThreadLink, HN_DENY_POLICY);
+  check("D1 — HN 'N comments' thread-open link still ALLOWS under the deny-bearing policy (deny is narrow, not a blanket HN refusal)", rThread.allow === true, JSON.stringify(rThread));
+
+  const hnReplyLink = { ...base(), tag: "a", href: "reply?id=1&goto=item%3Fid%3D1", text: "reply", pageUrl: "https://news.ycombinator.com/item?id=1", matchedSelectors: [] };
+  const rReply = classifyActivateTarget(hnReplyLink, HN_DENY_POLICY);
+  check("D1 — HN per-comment 'reply' link (real href, opens the reply form) still ALLOWS under the deny-bearing policy", rReply.allow === true, JSON.stringify(rReply));
+}
+
+// ── D1(ii): defense-in-depth — an anchor's OWN `title` (not a child's) matching the tight action-word
+//    list refuses even with NO deny entry at all. ──
+{
+  const dTitleUp = { ...base(), tag: "a", href: "/vote?id=1&how=up", title: "upvote", pageUrl: "https://example.com/" };
+  const rUp = classifyActivateTarget(dTitleUp);
+  check("D1(ii) — anchor with OWN title='upvote' (no deny policy): REFUSE (title defense-in-depth)", rUp.allow === false, JSON.stringify(rUp));
+
+  const dTitleDown = { ...base(), tag: "a", href: "/vote?id=1&how=down", title: "downvote", pageUrl: "https://example.com/" };
+  const rDown = classifyActivateTarget(dTitleDown);
+  check("D1(ii) — anchor with OWN title='downvote' (no deny policy): REFUSE (title defense-in-depth)", rDown.allow === false, JSON.stringify(rDown));
+
+  const dTitleFlag = { ...base(), tag: "a", href: "/flag?id=1", title: "flag", pageUrl: "https://example.com/" };
+  const rFlag = classifyActivateTarget(dTitleFlag);
+  check("D1(ii) — anchor with OWN title='flag' (no deny policy): REFUSE (title defense-in-depth)", rFlag.allow === false, JSON.stringify(rFlag));
+
+  // A nav link whose title is innocuous still allows — proves title-checking didn't turn into a
+  // blanket "any title refuses" rule.
+  const dTitleBenign = { ...base(), tag: "a", href: "/next", title: "Go to the next page", pageUrl: "https://example.com/" };
+  const rBenign = classifyActivateTarget(dTitleBenign);
+  check("D1(ii) — nav link with an innocuous title: still ALLOWS", rBenign.allow === true, JSON.stringify(rBenign));
+}
+
+// ── D2: bare `role="link"` now REQUIRES a real href too — 3 shapes that used to bypass the
+//    real-href tightening all REFUSE. ──
+{
+  const d1 = { ...base(), tag: "a", href: "#", role: "link", text: "Like" };
+  const r1 = classifyActivateTarget(d1);
+  check('D2 — <a href="#" role="link" onclick=like>: REFUSE (href="#" is not real)', r1.allow === false, JSON.stringify(r1));
+
+  const d2 = { ...base(), tag: "span", role: "link", href: null, text: "Connect" };
+  const r2 = classifyActivateTarget(d2);
+  check('D2 — <span role="link">Connect</span> (no href at all): REFUSE', r2.allow === false, JSON.stringify(r2));
+
+  const d3 = { ...base(), tag: "a", href: "javascript:void(0)", role: "link", text: "Follow" };
+  const r3 = classifyActivateTarget(d3);
+  check('D2 — <a href="javascript:void(0)" role="link">: REFUSE', r3.allow === false, JSON.stringify(r3));
+
+  // Sanity: role="link" WITH a genuine real href still ALLOWS — the fix narrows, it doesn't remove,
+  // the role="link" carve-out.
+  const d4 = { ...base(), tag: "span", role: "link", href: "/thread/123", text: "5 comments" };
+  const r4 = classifyActivateTarget(d4);
+  check('D2 — role="link" WITH a real href (non-<a> element): still ALLOWS', r4.allow === true, JSON.stringify(r4));
+}
+
+// ── D3: a narrow selector-based allow rescues old.reddit's per-comment reply toggle (real DOM shape:
+//    no real href, no testid, no aria-label — none of ActivatePolicy's other fields can reach it), and
+//    a companion proof that the same selector-bearing policy does NOT rescue a save/report/vote anchor
+//    in the same comment block (the selector is narrow, not a blanket `<a onclick>` allow). ──
+{
+  const REDDIT_REPLY_SELECTOR = '.comment a[onclick*="reply("]';
+  const REDDIT_POLICY = { allow: [{ hosts: ["reddit.com"], selectors: [REDDIT_REPLY_SELECTOR] }] };
+
+  const replyToggle = {
+    ...base(),
+    tag: "a",
+    href: "javascript:void(0)",
+    text: "reply",
+    pageUrl: "https://old.reddit.com/r/foo/comments/abc123/some_title/",
+    matchedSelectors: [REDDIT_REPLY_SELECTOR],
+  };
+  const rReplyNoPolicy = classifyActivateTarget(replyToggle);
+  check("D3 — reddit per-comment reply toggle with NO policy: REFUSE (no real href, no testid/aria-label)", rReplyNoPolicy.allow === false, JSON.stringify(rReplyNoPolicy));
+  const rReplyWithPolicy = classifyActivateTarget(replyToggle, REDDIT_POLICY);
+  check("D3 — reddit per-comment reply toggle ALLOWS via the narrow selector policy", rReplyWithPolicy.allow === true, JSON.stringify(rReplyWithPolicy));
+
+  // Companion: a save/report/vote anchor IN THE SAME comment block, under the SAME policy — its
+  // onclick doesn't contain "reply(" so `element.matches()` would never report the selector as
+  // matched (simulated here by simply omitting it from matchedSelectors, exactly as a real DOM
+  // probe would for this element).
+  for (const [label, onclickAction] of [["save", "save"], ["report", "report"], ["upvote", "vote"]]) {
+    const actionAnchor = {
+      ...base(),
+      tag: "a",
+      href: "javascript:void(0)",
+      text: label,
+      pageUrl: "https://old.reddit.com/r/foo/comments/abc123/some_title/",
+      matchedSelectors: [], // the REDDIT_REPLY_SELECTOR does NOT match this element's onclick
+    };
+    const r = classifyActivateTarget(actionAnchor, REDDIT_POLICY);
+    check(`D3 — reddit '${onclickAction}' comment-action anchor (same policy, same page) still REFUSES (selector is narrow, not a blanket <a onclick> allow)`, r.allow === false, JSON.stringify(r));
+  }
+}
+
+// ── Precedence proofs the review explicitly asked for ──
+{
+  // A floor control that ALSO matches an allow-selector: the floor still wins (step 1 returns before
+  // step 4's selector check ever runs).
+  const policy = { allow: [{ selectors: ['button[type="submit"]'] }] };
+  const d = { ...base(), tag: "button", type: "submit", isFormSubmitTrigger: true, matchedSelectors: ['button[type="submit"]'] };
+  const r = classifyActivateTarget(d, policy);
+  check("PRECEDENCE — floor control that ALSO matches an allow-selector: still REFUSE (floor overrides allow)", r.allow === false, JSON.stringify(r));
+}
+{
+  // A control matching BOTH a deny selector and an allow selector: deny wins (checked at step 2,
+  // before the consumer-allowlist step 4 is ever reached).
+  const policy = { deny: [{ selectors: [".both"] }], allow: [{ selectors: [".both"] }] };
+  const d = { ...base(), tag: "button", matchedSelectors: [".both"] };
+  const r = classifyActivateTarget(d, policy);
+  check("PRECEDENCE — element matching BOTH a deny selector and an allow selector: REFUSE (deny wins)", r.allow === false, JSON.stringify(r));
 }
 
 // ── the refusal message directs to the gated paths, and mentions the policy escape hatch ──

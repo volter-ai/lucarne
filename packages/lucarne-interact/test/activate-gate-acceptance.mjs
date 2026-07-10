@@ -65,6 +65,29 @@ const PAGE_HTML = `<!doctype html><html><body>
   <a id="next" href="/next">go to next page</a>
   <button id="expandBtn" onclick="window.__expanded=true">Show 3 more replies</button>
 
+  <!-- LS-31/S1 REVIEW FOLLOW-UP FIXTURES (D1/D2/D3) -->
+
+  <!-- D1: a real-href GET-action anchor with NO aria-label/title of its OWN — the "upvote" word lives
+       on a CHILD <span>, exactly HN's real DOM shape, so activate-gate.ts's title-read can't see it.
+       Must default-ALLOW with no policy (documents the hole), and REFUSE once a consumer's
+       activatePolicy.deny denies it by selector. -->
+  <a id="voteLink" class="clicky" href="vote?id=1&amp;how=up&amp;auth=abc123" onclick="window.__voteClicked=true;return false;"><span class="votearrow" title="upvote">&#9650;</span></a>
+
+  <!-- D1(ii): a real-href GET-action anchor whose OWN title names the action directly — must REFUSE
+       via the title defense-in-depth check even with NO deny policy at all. -->
+  <a id="voteLinkOwnTitle" href="vote?id=2&amp;how=down" title="downvote" onclick="window.__voteOwnTitleClicked=true;return false;">&#9660;</a>
+
+  <!-- D2: a bare role="link" element with NO real href — must REFUSE always (structural, not policy). -->
+  <span id="roleLinkSpan" role="link" tabindex="0" onclick="window.__roleLinkClicked=true" onkeydown="window.__roleLinkKeydown=true">Connect</span>
+
+  <!-- D3: old.reddit-shaped per-comment reply toggle (no real href, no testid, no aria-label) — must
+       REFUSE with no policy, ALLOW with a narrow selector-based activatePolicy entry. A sibling
+       "save" action anchor in the SAME comment block proves the selector doesn't over-match. -->
+  <div class="comment">
+    <a id="replyToggle" class="reply-toggle" href="javascript:void(0)" onclick="window.__replyToggleOpened=true;return false;">reply</a>
+    <a id="saveAction" class="save-button" href="javascript:void(0)" onclick="window.__saveClicked=true;return false;">save</a>
+  </div>
+
   <script>
     window.__formSubmitted = false;
     window.__tweetClicked = false;
@@ -74,6 +97,12 @@ const PAGE_HTML = `<!doctype html><html><body>
     window.__replyOpened = false;
     window.__barePublished = false;
     window.__expanded = false;
+    window.__voteClicked = false;
+    window.__voteOwnTitleClicked = false;
+    window.__roleLinkClicked = false;
+    window.__roleLinkKeydown = false;
+    window.__replyToggleOpened = false;
+    window.__saveClicked = false;
   </script>
 </body></html>`;
 const NEXT_HTML = `<!doctype html><html><body><h1 id="hdr">Next Page</h1></body></html>`;
@@ -131,6 +160,12 @@ try {
         barePublished: window.__barePublished,
         expanded: window.__expanded,
         taValue: document.getElementById("ta")?.value,
+        voteClicked: window.__voteClicked,
+        voteOwnTitleClicked: window.__voteOwnTitleClicked,
+        roleLinkClicked: window.__roleLinkClicked,
+        roleLinkKeydown: window.__roleLinkKeydown,
+        replyToggleOpened: window.__replyToggleOpened,
+        saveClicked: window.__saveClicked,
       }));
     } finally {
       await insp.close().catch(() => {});
@@ -265,6 +300,65 @@ try {
     check("activate(#next, <a href>): the real page actually navigated", /Next Page/.test(snap), snap.slice(0, 80));
   }
 
+  // ── D1 (security review follow-up): a real-href GET-action anchor whose OWN attributes carry no
+  //    aria-label/title (the "upvote" title sits on a CHILD span, HN's real DOM shape) reads as
+  //    structural nav and ALLOWS with NO policy — this documents the exact hole `activatePolicy.deny`
+  //    closes (proven denied, end-to-end, in the deny-policy session below). ──
+  {
+    let threw = null;
+    try {
+      await s.activate("#voteLink");
+    } catch (e) {
+      threw = e;
+    }
+    const after = await readFlags();
+    check("D1 — activate(#voteLink) with NO policy: does NOT throw (documents the hole activatePolicy.deny closes)", threw === null, String(threw));
+    check("D1 — activate(#voteLink) with NO policy: the vote anchor's onclick DID fire", after.voteClicked === true, JSON.stringify(after));
+  }
+
+  // ── D1(ii): the SAME shape, but title is on the anchor's OWN attribute this time — REFUSES via the
+  //    title defense-in-depth check even with NO deny policy. ──
+  {
+    let threw = null;
+    try {
+      await s.activate("#voteLinkOwnTitle");
+    } catch (e) {
+      threw = e;
+    }
+    const after = await readFlags();
+    check("D1(ii) — activate(#voteLinkOwnTitle, title='downvote' on the anchor itself): THROWS (title defense-in-depth, no policy needed)", threw instanceof Error, String(threw));
+    check("D1(ii) — activate(#voteLinkOwnTitle): onclick NEVER fired", after.voteOwnTitleClicked === false, JSON.stringify(after));
+  }
+
+  // ── D2: a bare `role="link"` element with no real href REFUSES always — structural, no policy involved. ──
+  {
+    let threw = null;
+    try {
+      await s.activate("#roleLinkSpan");
+    } catch (e) {
+      threw = e;
+    }
+    const after = await readFlags();
+    check('D2 — activate(#roleLinkSpan, role="link" with no real href): THROWS (structural default-refuse)', threw instanceof Error, String(threw));
+    check("D2 — activate(#roleLinkSpan): onclick NEVER fired (no click)", after.roleLinkClicked === false, JSON.stringify(after));
+    check("D2 — activate(#roleLinkSpan): NO keydown ever reached the element — press() never dispatched", after.roleLinkKeydown === false, JSON.stringify(after));
+  }
+
+  // ── D3: old.reddit-shaped per-comment reply toggle REFUSES with no policy (no real href, no
+  //    testid/aria-label — none of ActivatePolicy's other fields can reach it). Proven ALLOWED via a
+  //    narrow selector policy, end-to-end, in the deny/selector-policy session below. ──
+  {
+    let threw = null;
+    try {
+      await s.activate("#replyToggle");
+    } catch (e) {
+      threw = e;
+    }
+    const after = await readFlags();
+    check("D3 — activate(#replyToggle) with NO policy: THROWS (no real href/testid/aria-label to allow it)", threw instanceof Error, String(threw));
+    check("D3 — activate(#replyToggle) with NO policy: reply toggle NEVER fired", after.replyToggleOpened === false, JSON.stringify(after));
+  }
+
   await s.close();
 
   // ── WITH a cadence-shaped activatePolicy: the documented X reply-compose-open flow WORKS. A fresh
@@ -310,6 +404,88 @@ try {
     check("WITH activatePolicy: activate(#submitBtn) STILL THROWS (floor is non-overridable, proven end-to-end)", threwSubmit instanceof Error, String(threwSubmit));
 
     await sPolicy.close();
+  }
+
+  // ── D1/D3 end-to-end: a policy carrying BOTH `deny` (denies the vote anchor by selector) AND a
+  //    narrow `allow[].selectors` entry (rescues the reddit-shaped reply toggle) — proves both new
+  //    policy mechanisms end-to-end against a REAL page, and proves the allow-selector is narrow (the
+  //    sibling "save" action anchor in the same comment block is NOT rescued by it). ──
+  {
+    await engine.destroy(session.id).catch(() => {});
+    session = await engine.create({ backend: "native", profile: "activate-gate-acc-deny-selector" });
+    const sDenySel = new InteractSession(session, {
+      pacing: FAST_PACING,
+      timeoutMs: 15000,
+      activatePolicy: {
+        deny: [{ selectors: ["a.clicky"] }],
+        allow: [{ selectors: ['.comment a.reply-toggle'] }],
+      },
+    });
+    await sDenySel.open(BASE + "/");
+
+    // D1: the vote anchor, ALLOWED with no policy above, is now DENIED by selector.
+    let threwVote = null;
+    try {
+      await sDenySel.activate("#voteLink");
+    } catch (e) {
+      threwVote = e;
+    }
+    const afterVote = await (async () => {
+      const { chromium } = await import("playwright-core");
+      const insp = await chromium.connectOverCDP(session.cdpUrl);
+      try {
+        const p = insp.contexts()[0].pages()[0];
+        return await p.evaluate(() => ({ voteClicked: window.__voteClicked }));
+      } finally {
+        await insp.close().catch(() => {});
+      }
+    })();
+    check("D1 — WITH activatePolicy.deny: activate(#voteLink) THROWS (deny selector refuses the real-href GET-action anchor)", threwVote instanceof Error, String(threwVote));
+    check("D1 — WITH activatePolicy.deny: the vote anchor's onclick NEVER fired", afterVote.voteClicked === false, JSON.stringify(afterVote));
+
+    // D3: the reply toggle, refused with no policy above, is now ALLOWED by the narrow selector.
+    let threwReply = null;
+    try {
+      await sDenySel.activate("#replyToggle");
+    } catch (e) {
+      threwReply = e;
+    }
+    const afterReplyAllow = await (async () => {
+      const { chromium } = await import("playwright-core");
+      const insp = await chromium.connectOverCDP(session.cdpUrl);
+      try {
+        const p = insp.contexts()[0].pages()[0];
+        return await p.evaluate(() => ({ replyToggleOpened: window.__replyToggleOpened }));
+      } finally {
+        await insp.close().catch(() => {});
+      }
+    })();
+    check("D3 — WITH the narrow selector allow: activate(#replyToggle) does NOT throw", threwReply === null, String(threwReply));
+    check("D3 — WITH the narrow selector allow: the reply toggle's onclick DID fire (real activation happened)", afterReplyAllow.replyToggleOpened === true, JSON.stringify(afterReplyAllow));
+
+    // Companion narrowness proof: the sibling "save" action anchor in the SAME .comment block is NOT
+    // rescued by the `.comment a.reply-toggle` selector (it doesn't carry the reply-toggle class) —
+    // proves the allow-selector is narrow, not a blanket same-block allow.
+    let threwSave = null;
+    try {
+      await sDenySel.activate("#saveAction");
+    } catch (e) {
+      threwSave = e;
+    }
+    const afterSave = await (async () => {
+      const { chromium } = await import("playwright-core");
+      const insp = await chromium.connectOverCDP(session.cdpUrl);
+      try {
+        const p = insp.contexts()[0].pages()[0];
+        return await p.evaluate(() => ({ saveClicked: window.__saveClicked }));
+      } finally {
+        await insp.close().catch(() => {});
+      }
+    })();
+    check("D3 — the sibling 'save' action anchor (same .comment block, SAME policy) STILL THROWS (selector is narrow)", threwSave instanceof Error, String(threwSave));
+    check("D3 — the sibling 'save' action anchor: onclick NEVER fired", afterSave.saveClicked === false, JSON.stringify(afterSave));
+
+    await sDenySel.close();
   }
 } finally {
   if (session) await engine.destroy(session.id).catch(() => {});

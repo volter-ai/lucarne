@@ -454,18 +454,20 @@ export class InteractSession extends EventEmitter {
    *
    * LS-31/S1: structurally default-REFUSE, allowlist-only. Before pressing Enter, this classifies
    * the located element with a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/
-   * aria-label/pageUrl — NOT a general eval surface, see `#probeActivateTarget` below) against
-   * `classifyActivateTarget` (`activate-gate.ts`, the pure, unit-tested classifier): a
-   * NON-OVERRIDABLE safety floor refuses any form-submit control FIRST (even one an allowlist
-   * names); a small set of STRUCTURAL, domain-agnostic shapes (real-href links, tabs, disclosure
-   * toggles, `<summary>`, `<textarea>`, anchor-menuitems) allow; then this session's
-   * `activatePolicy` (`InteractSessionOptions.activatePolicy`) may allowlist one further,
-   * caller-named compose-open control by host+testid/aria-label; EVERYTHING ELSE — every
-   * account-state affordance and every publish control, under any name, on any site — REFUSES by
-   * default (throws, fires NO keypress). This closes the class of hole a blocklist can never fully
-   * close: `type("...")` + `activate("<any actionable control not on some enumerated list>")` can no
-   * longer publish content or flip account state ungated. The eventual SEND still goes through the
-   * separately-gated `send()`.
+   * aria-label/OWN-title/pageUrl/policy-selector-matches — NOT a general eval surface, see
+   * `#probeActivateTarget` below) against `classifyActivateTarget` (`activate-gate.ts`, the pure,
+   * unit-tested classifier): a NON-OVERRIDABLE safety floor refuses any form-submit control FIRST
+   * (even one an allowlist names); then this session's `activatePolicy`
+   * (`InteractSessionOptions.activatePolicy`) may DENY an element by CSS selector even if it reads as
+   * structural nav (a real-href GET-action anchor, e.g. a vote/fave/hide/flag link — see D1 in
+   * activate-gate.ts's module header); then a small set of STRUCTURAL, domain-agnostic shapes
+   * (real-href links, tabs, disclosure toggles, `<summary>`, `<textarea>`, anchor-menuitems) allow;
+   * then `activatePolicy` may allowlist one further, caller-named control by host+testid/aria-label/
+   * selector; EVERYTHING ELSE — every account-state affordance and every publish control, under any
+   * name, on any site — REFUSES by default (throws, fires NO keypress). This closes the class of hole
+   * a blocklist can never fully close: `type("...")` + `activate("<any actionable control not on some
+   * enumerated list>")` can no longer publish content or flip account state ungated. The eventual
+   * SEND still goes through the separately-gated `send()`.
    */
   async activate(selector: string): Promise<ActivateResult> {
     return this.#act("activate", [selector], "nav", async () => {
@@ -484,35 +486,62 @@ export class InteractSession extends EventEmitter {
   /**
    * The read-only classification probe for `activate()` (LS-31/S1): a FIXED expression (not a
    * general eval surface — the callback below is baked into this package's source, never
-   * caller-supplied) that reads the located element's tag/type/role/attributes/ancestry/testid/
-   * aria-label, plus the page's current URL (`p.url()`, read outside the in-page callback — a
-   * host, not an eval result) so the classifier's consumer-allowlist step can host-scope a policy
-   * entry. Dispatches nothing to the page — same read-only character as `snap`/`capture`.
+   * caller-supplied) that reads the located element's tag/type/role/attributes(including its OWN
+   * `title`, D1 defense-in-depth)/ancestry/testid/aria-label, plus the page's current URL (`p.url()`,
+   * read outside the in-page callback — a host, not an eval result) so the classifier's deny/
+   * consumer-allowlist steps can host-scope a policy entry. It also runs a READ-ONLY
+   * `element.matches(sel)` against every CSS selector named in `this.#activatePolicy`'s `allow[].selectors`
+   * and `deny[].selectors` (D1/D3) — still not a general eval surface: the selector STRINGS are
+   * caller-supplied data (same trust level as a testid/aria-label string), but the CODE that runs
+   * (`el.matches(sel)`, wrapped so an invalid selector can't throw) is fixed here, never caller code.
+   * Dispatches nothing to the page — same read-only character as `snap`/`capture`.
    */
   async #probeActivateTarget(loc: import("playwright-core").Locator, p: Page): Promise<ActivateTargetDescriptor> {
-    const descriptor = await loc.evaluate((el: Element) => {
-      const tag = el.tagName ? el.tagName.toLowerCase() : "";
-      const type = el.getAttribute ? el.getAttribute("type") : null;
-      const role = el.getAttribute ? el.getAttribute("role") : null;
-      const testid = el.getAttribute ? el.getAttribute("data-testid") || el.getAttribute("data-test-id") : null;
-      const ariaLabel = el.getAttribute ? el.getAttribute("aria-label") : null;
-      const href = el.getAttribute ? el.getAttribute("href") : null;
-      const text = (el.textContent || "").trim().slice(0, 120);
-      const form = el.closest ? el.closest("form") : null;
-      const inForm = !!form;
-      const ariaExpanded = el.getAttribute ? el.getAttribute("aria-expanded") : null;
-      const ariaHasPopup = el.getAttribute ? el.getAttribute("aria-haspopup") : null;
-      let isFormSubmitTrigger = false;
-      const t = (type || "").toLowerCase();
-      if (tag === "button") {
-        // A <button> with NO explicit type defaults to "submit" ONLY inside a <form> (the HTML
-        // spec's default); outside a form it defaults to "button" (does nothing on its own).
-        isFormSubmitTrigger = t === "submit" || (inForm && !type);
-      } else if (tag === "input") {
-        isFormSubmitTrigger = t === "submit" || t === "image";
-      }
-      return { tag, type, role, testid, ariaLabel, href, text, inForm, isFormSubmitTrigger, ariaExpanded, ariaHasPopup };
-    }, undefined, { timeout: this.#timeoutMs });
+    const policySelectors = new Set<string>();
+    for (const entry of this.#activatePolicy?.allow ?? []) {
+      for (const sel of entry.selectors ?? []) policySelectors.add(sel);
+    }
+    for (const entry of this.#activatePolicy?.deny ?? []) {
+      for (const sel of entry.selectors ?? []) policySelectors.add(sel);
+    }
+    const selectorList = [...policySelectors];
+    const descriptor = await loc.evaluate(
+      (el: Element, selectors: string[]) => {
+        const tag = el.tagName ? el.tagName.toLowerCase() : "";
+        const type = el.getAttribute ? el.getAttribute("type") : null;
+        const role = el.getAttribute ? el.getAttribute("role") : null;
+        const testid = el.getAttribute ? el.getAttribute("data-testid") || el.getAttribute("data-test-id") : null;
+        const ariaLabel = el.getAttribute ? el.getAttribute("aria-label") : null;
+        const title = el.getAttribute ? el.getAttribute("title") : null;
+        const href = el.getAttribute ? el.getAttribute("href") : null;
+        const text = (el.textContent || "").trim().slice(0, 120);
+        const form = el.closest ? el.closest("form") : null;
+        const inForm = !!form;
+        const ariaExpanded = el.getAttribute ? el.getAttribute("aria-expanded") : null;
+        const ariaHasPopup = el.getAttribute ? el.getAttribute("aria-haspopup") : null;
+        let isFormSubmitTrigger = false;
+        const t = (type || "").toLowerCase();
+        if (tag === "button") {
+          // A <button> with NO explicit type defaults to "submit" ONLY inside a <form> (the HTML
+          // spec's default); outside a form it defaults to "button" (does nothing on its own).
+          isFormSubmitTrigger = t === "submit" || (inForm && !type);
+        } else if (tag === "input") {
+          isFormSubmitTrigger = t === "submit" || t === "image";
+        }
+        const matchedSelectors = selectors.filter((sel) => {
+          try {
+            return typeof el.matches === "function" && el.matches(sel);
+          } catch {
+            // An invalid/unsupported selector string from a caller's policy never breaks the probe —
+            // it simply never matches.
+            return false;
+          }
+        });
+        return { tag, type, role, testid, ariaLabel, title, href, text, inForm, isFormSubmitTrigger, ariaExpanded, ariaHasPopup, matchedSelectors };
+      },
+      selectorList,
+      { timeout: this.#timeoutMs },
+    );
     return { ...descriptor, pageUrl: p.url() };
   }
 
