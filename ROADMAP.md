@@ -128,11 +128,11 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 behavior and passes (exit 0)** — at the level that actually matters (rendered pixels /
 real-Chrome state / the loaded UI), **never an HTTP 200.** (This session repeatedly
 mistook "the proxy returns 200" for "it works" when the UI was blank/offline — the proof
-discipline exists to kill that.) Proofs live in `test/acceptance.mjs` (`npm test`). CI runs
+discipline exists to kill that.) Proofs live in `packages/lucarne/test/acceptance.mjs` (`npm test`). CI runs
 build/typecheck; acceptance runs where Chrome is available. Every feature PR must add/extend
 a proof, green, before it counts.
 
-### Green today (committed in `test/acceptance.mjs`)
+### Green today (committed in `packages/lucarne/test/acceptance.mjs`)
 ✅ drive (connectOverCDP navigates) · ✅ porthole renders a real JPEG frame · ✅ input: caps/shift
 typing reaches Chrome · ✅ input: Cmd+A select-all (CDP editing command) · ✅ persist: cookie survives
 destroy + recreate · ✅ persist→seed: fresh profile seeded from another carries its cookie · ✅ seed:

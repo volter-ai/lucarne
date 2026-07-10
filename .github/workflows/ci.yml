@@ -13,8 +13,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # test:unit's lucarne-interact chain shells a real ffmpeg to generate PNG/mp4 fixtures
+      # (recall-summary/recall-media-crop/recall-video-watch) — install it here too, not just in
+      # the acceptance job, so the unit lane doesn't ENOENT on a bare runner. No Chrome needed.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - run: npm ci
       - run: npm run build
+      # No-Chrome-needed unit tests (store/policy/registry-round-trip logic) —
+      # cheap enough to run on every push, unlike the Chrome-gated acceptance job.
+      - run: npm run test:unit
 
   acceptance:
     # The crown jewel: run the real acceptance proofs against real Chrome.

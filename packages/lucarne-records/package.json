@@ -1,0 +1,50 @@
+{
+  "name": "lucarne-records",
+  "version": "0.2.0",
+  "description": "The general capture-corpus record language: a domain-agnostic CorpusRecord schema (open source/kind, opaque top-level domain fields), cursor/Page<T> helpers, and a pure node:fs record store + query API. Dependency-free, no network. Social/X-specific schema + parsers live downstream (e.g. cadence/src/records/).",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aaron Volter",
+  "homepage": "https://github.com/volter-ai/lucarne#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/volter-ai/lucarne.git",
+    "directory": "packages/lucarne-records"
+  },
+  "bugs": {
+    "url": "https://github.com/volter-ai/lucarne/issues"
+  },
+  "keywords": [
+    "provenance",
+    "schema",
+    "records",
+    "store"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/open-source.mjs",
+    "test:unit": "npm run build && node test/schema-shape.mjs && node test/store.mjs && node test/open-source.mjs && node test/package-clean-gate.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

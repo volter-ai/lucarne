@@ -24,6 +24,26 @@ It's the missing middle between *headless automation* (drivable, but you can't w
         └───────────────────────────────────────────────┘
 ```
 
+## The monorepo
+
+`lucarne` is an **npm-workspaces monorepo** (`packages/*`) — this engine package is
+its first, published citizen, and four newer packages build a
+browse/interact/record/retrieve stack on top of it:
+
+| Package | What it is |
+|---|---|
+| [`lucarne`](./packages/lucarne/README.md) | **the engine** (this README) — sessions you can drive (CDP), watch + control (porthole), and record. |
+| [`lucarne-records`](./packages/lucarne-records/README.md) | the one provenance record language for the platform — a normalized cross-site schema (`Profile`/`Post`/`Comment`) plus a dependency-free `node:fs` record store + query API. |
+| [`lucarne-interact`](./packages/lucarne-interact/README.md) | **non-bot-like interaction: act + observe/record, screen + wire sensors, zero synthetic requests** — a human-paced ACT plane (`open`/`snap`/`scroll`/`activate`/`type`/`send`) over a session's `cdpUrl`, with an enforced pause after every verb, plus a passive, read-only OBSERVE/recall half that only records what a genuine session organically loads. |
+| [`lucarne-widget`](./packages/lucarne-widget/README.md) | the reusable glassmorphic in-page widget infrastructure — mount a durable, draggable, namespaced glass panel inside a session's page; stream state in, drain intents out. |
+| [`lucarne-corpus-mcp`](./packages/lucarne-corpus-mcp/README.md) | an optional, thin, read-only stdio MCP bin over a `lucarne-records` store — answers `get_profile`/`get_post`/`get_comments`/`search`/`get_timeline` from what's already been captured; a miss says so structurally instead of fetching. |
+
+Each package is independently published/versioned. `lucarne-interact` and
+`lucarne-widget` depend on this engine package (the HTTP client, for
+`/inject`); `lucarne-corpus-mcp` depends on `lucarne-records` for its schema
+and store. See each package's own README for its install, usage, and
+**Charter**/**Security posture** sections.
+
 ## Install
 
 ```sh
@@ -269,6 +289,8 @@ GET    /sessions[?meta.key=val]           -> Session[]   (filter by user metadat
 PUT/GET/DELETE /credentials/:name         -> store creds (GET is blurred — never returns secrets)
 GET    /credentials/:name/totp            -> { code }   (RFC 6238 TOTP)
 POST   /sessions/:id/login                {credential, userSelector?, passSelector?, totpSelector?, submitSelector?}
+POST   /sessions/:id/inject               {id, source, bypassCSP?} | {id, remove:true}  -> { ok, id|removed }  (sticky script injection — see Security)
+GET    /sessions/:id/inject               -> { ids: string[] }   (currently-registered, policy-accepted injection ids)
 POST   /sessions/:id/act                  {action:"click|move|type|key|scroll|screenshot", x?,y?,...}  (computer-use; coordinate-based — for selector-driving use Playwright over cdpUrl)
 GET    /sessions/:id/replay               -> text/html   (recording player)
 PUT/GET/DELETE /extensions/:name/:file    -> upload/manage extensions; create({extensions:["name"]})
@@ -311,6 +333,7 @@ it by default.
 - **`?interactable=0`** drops input for *that* porthole connection server-side — but it is a per-connection mode, **not a capability boundary**: the same token can open an interactable socket or call `/act`. For a true read-only handoff, don't share the token. `?controls=1` adds a URL bar + back/forward/reload.
 - **`/login` is not a confidentiality boundary against the *caller*.** It injects a stored secret server-side so the agent needn't *handle* it, but a caller that can drive the browser can render the value into a page and read it back — treat API access as access to the credentials, as below.
 - **File access is confined.** Navigation refuses `file://`/`chrome://` (no host-file read via `/content`/`/screenshot`), and `/upload` only accepts paths inside the session's `/files` workspace — stage a file there first.
+- **`/inject` grants arbitrary script execution on every page of the session, CSP included.** `POST /sessions/:id/inject {id, source, bypassCSP?}` registers a *sticky* injection (`Page.addScriptToEvaluateOnNewDocument`) that re-runs on every reload, every newly opened tab, and — because it's persisted into the session spec — every daemon restart. `bypassCSP:true` disables the page's Content-Security-Policy for the session (`Page.setBypassCSP`, held on a live per-page CDP session for as long as the page is open), which is exactly as strong as running the script with devtools open: it can read/exfiltrate anything the page can, override page behavior, and defeat CSP protections the site relies on. Treat calling `/inject` as equivalent to `/act`/`/content` access plus standing devtools-level control — anyone who can call it can call it with *any* source, not just yours. There is no built-in content policy: an optional `injectPolicy(id) => boolean` hook (default **permissive** — every id accepted) lets an embedder restrict *which ids* may be registered (e.g. a shell-only allow-list), but the engine itself doesn't inspect or restrict `source` — that's the caller's responsibility. An injected `source` may execute **twice per document** — once at document-start (where `document.documentElement`/`body` may still be `null`) and again at load — so sources **must be null-safe and idempotent**.
 - Sessions run real browsers logged into real accounts — treat access to `lucarne` as access to those accounts.
 
 ### Exposing it (remote / from your phone)
