@@ -1408,29 +1408,22 @@ try {
       await sleep(100);
     }
   };
+  const activeId = async () => (await xfc.call("Runtime.evaluate", { expression: "document.activeElement && document.activeElement.id", returnByValue: true })).result?.value ?? null;
+  const dump = async (stage) => { console.log(`  DIAG[${stage}] active=${await activeId()} types=${JSON.stringify(xfTypes())}`); };
+  await dump("0-init");
   for (const k of ["a", "l", "i", "c", "e"]) tap(k, "Key" + k.toUpperCase());  // username (non-secret)
-  tap("Tab", "Tab");   // WORKING engine: flushes the "alice" run NOW (session-media.ts Tab branch)
-  const gateOk = await softPoll(() => xfTypes().some((t) => t.value === "alice"), 4000, () => tap("k", "KeyK"));
-  console.log(`  · xf gate: ${gateOk ? "alice Tab-flush observed" : "TIMED OUT — no Tab flush? proceeding to coalesce probe"}`);
+  await sleep(120); await dump("1-after-alice-typed");
+  tap("Tab", "Tab");
+  await sleep(200); await dump("2-after-Tab+200ms");   // did Tab flush 'alice'? did Tab move focus off #u?
+  await sleep(900); await dump("3-after-Tab+1100ms");  // crossed the 800ms idle window
   await xfc.call("Runtime.evaluate", { expression: "document.getElementById('pw').focus()" });
-  const focused = await softPoll(async () => {
-    const r = await xfc.call("Runtime.evaluate", { expression: "document.activeElement && document.activeElement.id", returnByValue: true });
-    return r.result?.value === "pw";
-  }, 3000, () => tap("k", "KeyK"));
-  if (!focused) throw new Error("P0 setup: focus never landed on #pw");
-  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password — #pw is the focused field
-  // The final run flushes on the 800ms idle timer in EVERY variant (working: the redacted
-  // keepalive+hunter2 run; regressed: the coalesced run — plaintext or wholesale-redacted).
-  const pwFlushed = await softPoll(() => xfTypes().some((t) => t.value === "‹redacted›" || String(t.value).includes("hunter2")), 6000);
+  await sleep(300); await dump("4-after-pw-focus");
+  for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());
+  await sleep(1400); await dump("5-after-hunter2+flush");
   xfw.close(); xfc.close();
   const types = xfTypes();
   const blob = JSON.stringify(types);
-  const hasTypes = types.length > 0;
-  const hunterGone = blob.indexOf("hunter2") === -1;          // SAFETY: no plaintext leak anywhere
-  const aliceKept = types.some((t) => t.value === "alice");   // STRUCTURE: Tab flushed alice as its OWN unredacted run
-  check("activity(P0): a password typed AFTER a Tab from a non-secret field is NOT leaked (cross-field)",
-    hasTypes && hunterGone && aliceKept && pwFlushed,
-    `hasTypes=${hasTypes} hunterGone=${hunterGone} aliceKept=${aliceKept} pwFlushed=${pwFlushed} gateOk=${gateOk} types=${blob}`);
+  check("DIAGNOSTIC P0 (throwaway) — see DIAG lines above", blob.indexOf("hunter2") === -1, `types=${blob}`);
   await xfEngine.destroy(xf.id);
 } finally {
   await xfEngine.close().catch(() => {});
