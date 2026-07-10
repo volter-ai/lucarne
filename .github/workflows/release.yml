@@ -1,0 +1,79 @@
+name: release
+# Publishes the 5 npm packages (packages/*) to the npm registry via Trusted Publishing (OIDC) —
+# no long-lived NPM_TOKEN. ONE-TIME setup on npmjs.com: for EACH of the 5 packages
+# (lucarne-records, lucarne, lucarne-interact, lucarne-corpus-mcp, lucarne-widget), go to the
+# package's Settings → Trusted Publisher → add a GitHub Actions publisher → owner: volter-ai ·
+# repo: lucarne · workflow: release.yml · environment: (leave blank). Until then, the real-publish
+# path 404s by design — the `dry_run` path needs no setup and can be proven right now.
+#
+# Trigger this manually with dry_run=true (default) to prove the publish plan/tarballs with no
+# registry credentials, or push a `v*` tag to do a real publish (in dependency order, with
+# provenance).
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (no packages are actually published)"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write   # OIDC for npm trusted publishing + provenance
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build
+
+      # Publish in dependency order: lucarne-records is the base, then the engine (lucarne),
+      # then the packages that depend on it.
+      - name: Publish packages (dependency order)
+        run: |
+          set -e
+
+          # A tag push (v*) is always a real publish; workflow_dispatch defaults to dry-run.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            DRY=true
+          else
+            DRY=false
+          fi
+          echo "dry_run=$DRY (event=${{ github.event_name }})"
+
+          for p in lucarne-records lucarne lucarne-interact lucarne-corpus-mcp lucarne-widget; do
+            ver="$(node -p "require('./packages/$p/package.json').version")"
+            echo "== $p@$ver =="
+
+            # Idempotency guard: skip packages whose exact version is already on npm, so
+            # re-running this workflow (e.g. after a partial failure) doesn't error out.
+            # Dry-run still packs regardless — it publishes nothing, so it's harmless to repeat.
+            published="$(npm view "$p@$ver" version 2>/dev/null || true)"
+            if [ "$DRY" = "false" ] && [ "$published" = "$ver" ]; then
+              echo "skip: $p@$ver is already published"
+              continue
+            fi
+
+            if [ "$DRY" = "true" ]; then
+              npm publish --dry-run --workspace="packages/$p" --access public
+            else
+              npm publish --provenance --access public --workspace="packages/$p"
+            fi
+          done
+
+      - name: Verify published versions
+        if: github.event_name == 'push' || inputs.dry_run != 'true'
+        run: |
+          for p in lucarne-records lucarne lucarne-interact lucarne-corpus-mcp lucarne-widget; do
+            ver="$(node -p "require('./packages/$p/package.json').version")"
+            live="$(npm view "$p" version)"
+            echo "$p: local=$ver published=$live"
+          done
