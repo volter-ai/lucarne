@@ -73,6 +73,7 @@ export {
 export {
   type ActivateAllowEntry,
   type ActivateDecision,
+  type ActivateDenyEntry,
   type ActivatePolicy,
   type ActivateTargetDescriptor,
   classifyActivateTarget,

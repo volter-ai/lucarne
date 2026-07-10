@@ -1,9 +1,12 @@
 // LS-13 dev/01's viewport-honesty half (Chrome-free): `filterVisibleRecords` drops the
-// off-viewport buffer X keeps in the DOM but always keeps the thread root — ported from cadence's
-// `recall.ts:178-185`.
+// off-viewport buffer a virtualized feed keeps in the DOM but always keeps the thread root —
+// ported from cadence's `recall.ts:178-185`. LS-32: the thread-root-id extraction (formerly this
+// file's own `rootIdFromUrl`) moved downstream — a domain package's own `xRootIdFromUrl`, injected
+// via `RecallPageProbes.rootIdFromUrl` (see test/recall-probes-pluggable.mjs) — so this file only
+// exercises the pure, domain-agnostic filter itself; `rootId` below is a plain fixture string.
 //
 // Run with `node test/recall-visible-filter.mjs` (after `npm run build`).
-import { filterVisibleRecords, rootIdFromUrl } from "../dist/recall/visible-filter.js";
+import { filterVisibleRecords } from "../dist/recall/visible-filter.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -43,11 +46,6 @@ const rec = (id) => ({ kind: "post", provenance: { source: "x", id, canonicalUrl
   const filtered = filterVisibleRecords([], ["1"], null);
   check("empty records array -> empty result, no throw", Array.isArray(filtered) && filtered.length === 0);
 }
-
-// ── rootIdFromUrl ──
-check("rootIdFromUrl: extracts the sid from a /status/<id> url", rootIdFromUrl("https://x.com/someone/status/12345") === "12345");
-check("rootIdFromUrl: a feed url (no /status/) -> null", rootIdFromUrl("https://x.com/home") === null);
-check("rootIdFromUrl: null/undefined -> null", rootIdFromUrl(null) === null && rootIdFromUrl(undefined) === null);
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);

@@ -4,6 +4,13 @@
 // dedup, thumbnail budget, title-borrowing) exercised over a `RecallSignal` stream covering ALL
 // THREE signal kinds (capture/video/wire — LS-14's "cover both sensors" for the summary layer too).
 //
+// LS-32: `cleanTitle` is now a GENERIC trim+cap (the origin's x/twitter branding-suffix stripping
+// moved downstream to a domain package's own `xCleanTitle`, injected via
+// `RecallSummaryOptions.cleanTitle`) — this file tests the generic default directly, plus the
+// injection/composition contract (a fixture "site-suffix" cleaner applied BEFORE the generic cap),
+// standing in for a real `xCleanTitle` the same way other recall tests stand in fixture
+// extractors/probes for a domain package's own.
+//
 // Run with `node test/recall-summary.mjs` (after `npm run build`; needs a real `ffmpeg` on PATH —
 // this sandbox and CI-Linux both have one; no browser needed).
 import { execFileSync, spawnSync } from "node:child_process";
@@ -68,10 +75,10 @@ check("precondition: the real host platform is non-darwin", process.platform !==
   check("videoPoster: a missing file returns null (never throws)", uriMissing === null);
 }
 
-// ── cleanTitle ──
+// ── cleanTitle (LS-32: now a GENERIC trim+cap; no site-specific suffix stripping by default) ──
 {
-  check("cleanTitle: strips the ' / X' suffix", cleanTitle("Some Post / X") === "Some Post");
-  check("cleanTitle: strips the ' on X...' suffix", cleanTitle("Some Post on X: see more") === "Some Post");
+  check("cleanTitle: trims whitespace", cleanTitle("  Some Post  ") === "Some Post");
+  check("cleanTitle: does NOT strip any site-specific suffix by default (LS-32 — that's a caller's own injected cleaner now)", cleanTitle("Some Post / X") === "Some Post / X");
   check("cleanTitle: caps length at 76", cleanTitle("x".repeat(200)).length === 76);
   check("cleanTitle: absent/null → ''", cleanTitle(null) === "" && cleanTitle(undefined) === "");
 }
@@ -79,12 +86,12 @@ check("precondition: the real host platform is non-darwin", process.platform !==
 // ── recallSummary: a signal stream covering ALL THREE kinds (capture/video/wire) ──
 {
   const signals = [
-    { kind: "capture", ts: "2026-07-08T09:00:00.000Z", url: "https://x.com/home", title: "Home / X", reason: "initial", detail: null, by: "human", recordsAdded: 2, ariaFile: "a1.txt", screenshotFile: pngPath },
-    { kind: "capture", ts: "2026-07-08T09:01:00.000Z", url: "https://x.com/home", title: "Home / X", reason: "scrolled", detail: "more", by: "human", recordsAdded: 1, ariaFile: "a2.txt", screenshotFile: pngPath },
-    { kind: "capture", ts: "2026-07-08T09:01:05.000Z", url: "https://x.com/home", title: "Home / X", reason: "scrolled", detail: "more still", by: "human", recordsAdded: 0, ariaFile: "a3.txt", screenshotFile: pngPath },
-    { kind: "wire", ts: "2026-07-08T09:02:00.000Z", url: "https://x.com/i/api/graphql/abc/UserTweets", recordsAdded: 3 },
-    { kind: "video", ts: "2026-07-08T09:03:00.000Z", url: "https://x.com/home", by: "agent", stopReason: "ended", mp4: mp4Path, watchedRange: [0, 12.4], frames: 60 },
-    { kind: "wire", ts: "2026-07-08T09:04:00.000Z", url: "https://x.com/i/api/graphql/def/TweetDetail", recordsAdded: 2 },
+    { kind: "capture", ts: "2026-07-08T09:00:00.000Z", url: "https://example.test/home", title: "Home Feed", reason: "initial", detail: null, by: "human", recordsAdded: 2, ariaFile: "a1.txt", screenshotFile: pngPath },
+    { kind: "capture", ts: "2026-07-08T09:01:00.000Z", url: "https://example.test/home", title: "Home Feed", reason: "scrolled", detail: "more", by: "human", recordsAdded: 1, ariaFile: "a2.txt", screenshotFile: pngPath },
+    { kind: "capture", ts: "2026-07-08T09:01:05.000Z", url: "https://example.test/home", title: "Home Feed", reason: "scrolled", detail: "more still", by: "human", recordsAdded: 0, ariaFile: "a3.txt", screenshotFile: pngPath },
+    { kind: "wire", ts: "2026-07-08T09:02:00.000Z", url: "https://example.test/i/api/graphql/abc/UserPosts", recordsAdded: 3 },
+    { kind: "video", ts: "2026-07-08T09:03:00.000Z", url: "https://example.test/home", by: "agent", stopReason: "ended", mp4: mp4Path, watchedRange: [0, 12.4], frames: 60 },
+    { kind: "wire", ts: "2026-07-08T09:04:00.000Z", url: "https://example.test/i/api/graphql/def/PostDetail", recordsAdded: 2 },
   ];
 
   const summary = await recallSummary(signals);
@@ -92,16 +99,16 @@ check("precondition: the real host platform is non-darwin", process.platform !==
   check("recallSummary: captures counts only 'capture' signals", summary.captures === 3, summary.captures);
   check("recallSummary: videos counts only 'video' signals", summary.videos === 1, summary.videos);
   check("recallSummary: wireCaptures sums recordsAdded across 'wire' signals (LS-14: wire is covered too)", summary.wireCaptures === 5, summary.wireCaptures);
-  check("recallSummary: last reflects the chronologically LAST signal's title/url", summary.last === "https://x.com/i/api/graphql/def/TweetDetail");
+  check("recallSummary: last reflects the chronologically LAST signal's title/url", summary.last === "https://example.test/i/api/graphql/def/PostDetail");
 
   // recent: newest-first, consecutive (kind,url) duplicates collapsed — the two consecutive
-  // 'capture'+'https://x.com/home' entries (scrolled, scrolled) collapse to ONE row.
+  // 'capture'+'https://example.test/home' entries (scrolled, scrolled) collapse to ONE row.
   const kinds = summary.recent.map((r) => r.kind);
-  check("recallSummary.recent: newest-first ordering", summary.recent[0].kind === "wire" && summary.recent[0].url.includes("TweetDetail"));
+  check("recallSummary.recent: newest-first ordering", summary.recent[0].kind === "wire" && summary.recent[0].url.includes("PostDetail"));
   check("recallSummary.recent: consecutive duplicate (kind,url) captures collapse to one row", kinds.filter((k) => k === "view").length === 1, JSON.stringify(kinds));
   check("recallSummary.recent: a wire entry is included in the SAME timeline (both sensors, one feed)", kinds.includes("wire"));
   check("recallSummary.recent: a wire entry never carries a thumbnail (no visual artifact)", summary.recent.find((r) => r.kind === "wire").thumb === null);
-  check("recallSummary.recent: a wire entry's detail reports its record count", /2 records? captured/.test(summary.recent.find((r) => r.url.includes("TweetDetail")).detail));
+  check("recallSummary.recent: a wire entry's detail reports its record count", /2 records? captured/.test(summary.recent.find((r) => r.url.includes("PostDetail")).detail));
 
   const videoRow = summary.recent.find((r) => r.kind === "video");
   check("recallSummary.recent: the video row got a poster thumbnail (ffmpeg)", videoRow && typeof videoRow.thumb === "string" && videoRow.thumb.startsWith("data:image/png;base64,"));
@@ -109,19 +116,41 @@ check("precondition: the real host platform is non-darwin", process.platform !==
 
   const viewRow = summary.recent.find((r) => r.kind === "view");
   check("recallSummary.recent: the view row got a screenshot thumbnail (ffmpeg)", viewRow && typeof viewRow.thumb === "string" && viewRow.thumb.startsWith("data:image/png;base64,"));
-  check("recallSummary.recent: cleanTitle applied ('Home / X' -> 'Home')", viewRow && viewRow.title === "Home");
+  check("recallSummary.recent: default cleanTitle is pass-through (no injected cleaner) ('Home Feed' -> 'Home Feed')", viewRow && viewRow.title === "Home Feed");
 }
 
 // ── recallSummary: title-borrowing — a video/wire row with no title of its own borrows a VIEW's ──
 {
   const signals = [
-    { kind: "capture", ts: "2026-07-08T10:00:00.000Z", url: "https://x.com/watch/1", title: "A Great Talk / X", reason: "initial", detail: null, by: "human", recordsAdded: 1, ariaFile: "b1.txt", screenshotFile: pngPath },
-    { kind: "video", ts: "2026-07-08T10:01:00.000Z", url: "https://x.com/watch/1", by: "human", stopReason: "ended", mp4: mp4Path, watchedRange: [0, 30], frames: 100 },
+    { kind: "capture", ts: "2026-07-08T10:00:00.000Z", url: "https://example.test/watch/1", title: "A Great Talk", reason: "initial", detail: null, by: "human", recordsAdded: 1, ariaFile: "b1.txt", screenshotFile: pngPath },
+    { kind: "video", ts: "2026-07-08T10:01:00.000Z", url: "https://example.test/watch/1", by: "human", stopReason: "ended", mp4: mp4Path, watchedRange: [0, 30], frames: 100 },
   ];
   const summary = await recallSummary(signals, { thumbBudget: 0 });
   const videoRow = summary.recent.find((r) => r.kind === "video");
   check("recallSummary: a video row with a bare-url title borrows the co-located VIEW's real title", videoRow && videoRow.title === "A Great Talk", videoRow && videoRow.title);
   check("recallSummary: thumbBudget:0 suppresses ALL thumbnails (view row too)", summary.recent.every((r) => r.thumb === null));
+}
+
+// ── recallSummary: LS-32's `RecallSummaryOptions.cleanTitle` injection — a caller-supplied
+//    pre-cap cleaner (standing in for a downstream domain package's own site-suffix stripper, e.g.
+//    an `xCleanTitle`) composes with this file's own generic cap, applied BEFORE it ──
+{
+  const fixtureSiteSuffixCleaner = (t) => String(t || "").replace(/ \/ SITE$/, "");
+  const signals = [
+    { kind: "capture", ts: "2026-07-08T11:00:00.000Z", url: "https://example.test/p/1", title: "Some Post / SITE", reason: "initial", detail: null, by: "human", recordsAdded: 1, ariaFile: "c1.txt", screenshotFile: pngPath },
+  ];
+  const withInjectedCleaner = await recallSummary(signals, { cleanTitle: fixtureSiteSuffixCleaner, thumbBudget: 0 });
+  const withoutCleaner = await recallSummary(signals, { thumbBudget: 0 });
+  check(
+    "recallSummary: an injected cleanTitle strips a caller-defined suffix before the generic cap",
+    withInjectedCleaner.recent[0]?.title === "Some Post",
+    withInjectedCleaner.recent[0]?.title,
+  );
+  check(
+    "recallSummary: WITHOUT an injected cleanTitle, the same raw title passes through untouched (generic cap only)",
+    withoutCleaner.recent[0]?.title === "Some Post / SITE",
+    withoutCleaner.recent[0]?.title,
+  );
 }
 
 // ── recallSummary: an empty stream returns a valid, empty shape rather than throwing ──
