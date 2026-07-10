@@ -41,6 +41,22 @@ export type IntentHandler = (intent: { id: string | number; payload: unknown }) 
 /** The crash-safe tick interval for the intent-drain pump — matches `widget-bridge.ts`'s control/settings queues (~1.2s). */
 const DRAIN_INTERVAL_MS = 1200;
 
+/** One open page's live visibility/focus signal — the same shape a per-tab "is this the one the human is looking
+ * at" scorer needs (`document.visibilityState`/`document.hasFocus()`), never a caller-supplied probe. */
+export interface PageProbe {
+  url: string;
+  title: string;
+  visible: boolean;
+  focused: boolean;
+}
+
+/** One open page's `drainIntentsWithContext` result: the same per-page visibility/focus signal `PageProbe`
+ * carries, PLUS that page's slice of the named queue (already drained — read-and-cleared — by the time this
+ * resolves, same as `onIntent`'s internal drain). */
+export interface IntentPageContext extends PageProbe {
+  items: Array<{ id: string | number; payload: unknown }>;
+}
+
 export interface SelftestOptions {
   /** Namespace for this run's throwaway shell instance. Defaults to a freshly generated one — pass your own for a stable, greppable `ns` in CI logs. */
   ns?: string;
@@ -236,6 +252,84 @@ export class WidgetHost {
         }
       }
     }
+  }
+
+  /**
+   * Builds the ONE FIXED expression every per-page probe in this class runs — never a caller-supplied
+   * expression (§1.5: the retired `/eval` REPL stays retired, not generalized; this mirrors `push`'s own
+   * fixed-postMessage expression and `drainOnce`'s fixed read-and-clear expression above). `key` names the ONE
+   * namespaced intent-queue global (`intentQueueGlobal(ns, name)`) this call may read — `null` for a pure
+   * focus/visibility probe that touches no queue at all. `drain` additionally CLEARS that one global (never
+   * any other page state); a read-only probe (`drain: false`) never mutates anything. Non-http(s) pages
+   * (about:blank, chrome://, this package's own data: srcdoc tabs) are skipped in-page, the same posture a
+   * downstream consumer's own pre-existing, now-retired multi-tab intent-bus poller used before this
+   * primitive existed (it opened its OWN CDP connection to do the same read-and-clear-plus-probe).
+   */
+  private probeExpr(key: string | null, drain: boolean): string {
+    const body = key ? (drain ? `var a = window[${JSON.stringify(key)}] || []; window[${JSON.stringify(key)}] = [];` : `var a = window[${JSON.stringify(key)}] || [];`) : `var a = [];`;
+    return `(function(){
+      if (!/^https?:$/.test(location.protocol)) return null;
+      ${body}
+      return { url: location.href, title: document.title || '', visible: document.visibilityState === 'visible', focused: document.hasFocus(), items: a };
+    })()`;
+  }
+
+  /** Runs `probeExpr(key, drain)` across every open top-level page and shapes the per-page results into
+   * `IntentPageContext[]` (a page that errored mid-evaluate, or is a non-http(s) tab, is simply absent — never
+   * lets one dead/foreign tab drop the rest, same posture as `evaluateOnAllPagesCollecting` itself). */
+  private async probeAllPages(key: string | null, drain: boolean): Promise<IntentPageContext[]> {
+    let raw: unknown[];
+    try {
+      raw = await evaluateOnAllPagesCollecting(this.cdpUrl, this.probeExpr(key, drain));
+    } catch {
+      return []; // browser unreachable right now — best-effort, same posture as drainOnce's per-tick catch
+    }
+    const out: IntentPageContext[] = [];
+    for (const r of raw) {
+      if (!r || typeof r !== "object") continue;
+      const o = r as Partial<IntentPageContext>;
+      if (typeof o.url !== "string") continue;
+      out.push({ url: o.url, title: typeof o.title === "string" ? o.title : "", visible: !!o.visible, focused: !!o.focused, items: Array.isArray(o.items) ? o.items : [] });
+    }
+    return out;
+  }
+
+  /**
+   * Drain one NAMED intent queue from EVERY open top-level page, WITH each page's live visibility/focus
+   * context — for a consumer that needs to SCORE tabs and act only on the best (most visible/focused) one's
+   * items, the way a downstream consumer's own multi-tab intent-bus poller used to open its OWN
+   * `connectOverCDP` + run its own per-page probe to do (this package's split task spec §1.5/§1.6/§5.4). Each
+   * returned page's `items` are already
+   * drained (read-and-cleared) by the time this resolves — a second call back-to-back on an untouched queue
+   * returns `items: []` for that page, the same "add BEFORE acting" dedup posture `onIntent`'s `drainOnce`
+   * relies on, generalized here to per-page instead of per-name. Unlike `onIntent`, this does NOT flatten or
+   * dedup-by-id across pages/ticks itself — the whole point is handing the caller enough per-page context
+   * (`visible`/`focused`) to decide which page's items to act on; a caller that doesn't need that should keep
+   * using `onIntent`.
+   */
+  async drainIntentsWithContext(name: string): Promise<IntentPageContext[]> {
+    return this.probeAllPages(intentQueueGlobal(this.ns, name), true);
+  }
+
+  /**
+   * A genuinely READ-ONLY per-page visibility/focus/title probe — no queue is read or cleared, no mutation of
+   * any kind. Returns the single best-scored (most visible, then most focused) open page, or `null` if none is
+   * currently open. For a consumer that wants the live "which tab is the human looking at" signal without
+   * draining anything (e.g. a downstream consumer's own `focusedTab()`-style helper, which would otherwise have
+   * no way to get real per-page focus without its own `connectOverCDP`).
+   */
+  async activeTabInfo(): Promise<PageProbe | null> {
+    const pages = await this.probeAllPages(null, false);
+    let best: PageProbe | null = null;
+    let bestScore = -1;
+    for (const p of pages) {
+      const score = (p.visible ? 2 : 0) + (p.focused ? 1 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = { url: p.url, title: p.title, visible: p.visible, focused: p.focused };
+      }
+    }
+    return best;
   }
 
   /**

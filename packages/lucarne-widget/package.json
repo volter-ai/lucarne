@@ -60,8 +60,8 @@
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs && node test/fixture-neutrality-gate.mjs && node test/no-legacy-global-literal-gate.mjs && node test/ns-coexistence.mjs",
-    "test:acceptance": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs && node test/fixture-neutrality-gate.mjs && node test/no-legacy-global-literal-gate.mjs && node test/ns-coexistence.mjs && node test/widget-selftest-acceptance.mjs && node test/ns-coexistence-acceptance.mjs"
+    "test:unit": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs && node test/fixture-neutrality-gate.mjs && node test/no-legacy-global-literal-gate.mjs && node test/ns-coexistence.mjs && node test/intent-drain-scope-gate.mjs",
+    "test:acceptance": "npm run build && node test/build-helper.mjs && node test/envelope-roundtrip.mjs && node test/framework-free-gate.mjs && node test/fixture-neutrality-gate.mjs && node test/no-legacy-global-literal-gate.mjs && node test/ns-coexistence.mjs && node test/intent-drain-scope-gate.mjs && node test/widget-selftest-acceptance.mjs && node test/ns-coexistence-acceptance.mjs && node test/intent-drain-context-acceptance.mjs"
   },
   "peerDependencies": {
     "playwright-core": ">=1.40.0",
