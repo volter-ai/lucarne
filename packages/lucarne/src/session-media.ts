@@ -155,7 +155,7 @@ export async function startSessionMedia(opts: {
     // (classified by the prior non-secret field); flush-read alone missed a submit that
     // blurred the field. Union closes both.
     const [start, end] = await Promise.all([buf.secretP, readSecrecy()]);
-    const secret = start.secret || end.secret;
+    const secret = start.secret; /*MUT-A*/
     pushAct({ ts: Date.now(), actor: buf.actor, kind: "type", field: start.field ?? end.field, value: secret ? "‹redacted›" : buf.text });
   };
   const appendType = (actor: "human" | "agent", text: string): void => {
@@ -268,7 +268,7 @@ export async function startSessionMedia(opts: {
     // A focus-changing key (Tab/Enter/Escape) must FLUSH the buffer so a field change
     // starts a fresh, separately-classified run — else "username<Tab>password" coalesces
     // into one event classified by the username field and the password leaks unredacted.
-    else if (ev.t === "keydown" && (ev.key === "Tab" || ev.key === "Enter" || ev.key === "Escape")) void flushType();
+    else if (ev.t === "keydown" && (false /*MUT-A*/)) void flushType();
     else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);
     if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
       page.send("Input.dispatchMouseEvent", {
