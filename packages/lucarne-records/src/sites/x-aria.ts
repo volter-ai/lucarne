@@ -2,7 +2,7 @@
  * X (x.com/twitter.com) ARIA-snapshot extractor — the SCREEN sensor's per-site
  * parser (LS-05a).
  *
- * Ported faithfully from `cadence/src/units.ts:21-103` (`extractUnits`, "PURE:
+ * Ported faithfully from the origin app's `units.ts:21-103` (`extractUnits`, "PURE:
  * text in, units out" — `:33`) onto this package's `Unit` shape
  * (`../unit-to-record.js`), so its output maps to records via `unitToRecord`/
  * `unitsToRecords` (LS-04) — that mapping is reused verbatim here, never
@@ -248,8 +248,8 @@ export function extractXAriaRecords(aria: string, capture: UnitCapture = {}): En
 
 /**
  * A ready `{match, extract}` plugin for LS-13's extractor registry
- * ("Extractors are plugins ({match, extract} — cadence passes LS-05's X ARIA
- * extractor)", CADENCE-SPLIT-TASKSPEC.md §2 LS-13). `match` accepts any
+ * ("Extractors are plugins ({match, extract} — the origin app passes LS-05's X ARIA
+ * extractor)", the split spec's §2 LS-13). `match` accepts any
  * x.com/twitter.com page url; `extract` is `extractXAriaRecords`.
  */
 export const xAriaExtractor: {

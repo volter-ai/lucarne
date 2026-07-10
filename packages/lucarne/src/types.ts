@@ -183,7 +183,7 @@ export interface EngineOptions {
   headless?: boolean;
   /** Capture the semantic activity log by default (`LUCARNE_ACTIVITY=1`). Default off. */
   activity?: boolean;
-  /** Recording frame-rate / segment cadence. Default 4. */
+  /** Recording frame-rate / segment interval. Default 4. */
   fps?: number;
   // NOTE: these two carry their unit in the NAME by design (`Min`/`Seconds`) — a
   // human-scale recording knob reads better as `60` minutes than `3_600_000` ms.
@@ -210,7 +210,7 @@ export interface EngineOptions {
    * Accept/reject a sticky-injection id (`POST/GET /sessions/:id/inject`). Default
    * PERMISSIVE — every id is accepted. This hook only decides accept/reject; a
    * shell-only allow-list or any other content doctrine is the CALLER's policy
-   * (e.g. cadence's, wired in LS-20), not the engine's.
+   * (e.g. the origin app's, wired in LS-20), not the engine's.
    */
   injectPolicy?: InjectPolicy;
   /** Isolation backends to register. Default: docker + native. */

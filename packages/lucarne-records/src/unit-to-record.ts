@@ -1,17 +1,17 @@
 /**
- * `unitToRecord()` — maps cadence's fact-unit shape (`cadence/src/units.ts`'s
- * `Unit = Post | Comment | StubPost`, `cadence/src/types.ts:42-69`) onto this
+ * `unitToRecord()` — maps the origin app's fact-unit shape (`units.ts`'s
+ * `Unit = Post | Comment | StubPost`, `types.ts:42-69`) onto this
  * package's normalized `Entity` schema, with `Provenance.via: 'screen'` (LS-04).
  *
- * This is the seam LS-13 (recall's screen sensor) writes through: cadence's
+ * This is the seam LS-13 (recall's screen sensor) writes through: the origin app's
  * ARIA extractor (`units.ts:33-103`, ported to `lucarne-records/sites/x-aria.ts`
  * in LS-05) parses one `Unit` per post/comment; `unitToRecord` turns each into
  * a record `appendRecords` (`store.ts`) can merge into the shared store.
  *
- * `Unit` itself is NOT imported from cadence (this package stays dependency-
- * free and cadence is a separate app, not a workspace dependency of
+ * `Unit` itself is NOT imported from the origin app (this package stays dependency-
+ * free and the origin app is a separate app, not a workspace dependency of
  * `lucarne-records`) — the shape below is a faithful structural copy of
- * `cadence/src/types.ts:7-69`, kept only as wide as `unitToRecord` needs.
+ * the origin app's `types.ts:7-69`, kept only as wide as `unitToRecord` needs.
  *
  * FIELD MAPPING (per LS-04's spec):
  *   Unit.id            ('x:<sid>')  → provenance.source (the channel) + provenance.id (the bare sid)
@@ -26,22 +26,22 @@
  *   Unit.stub (posts only)          → stub: Boolean(unit.stub) — ALWAYS set explicitly (never left
  *                                      `undefined`), so `store.ts`'s `mergeEntity` reads an authoritative
  *                                      signal instead of falling back to the "is text empty?" heuristic.
- *   Comment.parent      ('x:<sid>') → parentUrl + threadRootUrl (cadence's model is flat: every comment's
+ *   Comment.parent      ('x:<sid>') → parentUrl + threadRootUrl (the origin app's model is flat: every comment's
  *                                      `parent` already points at the THREAD ROOT, never an intermediate
- *                                      reply — `cadence/src/types.ts:40-41` — so parentUrl and
+ *                                      reply — `types.ts:40-41` — so parentUrl and
  *                                      threadRootUrl are the same derived URL; depth is always 0).
  */
 
 import type { AuthorRef, Comment, Entity, EngagementMetrics, Post, Provenance, Source } from "./schema.js";
 import type { Capture } from "./schema.js";
 
-/** cadence's `Channel` (`cadence/src/types.ts:13`) — wider than this schema's `Source`. */
+/** The origin app's `Channel` (`types.ts:13`) — wider than this schema's `Source`. */
 export type UnitChannel = "x" | "reddit" | "hackernews" | "linkedin";
 
-/** cadence's `Handle` (`cadence/src/types.ts:14`): always `@`-prefixed. */
+/** The origin app's `Handle` (`types.ts:14`): always `@`-prefixed. */
 export type UnitHandle = `@${string}`;
 
-/** Structural copy of cadence's `Metrics` (`cadence/src/types.ts:26-32`). */
+/** Structural copy of the origin app's `Metrics` (`types.ts:26-32`). */
 export interface UnitMetrics {
   replies?: number;
   reposts?: number;
@@ -50,16 +50,16 @@ export interface UnitMetrics {
   views?: number;
 }
 
-/** Structural copy of cadence's `Media` (`cadence/src/types.ts:34-37`). */
+/** Structural copy of the origin app's `Media` (`types.ts:34-37`). */
 export interface UnitMedia {
   image: string;
   alt: string;
 }
 
 /**
- * Structural copy of cadence's `Capture` (`cadence/src/types.ts:17-24`) — this
- * is exactly `schema.ts`'s `Capture`, re-exported under the cadence-facing name
- * so callers porting fixtures from cadence can use the field names verbatim.
+ * Structural copy of the origin app's `Capture` (`types.ts:17-24`) — this
+ * is exactly `schema.ts`'s `Capture`, re-exported under the origin-app-facing name
+ * so callers porting fixtures from the origin app can use the field names verbatim.
  */
 export type UnitCapture = Capture;
 
@@ -84,12 +84,12 @@ export interface UnitPost extends UnitBase {
 
 export interface UnitComment extends UnitBase {
   kind: "comment";
-  /** The THREAD ROOT's branded id — cadence's model has no deeper nesting. */
+  /** The THREAD ROOT's branded id — the origin app's model has no deeper nesting. */
   parent: string;
   stub?: never;
 }
 
-/** A minted placeholder root (`cadence/src/types.ts:62-68`): honest empty text + `stub:true`. */
+/** A minted placeholder root (the origin app's `types.ts:62-68`): honest empty text + `stub:true`. */
 export interface UnitStubPost extends Omit<UnitPost, "text"> {
   text: "";
   stub: true;
@@ -101,7 +101,7 @@ function channelToSource(channel: UnitChannel): Source {
   if (channel === "x" || channel === "reddit" || channel === "hackernews") return channel;
   throw new Error(
     `unitToRecord: unsupported channel "${channel}" — lucarne-records' Source type has no mapping for it yet ` +
-      `(cadence's Unit.channel also allows "linkedin", which no parser produces today)`,
+      `(the origin app's channel model also allows "linkedin", which no parser produces today)`,
   );
 }
 
@@ -126,7 +126,7 @@ const HOST_OF: Record<Source, string> = {
 
 /**
  * Best-effort canonical URL for a comment's thread root, given only its
- * branded `parent` id. Cadence's own stub-minting (`units.ts:97-100`) uses the
+ * branded `parent` id. The origin app's own stub-minting (`units.ts:97-100`) uses the
  * SAME fallback — trust the capturing page's handle only when that page's own
  * status id matches the parent's sid, else fall back to x's `i` placeholder
  * segment (which x.com resolves regardless of the actual handle).
@@ -142,12 +142,12 @@ function deriveThreadRootUrl(parentId: string, page: string | null | undefined, 
 }
 
 /**
- * Map a cadence `Unit` (post, comment, or minted stub) to a `lucarne-records`
+ * Map an origin-app `Unit` (post, comment, or minted stub) to a `lucarne-records`
  * `Entity` (`Post` or `Comment`), with `provenance.via: 'screen'`.
  *
  * Lossless in the sense that every `Unit` field is carried through: normalized
  * fields where the schema has a direct equivalent (see the field mapping table
- * in this file's header), `raw.bookmarks`/`raw.media` for the two cadence
+ * in this file's header), `raw.bookmarks`/`raw.media` for the two origin-app
  * fields the schema doesn't normalize, and the full `capture` pointer verbatim.
  */
 export function unitToRecord(unit: Unit): Post | Comment {
@@ -194,9 +194,9 @@ export function unitToRecord(unit: Unit): Post | Comment {
     const comment: Comment = {
       kind: "comment",
       ...shared,
-      // cadence's model is flat — `parent` IS the thread root, so both URLs
+      // the origin app's model is flat — `parent` IS the thread root, so both URLs
       // are the same derived value, and depth is always 0 (no nesting depth
-      // is tracked by cadence's Unit shape).
+      // is tracked by the origin app's Unit shape).
       parentUrl: threadRootUrl,
       threadRootUrl,
       depth: 0,
