@@ -10,133 +10,37 @@
 // "Network is the only new domain" gate. This sensor never opens a tab, never navigates, never
 // scrolls, never re-issues or paginates a site endpoint; it only watches.
 //
-// This REPLACES claude-socials's MV3 extension + ws bridge + MAIN-world fetch/XHR tee
-// (`packages/extension/src/content/x-main.ts`) — §1.3a's verdict is that a CDP-level passive tap on
-// the SAME bytes is adopted instead of a MAIN-world monkeypatch relayed over a bridge; the operation
-// dispatch table below is preserved from that file's `isGraphql`/`opOf` helpers (:29-33) and from
-// `lucarne-records/sites/x-graphql.ts`'s own header, which records the operationName -> parser
-// mapping this module was written against.
+// LS-29 (generalize-records): the X-specific wire adapter (operationName -> parser dispatch table,
+// url-matching helpers) that used to live in THIS file has MOVED downstream to a domain package's
+// own module — this module now carries only the GENERAL wire-sensor framework: the
+// `WireSiteAdapter` plugin contract, the `dispatchWireAdapters` selection loop, and
+// `startWireSensor`'s CDP plumbing. Any number of site-specific adapters (X's, or a future one) can
+// register against this same framework; this package no longer knows any of their names.
 //
 // Records this sensor writes carry `provenance.via:'internal-api'` (LS-04's `Provenance.via` doc)
 // and land in the SAME `lucarne-records` store the screen sensor writes to, via the same
 // `appendRecords` — ONE recorder, two independent sensors, one store.
 import type { CDPSession, Page } from "playwright-core";
 import type { Entity } from "lucarne-records";
-import { appendRecords, parseSearchTimeline, parseTweetDetail, parseUserTweets, tweetToPost, userResultToProfile, type SearchType } from "lucarne-records";
+import { appendRecords } from "lucarne-records";
 import type { RecallConnection } from "./connection.js";
 import type { RecallSignal } from "./types.js";
-
-/** Safe nested getter — same shape as `x-graphql.ts`'s own private `dig`, kept local here so this
- *  module has no non-parser coupling to that file beyond its exported functions. */
-function dig(obj: unknown, path: string[]): any {
-  let cur: any = obj;
-  for (const key of path) {
-    if (cur == null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[key];
-  }
-  return cur;
-}
-
-/** Does this url look like an x GraphQL endpoint? Ported verbatim from claude-socials's
- *  `x-main.ts:29`'s `isGraphql`. */
-export function isXGraphqlUrl(url: string): boolean {
-  return url.includes("/i/api/graphql/");
-}
-
-/** Extract the x GraphQL operationName from a `/i/api/graphql/<queryId>/<OperationName>` url —
- *  ported verbatim from claude-socials's `x-main.ts:30-33`'s `opOf`. Returns `null` for a url that
- *  doesn't match the GraphQL shape at all. */
-export function xOperationNameOf(url: string): string | null {
-  const m = url.match(/\/i\/api\/graphql\/[^/]+\/([^/?]+)/);
-  return m ? m[1]! : null;
-}
-
-/**
- * Which kind of items a `SearchTimeline` response holds, recovered from the REQUEST url's own
- * `variables.product` query param ('People' -> 'users', else 'posts') — the response body alone
- * never carries this (`parseSearchTimeline`'s own doc). This is claude-socials's `x.ts:356-357`
- * `searchMetaFromUrl` logic, reimplemented here (not ported verbatim, since LS-05b's header notes
- * that function parsed a *request* url rather than a response body and so was out of that package's
- * scope) — it is pure URL/query-string parsing, never a request of its own, so it belongs to the
- * wire sensor that owns "how do I read the request this response came back for".
- */
-export function searchTypeFromUrl(url: string): SearchType {
-  try {
-    const u = new URL(url);
-    const raw = u.searchParams.get("variables");
-    if (raw) {
-      const vars = JSON.parse(raw);
-      if (vars && typeof vars === "object" && (vars as Record<string, unknown>).product === "People") return "users";
-    }
-  } catch {
-    /* malformed/absent `variables` query param -> fall through to the 'posts' default below */
-  }
-  return "posts";
-}
 
 /**
  * A registered WIRE site adapter — this sensor's plugin contract, mirroring `RecallExtractor`'s
  * shape for the screen sensor (`types.ts`): `match` decides whether this adapter owns a captured
  * response's url, `dispatch` is PURE (JSON in, normalized records out — no filesystem/network
  * access of its own) so it is independently Chrome-free unit-testable off a captured-response
- * fixture (test/recall-wire-dispatch.mjs) without ever touching a browser. A throwing `dispatch`
+ * fixture without ever touching a browser. A throwing `dispatch`
  * must never break the sensor or any sibling adapter — see `dispatchWireAdapters` below.
  */
 export interface WireSiteAdapter {
   match(url: string): boolean;
-  /** `requestUrl` is the response's OWN request url (including its query string — some operations,
-   *  e.g. x's `SearchTimeline`, need it since the response body doesn't carry everything). Must
-   *  never throw; return `[]` for an operation this adapter doesn't recognize or a payload it can't
-   *  parse. */
+  /** `requestUrl` is the response's OWN request url (including its query string — some operations
+   *  need it since the response body doesn't carry everything). Must never throw; return `[]` for an
+   *  operation this adapter doesn't recognize or a payload it can't parse. */
   dispatch(requestUrl: string, payload: unknown): Entity[];
 }
-
-/**
- * x's wire adapter — the operationName -> pure-parser dispatch table named in
- * the split task spec, §2 LS-13W / preserved in `x-graphql.ts`'s header:
- *   `UserByScreenName`/`UserByRestId` -> `userResultToProfile(dig(payload,['data','user','result']))`
- *   `TweetResultByRestId`             -> `tweetToPost(dig(payload,['data','tweetResult','result']))`
- *   `TweetDetail`                     -> `parseTweetDetail(payload)`
- *   `SearchTimeline`                  -> `parseSearchTimeline(payload, type)`, `type` from the
- *                                          REQUEST url's `variables.product` (`searchTypeFromUrl`)
- *   `UserTweets`                      -> `parseUserTweets(payload)`
- * PURE: only `lucarne-records`' already-pure parsers + this module's own request-url parsing — no
- * I/O of its own.
- */
-export const xWireAdapter: WireSiteAdapter = {
-  match: isXGraphqlUrl,
-  dispatch(requestUrl, payload) {
-    const op = xOperationNameOf(requestUrl);
-    if (!op) return [];
-    try {
-      switch (op) {
-        case "UserByScreenName":
-        case "UserByRestId": {
-          const p = userResultToProfile(dig(payload, ["data", "user", "result"]));
-          return p ? [p] : [];
-        }
-        case "TweetResultByRestId": {
-          const p = tweetToPost(dig(payload, ["data", "tweetResult", "result"]));
-          return p ? [p] : [];
-        }
-        case "TweetDetail": {
-          const r = parseTweetDetail(payload);
-          return r.post ? [r.post, ...r.comments] : [...r.comments];
-        }
-        case "SearchTimeline": {
-          const type = searchTypeFromUrl(requestUrl);
-          return parseSearchTimeline(payload, type).items;
-        }
-        case "UserTweets":
-          return parseUserTweets(payload).posts;
-        default:
-          return []; // an operation not in the dispatch table above — not this adapter's concern
-      }
-    } catch {
-      return []; // a malformed/unexpected payload for a known op must never break capture
-    }
-  },
-};
 
 /**
  * Dispatch one captured response through every adapter whose `match(requestUrl)` is true,
@@ -160,7 +64,9 @@ export function dispatchWireAdapters(requestUrl: string, payload: unknown, adapt
 export interface WireSensorOptions {
   dataDir: string;
   /** Registered site adapters — the caller supplies these (mirrors `StartRecallOptions.extractors`
-   *  for the screen sensor); `index.ts` defaults this to `[xWireAdapter]`. */
+   *  for the screen sensor); `startRecall`'s own default is an EMPTY list (LS-29 — this package no
+   *  longer bundles any site-specific adapter; a caller wanting wire capture for a domain registers
+   *  that domain's own adapter, e.g. a downstream `xWireAdapter`). */
   adapters: readonly WireSiteAdapter[];
   /** Fired for every response that produced at least one record — a `kind:'wire'` `RecallSignal`
    *  (`types.ts`), the SAME union `startRecall`'s screen-sensor `observers` already consume. */

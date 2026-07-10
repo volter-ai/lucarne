@@ -4,10 +4,11 @@
 import type { Capture, Entity } from "lucarne-records";
 
 /**
- * A per-site extractor PLUGIN — the origin app passes LS-05's X ARIA extractor
- * (`lucarne-records/sites`'s `xAriaExtractor`) as one of these. `match` decides whether this
- * extractor understands a given page url; `extract` is PURE (text in, records out — no
- * filesystem/network/DOM access of its own; see `lucarne-records/sites/x-aria.ts`'s header).
+ * A per-site extractor PLUGIN — a caller passes its own site-specific ARIA extractor (e.g. an X
+ * extractor, LS-05) as one of these; this package bundles none of its own (LS-29 — site-specific
+ * extractors live downstream, in a domain package). `match` decides whether this extractor
+ * understands a given page url; `extract` is PURE (text in, records out — no filesystem/network/DOM
+ * access of its own).
  */
 export interface RecallExtractor {
   match(url: string): boolean;

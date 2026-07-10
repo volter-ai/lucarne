@@ -120,6 +120,17 @@ function parse(result) {
   check("get_comments via MCP (nothing captured under this post): not_captured", data.status === "not_captured");
 }
 
+// ── LS-29 (generalize-records) — the OPEN-SOURCE proof: an arbitrary, non-social source ("github")
+// against an EMPTY store returns a structured `not_captured` result, NOT a zod validation error —
+// proving `sourceSchema` genuinely accepts any non-empty string, not just the old closed enum. ──
+{
+  const result = await client.callTool({ name: "get_post", arguments: { source: "github", idOrUrl: "volter-ai/lucarne#42" } });
+  check("get_post via MCP: an arbitrary source ('github') is NOT rejected by the tool's zod schema", !result.isError, JSON.stringify(result));
+  const data = parse(result);
+  check("get_post via MCP: source:'github' on an empty store returns not_captured (a genuine miss), not a schema error", data.status === "not_captured", JSON.stringify(data));
+  check("get_post via MCP: the not_captured result still carries a browse hint for the arbitrary source", /browse/i.test(data.hint) && data.query.source === "github");
+}
+
 await client.close();
 await server.close();
 fs.rmSync(DIR, { recursive: true, force: true });

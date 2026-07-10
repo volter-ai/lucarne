@@ -1,6 +1,8 @@
 // LS-03 dev/03 — store test: appendRecords merge invariants (richest-text-wins,
 // stub-never-degrades) on a fixture set, then getRecord/queryRecords over a
 // seeded store return schema-valid Page<T>/entity.
+// LS-29 (generalize-records): fixtures generalized off the social domain (source:"x"→"example") to
+// prove the merge/query logic holds for a GENERAL record, not a social-specific one.
 //
 // Run with `node test/store.mjs` (after `npm run build`).
 import fs from "node:fs";
@@ -20,9 +22,9 @@ const check = (name, pass, detail = "") => {
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-store-test-"));
 
 const prov = (id, over = {}) => ({
-  source: "x",
+  source: "example",
   id,
-  canonicalUrl: `https://x.com/i/status/${id}`,
+  canonicalUrl: `https://example.test/i/status/${id}`,
   fetchedAt: "2026-07-08T12:00:00.000Z",
   via: "internal-api",
   ...over,
@@ -31,7 +33,7 @@ const prov = (id, over = {}) => ({
 const post = (id, text, metrics, over = {}) => ({
   kind: "post",
   provenance: prov(id, over.provenance),
-  author: { handle: "someone", profileUrl: "https://x.com/someone" },
+  author: { handle: "someone", profileUrl: "https://example.test/someone" },
   text,
   metrics,
   ...over,
@@ -98,8 +100,8 @@ const post = (id, text, metrics, over = {}) => ({
   const STUB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub-test-"));
   // a REAL image-only post: no text, no metrics, but explicitly stub:false, with
   // a distinguishing author we can watch for degradation.
-  const realImageOnly = { ...post("4004", "", {}), stub: false, author: { handle: "real_author", profileUrl: "https://x.com/real_author" } };
-  const laterStub = { ...post("4004", "", {}), stub: true, author: { handle: "placeholder", profileUrl: "https://x.com/placeholder" } };
+  const realImageOnly = { ...post("4004", "", {}), stub: false, author: { handle: "real_author", profileUrl: "https://example.test/real_author" } };
+  const laterStub = { ...post("4004", "", {}), stub: true, author: { handle: "placeholder", profileUrl: "https://example.test/placeholder" } };
   appendRecords(STUB_DIR, [realImageOnly]);
   appendRecords(STUB_DIR, [laterStub]);
   let stored = loadRecords(STUB_DIR).find((e) => e.provenance.id === "4004");
@@ -108,15 +110,15 @@ const post = (id, text, metrics, over = {}) => ({
 
   // order independence: stub FIRST, real (stub:false) later → still real.
   const STUB_DIR2 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub2-test-"));
-  appendRecords(STUB_DIR2, [{ ...laterStub, author: { handle: "placeholder", profileUrl: "https://x.com/placeholder" } }]);
-  appendRecords(STUB_DIR2, [{ ...realImageOnly, author: { handle: "real_author", profileUrl: "https://x.com/real_author" } }]);
+  appendRecords(STUB_DIR2, [{ ...laterStub, author: { handle: "placeholder", profileUrl: "https://example.test/placeholder" } }]);
+  appendRecords(STUB_DIR2, [{ ...realImageOnly, author: { handle: "real_author", profileUrl: "https://example.test/real_author" } }]);
   stored = loadRecords(STUB_DIR2).find((e) => e.provenance.id === "4004");
   check("explicit-stub: a real (stub:false) record arriving AFTER a stub wins the merge (author = real)", stored.author.handle === "real_author" && stored.stub !== true);
 
   // raw.stub is honored as the explicit signal too (unitToRecord may stash it there).
   const STUB_DIR3 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub3-test-"));
-  const realViaRaw = { ...post("5005", "", {}), raw: { stub: false }, author: { handle: "keep_me", profileUrl: "https://x.com/keep_me" } };
-  const stubViaRaw = { ...post("5005", "", {}), raw: { stub: true }, author: { handle: "drop_me", profileUrl: "https://x.com/drop_me" } };
+  const realViaRaw = { ...post("5005", "", {}), raw: { stub: false }, author: { handle: "keep_me", profileUrl: "https://example.test/keep_me" } };
+  const stubViaRaw = { ...post("5005", "", {}), raw: { stub: true }, author: { handle: "drop_me", profileUrl: "https://example.test/drop_me" } };
   appendRecords(STUB_DIR3, [realViaRaw]);
   appendRecords(STUB_DIR3, [stubViaRaw]);
   stored = loadRecords(STUB_DIR3).find((e) => e.provenance.id === "5005");
@@ -189,8 +191,8 @@ const post = (id, text, metrics, over = {}) => ({
   const file = path.join(FWD_DIR, "records.jsonl");
   const forwardRecord = {
     kind: "post",
-    provenance: { source: "x", id: "future1", canonicalUrl: "https://x.com/i/status/future1", fetchedAt: "2026-07-09T00:00:00.000Z", via: "future-sensor" },
-    author: { handle: "future", profileUrl: "https://x.com/future" },
+    provenance: { source: "example", id: "future1", canonicalUrl: "https://example.test/i/status/future1", fetchedAt: "2026-07-09T00:00:00.000Z", via: "future-sensor" },
+    author: { handle: "future", profileUrl: "https://example.test/future" },
     text: "captured by a not-yet-invented sensor",
     metrics: { score: 3 },
     capture: { from: "aria/2026-07-09.txt", by: "human" },
@@ -219,43 +221,43 @@ const SEED_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-query-te
 {
   const profile = {
     kind: "profile",
-    provenance: prov("u_ada", { canonicalUrl: "https://x.com/ada" }),
+    provenance: prov("u_ada", { canonicalUrl: "https://example.test/ada" }),
     handle: "ada",
     displayName: "Ada Lovelace",
     bio: "Mathematician and writer.",
     metrics: { followers: 900 },
   };
   const rootPost = post("9001", "the thread root post everyone replies to", { score: 10 }, {
-    provenance: prov("9001", { canonicalUrl: "https://x.com/ada/status/9001" }),
+    provenance: prov("9001", { canonicalUrl: "https://example.test/ada/status/9001" }),
   });
   const comment1 = {
     kind: "comment",
     provenance: prov("9002"),
-    author: { handle: "bob", profileUrl: "https://x.com/bob" },
+    author: { handle: "bob", profileUrl: "https://example.test/bob" },
     text: "great point",
     metrics: { score: 3 },
-    parentUrl: "https://x.com/ada/status/9001",
-    threadRootUrl: "https://x.com/ada/status/9001",
+    parentUrl: "https://example.test/ada/status/9001",
+    threadRootUrl: "https://example.test/ada/status/9001",
     depth: 0,
     createdAt: "2026-07-01T00:00:00.000Z",
   };
   const comment2 = {
     kind: "comment",
     provenance: prov("9003"),
-    author: { handle: "carol", profileUrl: "https://x.com/carol" },
+    author: { handle: "carol", profileUrl: "https://example.test/carol" },
     text: "counterpoint here",
     metrics: { score: 1 },
-    parentUrl: "https://x.com/ada/status/9001",
-    threadRootUrl: "https://x.com/ada/status/9001",
+    parentUrl: "https://example.test/ada/status/9001",
+    threadRootUrl: "https://example.test/ada/status/9001",
     depth: 0,
     createdAt: "2026-07-02T00:00:00.000Z",
   };
   const userPost1 = post("9101", "ada's own first post about lambda calculus", { score: 5 }, {
-    author: { handle: "ada", profileUrl: "https://x.com/ada" },
+    author: { handle: "ada", profileUrl: "https://example.test/ada" },
     createdAt: "2026-06-01T00:00:00.000Z",
   });
   const userPost2 = post("9102", "ada's own second post about analytical engines", { score: 8 }, {
-    author: { handle: "ada", profileUrl: "https://x.com/ada" },
+    author: { handle: "ada", profileUrl: "https://example.test/ada" },
     createdAt: "2026-06-15T00:00:00.000Z",
   });
 
@@ -264,42 +266,42 @@ const SEED_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-query-te
   check("seed: every loaded record validates as an Entity", loadRecords(SEED_DIR).every(isEntity));
 
   // ── getRecord: single-entity lookup (get_profile/get_post's shape) ─────────
-  const gotProfileByHandle = getRecord(SEED_DIR, { source: "x", kind: "profile", id: "ada" });
+  const gotProfileByHandle = getRecord(SEED_DIR, { source: "example", kind: "profile", id: "ada" });
   check("getRecord: profile lookup by handle succeeds", !!gotProfileByHandle && gotProfileByHandle.handle === "ada");
 
-  const gotPostById = getRecord(SEED_DIR, { source: "x", kind: "post", id: "9001" });
+  const gotPostById = getRecord(SEED_DIR, { source: "example", kind: "post", id: "9001" });
   check("getRecord: post lookup by native id succeeds", !!gotPostById && gotPostById.provenance.id === "9001");
 
-  const gotPostByUrl = getRecord(SEED_DIR, { source: "x", kind: "post", id: "https://x.com/ada/status/9001" });
+  const gotPostByUrl = getRecord(SEED_DIR, { source: "example", kind: "post", id: "https://example.test/ada/status/9001" });
   check("getRecord: post lookup by canonicalUrl (idOrUrl shape) succeeds", !!gotPostByUrl && gotPostByUrl.provenance.id === "9001");
 
-  const missing = getRecord(SEED_DIR, { source: "x", kind: "post", id: "does-not-exist" });
+  const missing = getRecord(SEED_DIR, { source: "example", kind: "post", id: "does-not-exist" });
   check("getRecord: a miss returns undefined rather than throwing", missing === undefined);
 
   // ── queryRecords: comments (get_comments' shape) ────────────────────────────
-  const commentsPage = queryRecords(SEED_DIR, { op: "comments", source: "x", postIdOrUrl: "9001" });
+  const commentsPage = queryRecords(SEED_DIR, { op: "comments", source: "example", postIdOrUrl: "9001" });
   check("queryRecords(comments): returns a valid Page<Comment>", Array.isArray(commentsPage.items) && typeof commentsPage.truncated === "boolean");
   check("queryRecords(comments): both seeded comments are returned", commentsPage.items.length === 2 && commentsPage.items.every((c) => c.kind === "comment"));
   check("queryRecords(comments): not truncated (fits in default limit)", commentsPage.truncated === false && commentsPage.nextCursor === undefined);
 
-  const commentsPageLimited = queryRecords(SEED_DIR, { op: "comments", source: "x", postIdOrUrl: "9001", limit: 1 });
+  const commentsPageLimited = queryRecords(SEED_DIR, { op: "comments", source: "example", postIdOrUrl: "9001", limit: 1 });
   check("queryRecords(comments): limit is honored and truncated is set", commentsPageLimited.items.length === 1 && commentsPageLimited.truncated === true && typeof commentsPageLimited.nextCursor === "string");
-  const nextPage = queryRecords(SEED_DIR, { op: "comments", source: "x", postIdOrUrl: "9001", limit: 1, cursor: commentsPageLimited.nextCursor });
+  const nextPage = queryRecords(SEED_DIR, { op: "comments", source: "example", postIdOrUrl: "9001", limit: 1, cursor: commentsPageLimited.nextCursor });
   check("queryRecords(comments): the cursor advances to the next item, not the same one", nextPage.items[0].provenance.id !== commentsPageLimited.items[0].provenance.id);
   check("queryRecords(comments): the second page is the last (truncated:false)", nextPage.truncated === false);
 
   // ── queryRecords: search (search's shape) ───────────────────────────────────
-  const searchPosts = queryRecords(SEED_DIR, { op: "search", source: "x", query: "lambda" });
+  const searchPosts = queryRecords(SEED_DIR, { op: "search", source: "example", query: "lambda" });
   check("queryRecords(search, posts): text search finds the matching post", searchPosts.items.length === 1 && searchPosts.items[0].provenance.id === "9101");
 
-  const searchUsers = queryRecords(SEED_DIR, { op: "search", source: "x", query: "ada", type: "users" });
+  const searchUsers = queryRecords(SEED_DIR, { op: "search", source: "example", query: "ada", type: "users" });
   check("queryRecords(search, users): handle/displayName search finds the profile", searchUsers.items.length === 1 && searchUsers.items[0].kind === "profile");
 
-  const searchNoMatch = queryRecords(SEED_DIR, { op: "search", source: "x", query: "no-such-term-anywhere" });
+  const searchNoMatch = queryRecords(SEED_DIR, { op: "search", source: "example", query: "no-such-term-anywhere" });
   check("queryRecords(search): a no-match query returns a valid EMPTY Page, not an error", searchNoMatch.items.length === 0 && searchNoMatch.truncated === false);
 
   // ── queryRecords: timeline (get_timeline's shape) ───────────────────────────
-  const timeline = queryRecords(SEED_DIR, { op: "timeline", source: "x", kind: "user_posts", handle: "ada" });
+  const timeline = queryRecords(SEED_DIR, { op: "timeline", source: "example", kind: "user_posts", handle: "ada" });
   check("queryRecords(timeline, user_posts): returns exactly ada's own posts", timeline.items.length === 2 && timeline.items.every((p) => p.author.handle === "ada"));
   check("queryRecords(timeline, user_posts): sorted newest-first by createdAt", timeline.items[0].provenance.id === "9102");
 

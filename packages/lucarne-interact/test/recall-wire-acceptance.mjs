@@ -4,12 +4,18 @@
 // `npm run test:acceptance` in CI).
 //
 // This is the load-bearing safety proof of LS-13W: the WIRE sensor must issue ZERO requests of its
-// own. A local fixture page stands in for x's app (mirrors recall-acceptance.mjs's own fixture-for-
-// x.com substitution) — ITS OWN inline `<script>` makes a real `fetch()` call to a
-// `/i/api/graphql/…` -shaped path (genuine app behavior a human's browsing already causes), and the
+// own. A local fixture page stands in for a site's own app (mirrors recall-acceptance.mjs's own
+// fixture substitution) — ITS OWN inline `<script>` makes a real `fetch()` call to a
+// `/i/api/graphql/…`-shaped path (genuine app behavior a human's browsing already causes), and the
 // server answers with a GraphQL-response-shaped JSON body. `startRecall`'s wire sensor observes that
 // exchange purely via CDP's `Network` domain on its OWN, independent connection to the same
 // session — never a fetch the recorder itself makes.
+//
+// LS-29 (generalize-records): this package bundles no site-specific wire adapter of its own anymore
+// (the X adapter moved downstream to a domain package) — this proof now registers a small, fully
+// LOCAL, generic `exampleWireAdapter` (source:"example"-shaped records) instead of relying on a
+// bundled default. It also proves the NEW default itself: `startRecall` with `wireAdapters` omitted
+// registers ZERO adapters (no wire capture happens at all) — see the final case at the bottom.
 //
 // Asserts:
 //   1. ZERO recorder-originated requests (dev/01, the load-bearing invariant): a THIRD, independent
@@ -56,19 +62,42 @@ if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-recall-wire-acc-data-"));
 
 const ROOT_ID = "9988776655443322110";
-const GRAPHQL_PATH = "/i/api/graphql/fixedQueryId/TweetResultByRestId";
+const GRAPHQL_PATH = "/i/api/graphql/fixedQueryId/GetPostByRestId";
 
-// The GraphQL-response-shaped body the fixture SERVER answers with — the exact shape
-// `lucarne-records/sites/x-graphql.ts`'s `tweetToPost` consumes (`data.tweetResult.result`).
+// The GraphQL-response-shaped body the fixture SERVER answers with — a small, fully generic shape a
+// LOCAL adapter (below) parses; no dependency on any site-specific parser.
 const GRAPHQL_BODY = {
   data: {
-    tweetResult: {
+    postResult: {
       result: {
-        rest_id: ROOT_ID,
-        legacy: { full_text: "a genuinely fetched wire post", created_at: "Sun Jun 21 21:00:00 +0000 2026", favorite_count: 7, retweet_count: 1, reply_count: 0 },
-        core: { user_results: { result: { core: { screen_name: "wireuser", name: "Wire User" }, legacy: { profile_image_url_https: "https://pbs.twimg.com/profile_images/9/wireuser_normal.jpg" } } } },
+        id: ROOT_ID,
+        text: "a genuinely fetched wire post",
+        created_at: "Sun Jun 21 21:00:00 +0000 2026",
+        likes: 7,
+        reposts: 1,
+        replies: 0,
       },
     },
+  },
+};
+
+/** A small, fully LOCAL, generic wire adapter (LS-29 — this package bundles no site-specific
+ *  adapter of its own): matches this fixture's own `/i/api/graphql/` path, parses its own generic
+ *  response shape into a generic source:"example" record. Mirrors the shape a real domain adapter
+ *  (e.g. an X adapter) has, without depending on one. */
+const exampleWireAdapter = {
+  match: (url) => url.includes("/i/api/graphql/"),
+  dispatch(_requestUrl, payload) {
+    const r = payload?.data?.postResult?.result;
+    if (!r?.id) return [];
+    return [
+      {
+        kind: "post",
+        provenance: { source: "example", id: String(r.id), canonicalUrl: `https://example.test/status/${r.id}`, fetchedAt: new Date().toISOString(), via: "internal-api" },
+        text: r.text ?? "",
+        metrics: { score: r.likes, reposts: r.reposts, replies: r.replies },
+      },
+    ];
   },
 };
 
@@ -137,6 +166,7 @@ try {
   recall = await startRecall(interact, {
     dataDir: DATA_DIR,
     extractors: [],
+    wireAdapters: [exampleWireAdapter],
     observers: [(signal) => signals.push(signal)],
   });
 
@@ -147,7 +177,7 @@ try {
 
   // 2. dev/03 — the app's own GraphQL response landed as a via:'internal-api' record.
   const records = loadRecords(DATA_DIR);
-  const wireRecord = records.find((r) => r.provenance.source === "x" && r.provenance.id === ROOT_ID);
+  const wireRecord = records.find((r) => r.provenance.source === "example" && r.provenance.id === ROOT_ID);
   check("the fixture's own GraphQL response was captured and parsed to a via:'internal-api' record", !!wireRecord, JSON.stringify(records.map((r) => r.provenance)));
   check("the captured record's provenance.via is 'internal-api'", wireRecord?.provenance.via === "internal-api");
   check("a corresponding kind:'wire' RecallSignal was emitted", signals.some((s) => s.kind === "wire" && s.url.includes(GRAPHQL_PATH)), JSON.stringify(signals.map((s) => s.kind)));
@@ -178,6 +208,31 @@ try {
     JSON.stringify({ requestLog, unexpected }),
   );
   check("the fixture's OWN fetch DID appear in the independent request log (sanity: the log isn't just empty)", requestLog.some((u) => u.includes(GRAPHQL_PATH)), JSON.stringify(requestLog));
+
+  // 5. LS-29 — the NEW default: `startRecall` with `wireAdapters` OMITTED registers ZERO adapters (no
+  //    bundled site-specific adapter). A SECOND recall on the SAME session, own dataDir, wireAdapters
+  //    omitted entirely, hitting the SAME graphql-shaped fixture path — must produce NO wire signal
+  //    and NO record, proving the default `[]` genuinely disables wire capture (not just "defaults to
+  //    an adapter this test doesn't recognize").
+  const DATA_DIR2 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-recall-wire-acc-nodefault-"));
+  const signals2 = [];
+  const recallNoAdapters = await startRecall(interact, {
+    dataDir: DATA_DIR2,
+    extractors: [],
+    observers: [(signal) => signals2.push(signal)],
+  });
+  graphqlHitCount = 0;
+  await interact.open(PAGE1_URL);
+  await sleep(2500);
+  check(
+    "startRecall with wireAdapters OMITTED: zero adapters registered — no kind:'wire' signal fires even though the page's own fetch happens",
+    !signals2.some((s) => s.kind === "wire"),
+    JSON.stringify(signals2.map((s) => s.kind)),
+  );
+  check("startRecall with wireAdapters OMITTED: no record lands in that recall's own store", loadRecords(DATA_DIR2).length === 0, JSON.stringify(loadRecords(DATA_DIR2)));
+  check("the page's own fetch still happened (sanity: the omission disabled the WIRE SENSOR's capture, not the page's own behavior)", graphqlHitCount === 1, graphqlHitCount);
+  await recallNoAdapters.stop();
+  fs.rmSync(DATA_DIR2, { recursive: true, force: true });
 
   await recall.stop();
   await interact.close();

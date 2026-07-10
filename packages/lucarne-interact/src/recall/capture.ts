@@ -36,11 +36,11 @@ function relToDataDir(p: string, dataDir: string): string {
 
 /**
  * Dispatch `aria` through every extractor whose `match(url)` returns true, concatenating their
- * records. PURE (no I/O) — the extractors themselves are pure (`lucarne-records/sites`'s own
- * doc), and this loop is nothing but plugin selection, so it's independently Chrome-free
- * unit-testable (test/recall-extractor-dispatch.mjs) without a live Page. A misbehaving extractor
- * (one that throws) never breaks the capture or its siblings — same self-heal posture as the rest
- * of recall.
+ * records. PURE (no I/O) — the extractors themselves are pure (the CALLER registers its own
+ * site-specific extractors; this package bundles none and stays domain-agnostic), and this loop is
+ * nothing but plugin selection, so it's independently Chrome-free unit-testable
+ * (test/recall-extractor-dispatch.mjs) without a live Page. A misbehaving extractor (one that throws)
+ * never breaks the capture or its siblings — same self-heal posture as the rest of recall.
  */
 export function dispatchExtractors(url: string, aria: string, capture: Capture, extractors: readonly RecallExtractor[]): Entity[] {
   let records: Entity[] = [];

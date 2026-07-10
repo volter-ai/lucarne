@@ -14,14 +14,21 @@
  * `reload_extension`, `bridge_status`, `tools.ts:207-246`) are dropped: they
  * diagnosed a socket-based bridge to a browser extension that does not exist
  * in this design (the split spec's §1.3a).
+ *
+ * LS-29 (generalize-records): `lucarne-records` no longer closes the source set — this bin can query
+ * ANY corpus a sensor writes into, not just a fixed list of named sites. `sourceSchema` below is now
+ * an open, non-empty string; the five tool DESCRIPTIONS are de-domained (no site names hard-coded)
+ * while keeping every load-bearing promise verbatim: read-only, NEVER fetches, browse-in-session,
+ * pagination shape, and the `not_captured` contract.
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as queries from "./queries.js";
 
 const sourceSchema = z
-  .enum(["x", "reddit", "hackernews"])
-  .describe("Which site to query: 'x' (x.com / Twitter), 'reddit' (reddit.com), or 'hackernews' (news.ycombinator.com).");
+  .string()
+  .min(1)
+  .describe("The source namespace to query — the value a sensor wrote as each record's `provenance.source`. Any non-empty namespace a sensor captures into is valid.");
 
 const sortSchema = z
   .enum(["top", "new", "best", "controversial", "relevance"])
@@ -53,14 +60,14 @@ export function registerTools(server: McpServer, storeDir: string): void {
     "get_profile",
     {
       description:
-        "Read a captured user/account profile from x.com, reddit.com, or news.ycombinator.com out of " +
+        "Read a captured user/account profile, from whichever source you specify, out of " +
         "the local corpus. NEVER fetches — this is a query over what recall has already captured " +
-        "during genuine browsing. Returns the handle, bio, metrics (followers/karma), and structural " +
-        "provenance (canonicalUrl + fetchedAt). If the profile hasn't been captured yet, returns a " +
-        "`not_captured` result telling you to browse to it in-session first.",
+        "during genuine browsing. Returns the handle, bio, metrics (whatever the source normalizes), " +
+        "and structural provenance (canonicalUrl + fetchedAt). If the profile hasn't been captured " +
+        "yet, returns a `not_captured` result telling you to browse to it in-session first.",
       inputSchema: {
         source: sourceSchema,
-        handle: z.string().describe("Account handle WITHOUT the sigil — no leading '@' or 'u/'. e.g. 'paulg', 'patio11'."),
+        handle: z.string().describe("Account handle WITHOUT a leading sigil (e.g. no '@' or 'u/'). e.g. 'paulg', 'patio11'."),
       },
     },
     async ({ source, handle }) => {
@@ -76,10 +83,11 @@ export function registerTools(server: McpServer, storeDir: string): void {
     "get_post",
     {
       description:
-        "Read a captured post (a tweet, a subreddit submission, or an HN story/Ask/Show) by id or URL " +
-        "out of the local corpus. NEVER fetches. Returns title/text, author reference, engagement " +
-        "metrics, its container, and provenance. If it hasn't been captured yet, returns a " +
-        "`not_captured` result telling you to browse to it in-session first.",
+        "Read a captured post (whatever a source's own top-level item is — a status update, a forum " +
+        "submission, a story, …) by id or URL out of the local corpus. NEVER fetches. Returns " +
+        "title/text, author reference, engagement metrics, its container, and provenance. If it " +
+        "hasn't been captured yet, returns a `not_captured` result telling you to browse to it " +
+        "in-session first.",
       inputSchema: {
         source: sourceSchema,
         idOrUrl: z.string().describe("Native post id OR a full canonical URL to the post. Both are accepted."),
@@ -133,14 +141,14 @@ export function registerTools(server: McpServer, storeDir: string): void {
       description:
         "Free-text search over what's been captured so far, returning matches with provenance. NEVER " +
         "fetches or issues a site search request — it filters the local corpus. type='posts' (default) " +
-        "matches posts/tweets; type='users' matches profiles. PAGINATED: returns { items, nextCursor?, " +
+        "matches posts; type='users' matches profiles. PAGINATED: returns { items, nextCursor?, " +
         "truncated }. If nothing captured matches, returns a `not_captured` result suggesting where to " +
         "browse so matching content gets captured.",
       inputSchema: {
         source: sourceSchema,
         query: z.string().describe("Free-text search query, matched against captured text/title/bio/handle."),
-        type: z.enum(["posts", "users"]).optional().describe("'posts' (default) returns posts/tweets; 'users' returns profiles."),
-        container: z.string().optional().describe("Reddit only: restrict to a subreddit name like 'programming' (no 'r/')."),
+        type: z.enum(["posts", "users"]).optional().describe("'posts' (default) returns posts; 'users' returns profiles."),
+        container: z.string().optional().describe("Restrict to a named container (e.g. a forum board) when the source has one — no leading sigil."),
         limit: z.number().int().min(1).max(100).optional().describe("Max results per page. Default 25."),
         sort: sortSchema.optional(),
         cursor: z.string().optional().describe("Opaque cursor from a previous page's nextCursor to continue."),
@@ -160,17 +168,18 @@ export function registerTools(server: McpServer, storeDir: string): void {
     {
       description:
         "Read a captured list of posts out of the local corpus: a user's own posts " +
-        "(kind='user_posts', needs 'handle'), or a named site list (reddit needs 'container'; HN needs " +
-        "nothing else). NEVER fetches or scrolls to load more — it returns whatever has been captured " +
-        "so far. PAGINATED: returns { items, nextCursor?, truncated }. If nothing has been captured for " +
-        "this list yet, returns a `not_captured` result telling you to browse it in-session first.",
+        "(kind='user_posts', needs 'handle'), or a named source list (some sources need 'container'; " +
+        "others need nothing else). NEVER fetches or scrolls to load more — it returns whatever has " +
+        "been captured so far. PAGINATED: returns { items, nextCursor?, truncated }. If nothing has " +
+        "been captured for this list yet, returns a `not_captured` result telling you to browse it " +
+        "in-session first.",
       inputSchema: {
         source: sourceSchema,
         kind: z
           .enum(["user_posts", "hot", "new", "top", "best", "ask", "show"])
-          .describe("Which list. 'user_posts' needs handle; reddit site lists need container."),
-        handle: z.string().optional().describe("Account handle for kind='user_posts' (no @ / u/)."),
-        container: z.string().optional().describe("Subreddit for reddit site lists (no 'r/')."),
+          .describe("Which list. 'user_posts' needs handle; some source lists need container."),
+        handle: z.string().optional().describe("Account handle for kind='user_posts' (no leading sigil)."),
+        container: z.string().optional().describe("Named container for a source list that has one (no leading sigil)."),
         limit: z.number().int().min(1).max(100).optional().describe("Max items per page. Default 25."),
         cursor: z.string().optional().describe("Opaque cursor from a previous page's nextCursor."),
         sort: sortSchema.optional(),

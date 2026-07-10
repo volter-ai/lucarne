@@ -27,8 +27,8 @@
  *
  * MERGE INVARIANTS (must hold — ported from `units.ts:114-131`):
  *  - richest-text-wins: for the same identity, the record carrying MORE text
- *    (bio, for a Profile) replaces a thinner one. This is the ONLY place text
- *    length matters — it is NOT how stub-ness is decided (see below).
+ *    replaces a thinner one. This is the ONLY place text length matters — it
+ *    is NOT how stub-ness is decided (see below).
  *  - stub-never-degrades: a record known to be REAL is never overwritten by a
  *    stub for the same identity. The origin app decided this from an EXPLICIT `Unit.stub`
  *    flag, never from text length — its own comment (`units.ts:122`) warns that
@@ -39,6 +39,17 @@
  *    stub, even when the real one is text-less). Only when NO explicit signal
  *    exists do we fall back to the structural heuristic (empty text/bio AND no
  *    real metric) so a bare LS-03 record still degrades sensibly.
+ *
+ * LS-29 (generalize-records): this module's LOGIC is byte-identical to the social-only version — only
+ * the TYPES widened (`Entity` now names the general `CorpusRecord`, not a closed Post/Comment/Profile
+ * union). The one deliberate generalization is `textOf` below: it now honors `bio` as a LEGACY
+ * content alias for any `kind`, not just `kind==="profile"` — so a domain record that calls its body
+ * field `bio` (the social `Profile` convention this package used to hard-code) still merges
+ * correctly under the general richest-text-wins rule, without this package knowing anything about
+ * what a "profile" is. The domain payload (every OTHER top-level field — author, container, handle,
+ * …) is a shallow, top-level, donor-wins spread via `{ ...base, ...donor }` below — that was already
+ * how this merge worked; LS-29 pins it with a test (`test/open-source.mjs`: an arbitrary domain
+ * record's own fields, e.g. a GitHub record's `labels: [...]`, survive a merge unmolested).
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -58,8 +69,12 @@ export function recordKey(e: Pick<Entity, "kind" | "provenance">): string {
   return `${e.provenance.source}:${e.kind}:${e.provenance.id}`;
 }
 
+/** The GENERAL content-length signal richest-text-wins compares: `text` when present, else the
+ *  legacy `bio` alias (the social `Profile.bio` convention, honored generically here — LS-29), else
+ *  `""`. Reads both fields defensively since neither is guaranteed to exist on an arbitrary domain
+ *  record (`CorpusRecord`'s index signature types every undeclared field `unknown`). */
 function textOf(e: Entity): string {
-  return e.kind === "profile" ? e.bio ?? "" : e.text ?? "";
+  return typeof e.text === "string" ? e.text : typeof e.bio === "string" ? e.bio : "";
 }
 
 function hasRealMetrics(m: Record<string, unknown> | undefined | null): boolean {

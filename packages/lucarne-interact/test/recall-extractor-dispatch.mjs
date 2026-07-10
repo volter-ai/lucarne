@@ -1,15 +1,20 @@
 // LS-13 dev — the extractor-plugin dispatch (Chrome-free): "extractors are plugins ({match,
-// extract})" — cadence passes LS-05's X ARIA extractor. `dispatchExtractors` is the PURE selection
-// loop `runStaticCapture` (capture.ts) runs against a live page's ARIA text; here it's exercised
-// directly against fixture strings, plus the REAL `xAriaExtractor` from `lucarne-records/sites` to
-// prove the whole screen-sensor pipeline (match -> extract -> viewport-filter) produces genuine
-// `via:'screen'` records without ever touching a browser.
+// extract})" — a caller passes its own site-specific extractor (e.g. cadence passes its X ARIA
+// extractor). `dispatchExtractors` is the PURE selection loop `runStaticCapture` (capture.ts) runs
+// against a live page's ARIA text; exercised here directly against fixture strings — both a
+// hand-rolled fake extractor (the dispatch LOGIC proof) and a small GENERIC local fixture extractor
+// (the whole screen-sensor pipeline proof: match -> extract -> viewport-filter) — without ever
+// touching a browser.
 //
-// Run with `node test/recall-extractor-dispatch.mjs` (after `npm run build` in BOTH this package
-// and lucarne-records).
+// LS-29 (generalize-records): this package no longer depends on any site-specific parser
+// (`lucarne-records`' X ARIA extractor moved downstream to a domain package) — the "real extractor"
+// half of this test now uses a small, fully LOCAL, generic fixture extractor (source:"example"-shaped
+// records) instead of importing an X-specific one. The X-specific version of this proof (driving the
+// actual `xAriaExtractor`) now lives in the domain package's own test suite.
+//
+// Run with `node test/recall-extractor-dispatch.mjs` (after `npm run build`).
 import { dispatchExtractors } from "../dist/recall/capture.js";
 import { filterVisibleRecords, rootIdFromUrl } from "../dist/recall/visible-filter.js";
-import { xAriaExtractor } from "lucarne-records";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -42,37 +47,47 @@ const check = (name, pass, detail = "") => {
   check("dispatchExtractors: an empty extractor list -> empty array", empty.length === 0);
 }
 
-// ── B. the REAL xAriaExtractor end-to-end (match + extract + viewport-filter), no Chrome ──
+// ── B. a GENERIC local fixture extractor end-to-end (match + extract + viewport-filter), no Chrome,
+//    no site-specific parser dependency — proves the whole screen-sensor pipeline generically ──
 {
-  check("xAriaExtractor.match: recognizes x.com/twitter.com urls", xAriaExtractor.match("https://x.com/paulg/status/123") && xAriaExtractor.match("https://twitter.com/home"));
-  check("xAriaExtractor.match: rejects an unrelated url", xAriaExtractor.match("https://reddit.com/r/programming") === false);
+  // A tiny, deliberately simple line-oriented parser: `#<id> root|reply: <text>` lines, mirroring the
+  // SHAPE of a real ARIA-snapshot extractor (root vs reply, an id, verbatim text) without depending
+  // on any site's actual markup convention.
+  function extractExampleRecords(aria, capture = {}) {
+    const out = [];
+    for (const line of String(aria || "").split("\n")) {
+      const m = line.match(/^#(\S+)\s+(root|reply):\s*(.*)$/);
+      if (!m) continue;
+      const [, id, kindWord, text] = m;
+      out.push({
+        kind: kindWord === "root" ? "post" : "comment",
+        provenance: { source: "example", id, canonicalUrl: `https://example.test/status/${id}`, fetchedAt: "2026-01-01T00:00:00.000Z", via: "screen" },
+        text,
+        metrics: {},
+        capture,
+      });
+    }
+    return out;
+  }
+  const exampleExtractor = { match: (url) => String(url || "").includes("example.test"), extract: extractExampleRecords };
+
+  check("exampleExtractor.match: recognizes example.test urls", exampleExtractor.match("https://example.test/paulg/status/123"));
+  check("exampleExtractor.match: rejects an unrelated url", exampleExtractor.match("https://nowhere.test/x") === false);
 
   const ROOT_SID = "1234567890123456789";
   const REPLY_SID = "4444444444444444444";
-  const rootBlock = [
-    '- article "Paul Graham @paulg · Jul 1":',
-    '  - link "9:00 AM":',
-    `    - /url: /paulg/status/${ROOT_SID}`,
-    '  - text: "hello from the root post"',
-    '  - group "1 replies, 0 reposts, 5 likes":',
-  ];
-  const replyBlock = [
-    '- article "Jane Doe @janedoe · Jul 1":',
-    '  - link "10:00 AM":',
-    `    - /url: /janedoe/status/${REPLY_SID}`,
-    '  - text: "a genuine reply"',
-    '  - group "0 replies, 0 reposts, 1 likes":',
-  ];
-  const aria = [...rootBlock, ...replyBlock].join("\n");
-  const url = `https://x.com/paulg/status/${ROOT_SID}`;
+  const aria = [`#${ROOT_SID} root: hello from the root post`, `#${REPLY_SID} reply: a genuine reply`].join("\n");
+  const url = `https://example.test/paulg/status/${ROOT_SID}`;
   const capture = { page: url, from: "aria/2026-01-01.txt", screenshot: "view/2026-01-01.png", ts: "2026-01-01T00:00:00.000Z", reason: "navigated", by: "agent" };
 
-  const dispatched = dispatchExtractors(url, aria, capture, [xAriaExtractor]);
-  check("dispatchExtractors + xAriaExtractor: produces one post + one comment", dispatched.length === 2, `got ${dispatched.length}`);
+  const dispatched = dispatchExtractors(url, aria, capture, [exampleExtractor]);
+  check("dispatchExtractors + exampleExtractor: produces one post + one comment", dispatched.length === 2, `got ${dispatched.length}`);
   check("every dispatched record carries provenance.via:'screen'", dispatched.every((r) => r.provenance.via === "screen"), JSON.stringify(dispatched.map((r) => r.provenance.via)));
   check("every dispatched record's capture.by matches what recall stamped ('agent')", dispatched.every((r) => r.capture?.by === "agent"));
 
   const rootId = rootIdFromUrl(url);
+  // rootIdFromUrl matches `/status/(\d+)` — a generic-enough convention this package's viewport
+  // filter still honors regardless of which domain's extractor produced the records.
   check("rootIdFromUrl recovers the thread root's bare sid from the capturing page's url", rootId === ROOT_SID);
 
   // Viewport-honesty: only the REPLY was reported visible this tick; the root (off-screen, but the
