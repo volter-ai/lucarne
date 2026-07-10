@@ -63,7 +63,10 @@ const PAGE_HTML = `<!doctype html><html><body>
   <button id="barePost" onclick="window.__barePublished=true">Post</button>
 
   <a id="next" href="/next">go to next page</a>
-  <button id="expandBtn" onclick="window.__expanded=true">Show 3 more replies</button>
+  <!-- A GENUINE disclosure control: the structural allow shape is the aria-expanded attribute (any
+       value, incl. "false" — presence marks a disclosure toggle), NOT a bare <button> (which the
+       post-S1 classifier default-REFUSES; see test/activate-gate.mjs's unit matrix). -->
+  <button id="expandBtn" aria-expanded="false" onclick="window.__expanded=true">Show 3 more replies</button>
 
   <!-- LS-31/S1 REVIEW FOLLOW-UP FIXTURES (D1/D2/D3) -->
 
@@ -292,14 +295,6 @@ try {
     check("activate(#expandBtn): the button's onclick DID fire (real activation happened)", after.expanded === true, JSON.stringify(after));
   }
 
-  // Navigation STILL works: a real `<a href>` actually navigates the real page.
-  {
-    await s.activate("#next");
-    await new Promise((r) => setTimeout(r, 300));
-    const snap = await s.snap("body", 20);
-    check("activate(#next, <a href>): the real page actually navigated", /Next Page/.test(snap), snap.slice(0, 80));
-  }
-
   // ── D1 (security review follow-up): a real-href GET-action anchor whose OWN attributes carry no
   //    aria-label/title (the "upvote" title sits on a CHILD span, HN's real DOM shape) reads as
   //    structural nav and ALLOWS with NO policy — this documents the exact hole `activatePolicy.deny`
@@ -357,6 +352,17 @@ try {
     const after = await readFlags();
     check("D3 — activate(#replyToggle) with NO policy: THROWS (no real href/testid/aria-label to allow it)", threw instanceof Error, String(threw));
     check("D3 — activate(#replyToggle) with NO policy: reply toggle NEVER fired", after.replyToggleOpened === false, JSON.stringify(after));
+  }
+
+  // Navigation STILL works: a real `<a href>` actually navigates the real page. MUST run LAST among
+  // the no-policy checks on this page — it genuinely navigates AWAY to /next (which carries none of
+  // the fixture elements above), so any per-element check placed after it would probe a selector that
+  // no longer exists and hang until the locator timeout (the real CI failure this ordering fixes).
+  {
+    await s.activate("#next");
+    await new Promise((r) => setTimeout(r, 300));
+    const snap = await s.snap("body", 20);
+    check("activate(#next, <a href>): the real page actually navigated", /Next Page/.test(snap), snap.slice(0, 80));
   }
 
   await s.close();

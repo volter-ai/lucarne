@@ -105,12 +105,19 @@ try {
   check("page A's queued intent ('a1') came back on some page's items", !!entryA, JSON.stringify(first));
   check("page B's queued intent ('b1') came back on some page's items", !!entryB, JSON.stringify(first));
 
-  const focusedEntries = first.filter((p) => p.focused === true);
-  check("EXACTLY ONE page reports focused: true", focusedEntries.length === 1, JSON.stringify(first.map((p) => ({ url: p.url, focused: p.focused, visible: p.visible }))));
+  // Distinguish the front tab via document.visibilityState, NOT document.hasFocus(): in headless CI
+  // (xvfb, the CI acceptance job) there is no real OS window focus, so `document.hasFocus()` returns
+  // true for EVERY page and "exactly one focused" is not a reliable discriminator. The signal CDP's
+  // `bringToFront` DOES produce headless is visibilityState — the activated target goes 'visible' and
+  // the others go 'hidden' — which is exactly what the product's own tab-scoring weights most heavily
+  // (`visible ? 2 : 0` dominates `focused ? 1 : 0` in host.ts's `activeTabInfo`). So assert the real
+  // property (the brought-to-front tab is the single distinguished/best-scored one) through visibility.
+  const visibleEntries = first.filter((p) => p.visible === true);
+  check("EXACTLY ONE page reports visible: true (the brought-to-front tab — robust headless, unlike hasFocus)", visibleEntries.length === 1, JSON.stringify(first.map((p) => ({ url: p.url, focused: p.focused, visible: p.visible }))));
   check(
-    "the page brought to the front (B, holding the 'b1' intent) is the one reporting focused: true — never A",
-    focusedEntries.length === 1 && focusedEntries[0] === entryB,
-    JSON.stringify({ focusedEntries, entryA, entryB }),
+    "the page brought to the front (B, holding the 'b1' intent) is the one reporting visible: true — never A",
+    visibleEntries.length === 1 && visibleEntries[0] === entryB,
+    JSON.stringify({ visibleEntries, entryA, entryB }),
   );
 
   // ── the drain CLEARS what it read: a second call back-to-back, with nothing re-queued, must come back empty
@@ -125,7 +132,9 @@ try {
   // ── the read-only sibling: never mutates the (now-empty) queue, and still reports the same focus signal. ──
   await pageA.evaluate((k) => { window[k] = [{ id: "a2", payload: { action: "pick" } }]; }, KEY);
   const info = await host.activeTabInfo();
-  check("activeTabInfo() resolves to the currently-focused page's info", !!info && info.focused === true, JSON.stringify(info));
+  // Assert it resolved to the FRONT tab via visibility (the best-scored page) — robust headless, where
+  // every page reports focused:true. `visible` is the discriminator CDP bringToFront actually moves.
+  check("activeTabInfo() resolves to the brought-to-front (visible, best-scored) page's info", !!info && info.visible === true, JSON.stringify(info));
   const afterProbe = await host.drainIntentsWithContext(QUEUE_NAME);
   const stillThere = afterProbe.find((p) => Array.isArray(p.items) && p.items.some((it) => it && it.id === "a2"));
   check("activeTabInfo() never cleared page A's re-seeded queue (genuinely read-only)", !!stillThere, JSON.stringify(afterProbe));
