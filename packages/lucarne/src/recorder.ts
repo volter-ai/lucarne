@@ -22,7 +22,7 @@ function ffmpegAvailable(): boolean {
 
 /**
  * CCTV ring recorder (both backends — it consumes the shared CDP screencast, which
- * is backend-agnostic): feeds frames into ffmpeg at a constant cadence (so segments
+ * is backend-agnostic): feeds frames into ffmpeg at a constant rate (so segments
  * cut on time even when the page is static), hardware-encoded on macOS. Best-effort
  * — returns null and logs if ffmpeg isn't installed; drive + watch still work.
  */

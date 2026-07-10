@@ -8,7 +8,7 @@ export interface StickyDef {
 
 /**
  * Accept/reject an injection id. Default (no policy passed) is PERMISSIVE — every
- * id is accepted. A caller (e.g. cadence's shell-only allow-list, wired in LS-20)
+ * id is accepted. A caller (e.g. the origin app's shell-only allow-list, wired in LS-20)
  * supplies a stricter predicate; this hook only decides accept/reject, it knows
  * nothing about what "shell" or "content" mean.
  */
@@ -31,13 +31,13 @@ interface PageSession {
 
 /**
  * Sticky, per-session script injection over the engine's OWN raw CDP client — no
- * Playwright involved (see `cdp.ts`). Ported from cadence's eval-server sticky
- * store (`cadence/src/browser/server.ts:124-208`), which rode a Playwright
+ * Playwright involved (see `cdp.ts`). Ported from the origin app's eval-server sticky
+ * store (`server.ts:124-208`), which rode a Playwright
  * `BrowserContext`'s `page` event to cover new tabs; the engine has none, so
  * coverage of newly opened tabs instead comes from raw CDP target discovery
  * (`Target.setDiscoverTargets` → `Target.targetCreated`, see `start()` below).
  *
- * Three invariants carried over from the cadence original:
+ * Three invariants carried over from the origin app's original:
  *  - `Page.addScriptToEvaluateOnNewDocument` re-runs the script on every
  *    reload/navigation for free — but it fires at document-START (before
  *    `document.documentElement` exists), so a source that touches the DOM would
@@ -97,7 +97,7 @@ export class InjectionStore {
   async set(id: string, source: string, bypassCSP = false): Promise<void> {
     if (!this.policy(id)) throw new Error(`lucarne: injection '${id}' rejected by policy`);
     // LAZY: the first injection is what opens the browser-level discovery tap.
-    // Best-effort — like cadence's `/sticky`, the DESIRED STATE is recorded even
+    // Best-effort — like the origin app's `/sticky`, the DESIRED STATE is recorded even
     // if the browser can't be reached right now (it's applied on the next
     // reachable moment / a restart), so a transient CDP hiccup never loses an id.
     await this.start().catch(() => { /* browser not reachable yet — state still recorded below */ });
@@ -135,7 +135,7 @@ export class InjectionStore {
    * open pages and apply to each, then subscribe to target churn so new tabs are
    * covered and closed tabs release their per-page session.
    *
-   * New-tab coverage: cadence rode Playwright's `context.on('page', ...)`; the
+   * New-tab coverage: the origin app rode Playwright's `context.on('page', ...)`; the
    * engine has no Playwright `BrowserContext`, so this attaches to the session's
    * BROWSER-level CDP endpoint and turns on target discovery
    * (`Target.setDiscoverTargets`) — `Target.targetCreated` then fires for every
@@ -259,8 +259,8 @@ export class InjectionStore {
 
   /**
    * Register every policy-accepted sticky script on ONE page. Lazily opens (and
-   * then holds) a dedicated CDP session for the page — the LIVE session cadence's
-   * comment calls out, needed because `Page.setBypassCSP` dies with the session.
+   * then holds) a dedicated CDP session for the page — the LIVE session the origin
+   * app's comment calls out, needed because `Page.setBypassCSP` dies with the session.
    */
   private async applyToTargetInner(targetId: string): Promise<void> {
     if (this.closed) return;

@@ -1,7 +1,7 @@
 /**
  * The pure record store: `appendRecords`/`loadRecords`.
  *
- * Generalized from cadence's per-identity unit store (`cadence/src/units.ts:105-142`,
+ * Generalized from the origin app's per-identity unit store (`units.ts:105-142`,
  * `appendUnits`/`loadUnits`) onto the normalized `Entity` shape (LS-03). Same
  * on-disk shape too: one JSONL file, one JSON object per line, one line per
  * DISTINCT record identity — re-running `appendRecords` over the same capture
@@ -30,7 +30,7 @@
  *    (bio, for a Profile) replaces a thinner one. This is the ONLY place text
  *    length matters — it is NOT how stub-ness is decided (see below).
  *  - stub-never-degrades: a record known to be REAL is never overwritten by a
- *    stub for the same identity. Cadence decided this from an EXPLICIT `Unit.stub`
+ *    stub for the same identity. The origin app decided this from an EXPLICIT `Unit.stub`
  *    flag, never from text length — its own comment (`units.ts:122`) warns that
  *    "real" is NOT "text is empty": an image/video-only post is REAL with empty
  *    text. So we honor an explicit stub signal FIRST (a top-level `stub:boolean`

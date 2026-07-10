@@ -2,7 +2,7 @@
  * x.com GraphQL response parsers — the WIRE sensor's per-site parser family
  * (LS-05b).
  *
- * Ported ONLY the pure response parsers named in CADENCE-SPLIT-TASKSPEC.md
+ * Ported ONLY the pure response parsers named in the split spec's
  * §2 LS-05 from `claude-socials/packages/extension/src/sites/x.ts:513-768`:
  * `tweetToPost`, `parseTweetDetail`, `parseSearchTimeline`, `parseUserTweets`,
  * `userResultToProfile` — plus the small pure helpers those five lean on
@@ -14,7 +14,7 @@
  * passive `Network`-domain capture (LS-13W) observes the SAME response bytes
  * without ever issuing, replaying, or paginating a request itself.
  *
- * NOT ported here — categorically, per CADENCE-SPLIT-TASKSPEC.md §1.3/§1.3a,
+ * NOT ported here — categorically, per the split spec's §1.3/§1.3a,
  * not an oversight:
  *  - the two on-demand functions at `x.ts:126-229` (named for opening a small,
  *    unfocused browser window and reading back what loads in it — one plain,

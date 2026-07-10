@@ -13,7 +13,7 @@
  * The three bridge-diagnostic tools from the original (`x_debug`,
  * `reload_extension`, `bridge_status`, `tools.ts:207-246`) are dropped: they
  * diagnosed a socket-based bridge to a browser extension that does not exist
- * in this design (CADENCE-SPLIT-TASKSPEC.md §1.3a).
+ * in this design (the split spec's §1.3a).
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

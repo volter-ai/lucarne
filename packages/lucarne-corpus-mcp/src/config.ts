@@ -5,7 +5,7 @@
  * localhost socket server, and `CLAUDE_SOCIALS_PORT` configured which port it
  * listened on (`claude-socials/packages/mcp-server/src/index.ts:14`, the
  * bridge's `DEFAULT_PORT`). That bridge — extension + socket server + replay
- * transport — does not exist in this package (CADENCE-SPLIT-TASKSPEC.md
+ * transport — does not exist in this package (the split spec's
  * §1.3a): this package's ONLY I/O is reading a `lucarne-records` store
  * directory off disk. So the genuinely-configured input here is a STORE
  * DIRECTORY, not a port; `LUCARNE_CORPUS_STORE_DIR` is that.
@@ -39,7 +39,7 @@ export interface CorpusConfig {
 const DEPRECATION_WARNING =
   "[lucarne-corpus-mcp] CLAUDE_SOCIALS_PORT is deprecated; use LUCARNE_CORPUS_PORT instead. " +
   "Note: lucarne-corpus-mcp has no bridge/port to dial (the extension + socket bridge it replaces " +
-  "was dissolved — see CADENCE-SPLIT-TASKSPEC.md §1.3a); this value has no functional effect and is " +
+  "was dissolved — see the split spec's §1.3a); this value has no functional effect and is " +
   "accepted only for back-compat continuity. Configure the store location with LUCARNE_CORPUS_STORE_DIR.";
 
 function parsePort(raw: string | undefined): number | undefined {

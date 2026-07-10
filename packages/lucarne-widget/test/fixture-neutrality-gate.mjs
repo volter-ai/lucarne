@@ -28,7 +28,10 @@ const EXCLUDE_DIRS = new Set(["node_modules", "dist", ".git"]);
 // dev/01) is also exempt for the SAME reason this file excludes itself below (`SELF`): its entire job is to
 // assert a zero count of a specific legacy literal elsewhere in the package, which means its own source
 // necessarily spells that literal (in a regex/comment) — that is the gate doing its job, not a regression.
-const EXEMPT_BASENAMES = new Set(["CHANGELOG.md", "no-legacy-global-literal-gate.mjs"]);
+// `package-clean-gate.mjs` (LS-24c) is exempt for the identical reason: it is the src/-scoped sibling of THIS
+// gate (same law, narrower scope — src/ only, no test/ or README.md), and its own source necessarily spells
+// "cadence"/`.social` in its banned-pattern list and comments describing what it bans.
+const EXEMPT_BASENAMES = new Set(["CHANGELOG.md", "no-legacy-global-literal-gate.mjs", "package-clean-gate.mjs"]);
 const SCAN_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".md", ".json"]);
 
 function walk(dir) {

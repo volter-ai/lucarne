@@ -44,7 +44,8 @@
     "build": "tsc -b",
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node test/config.mjs && node test/queries.mjs && node test/no-egress.mjs && node test/mcp-tools.mjs"
+    "test": "npm run build && node test/config.mjs && node test/queries.mjs && node test/no-egress.mjs && node test/mcp-tools.mjs",
+    "test:unit": "npm run build && node test/config.mjs && node test/queries.mjs && node test/no-egress.mjs && node test/mcp-tools.mjs && node test/package-clean-gate.mjs"
   },
   "dependencies": {
     "lucarne-records": "^0.1.0",

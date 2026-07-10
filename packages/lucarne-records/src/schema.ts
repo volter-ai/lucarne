@@ -14,16 +14,16 @@
  *    nothing is lost — but normalized fields should be preferred.
  *
  * NOT ported: the extension<->bridge wire protocol (`shared/src/protocol.ts`) —
- * no bridge exists in this design (see CADENCE-SPLIT-TASKSPEC.md §1.3a/§1.4).
+ * no bridge exists in this design (see the split spec's §1.3a/§1.4).
  *
  * LS-04 EXTENSION: `Provenance.via` gains `'screen'` (a passive ARIA capture,
- * cadence's ONLY sensor today) alongside `'internal-api'` (which now denotes a
+ * the origin app's ONLY sensor today) alongside `'internal-api'` (which now denotes a
  * passively CDP-captured wire response, not a replayed fetch — see §1.3a) and
  * `'dom'`. It also adds an optional `capture` pointer — ported faithfully from
- * `cadence/src/types.ts:17-24`'s `Capture` interface — so a screen-sensor record
+ * the origin app's `types.ts:17-24`'s `Capture` interface — so a screen-sensor record
  * can cite exactly which recorded ARIA snapshot/screenshot/moment it came from,
- * and an explicit `stub` signal on `Post` so a minted placeholder (cadence's
- * `Unit.stub`, `cadence/src/types.ts:52`) is never mistaken for a real capture
+ * and an explicit `stub` signal on `Post` so a minted placeholder (the origin app's
+ * `Unit.stub`, `types.ts:52`) is never mistaken for a real capture
  * by `store.ts`'s `mergeEntity` (see that file's stub-never-degrades doc). The
  * `Unit → record` mapping itself lives in `unit-to-record.ts`.
  */
@@ -51,9 +51,9 @@ export interface Provenance {
    *  - `'internal-api'` — a passively CDP-captured wire response (the site's
    *    own JSON/GraphQL, observed via the `Network` domain on a session
    *    lucarne already owns — never a replayed/synthetic request; see
-   *    CADENCE-SPLIT-TASKSPEC.md §1.3/§1.3a).
+   *    the split spec's §1.3/§1.3a).
    *  - `'dom'` — scraped from the rendered page.
-   *  - `'screen'` — a passive ARIA capture (cadence's recall sensor,
+   *  - `'screen'` — a passive ARIA capture (the origin app's recall sensor,
    *    `unitToRecord`'s output — LS-04).
    */
   via: "internal-api" | "dom" | "screen";
@@ -62,9 +62,9 @@ export interface Provenance {
 /**
  * Provenance for a SCREEN-sensor (ARIA) capture: a pointer back to the exact
  * recorded moment a record's fields were observed from. Ported faithfully from
- * `cadence/src/types.ts:17-24`'s `Capture` interface (LS-04) — kept as
- * nullable-optional exactly as cadence wrote it, since the ARIA capture
- * plumbing this feeds (`cadence/src/units.ts`) already produces `null` (not
+ * the origin app's `types.ts:17-24`'s `Capture` interface (LS-04) — kept as
+ * nullable-optional exactly as the origin app wrote it, since the ARIA capture
+ * plumbing this feeds (`units.ts`) already produces `null` (not
  * just `undefined`) for an unknown field.
  */
 export interface Capture {
@@ -140,8 +140,8 @@ export interface Post {
    */
   capture?: Capture;
   /**
-   * EXPLICIT real/stub signal (LS-04), ported from cadence's `Unit.stub`
-   * (`cadence/src/types.ts:52`): `true` for a minted placeholder (id+handle
+   * EXPLICIT real/stub signal (LS-04), ported from the origin app's `Unit.stub`
+   * (`types.ts:52`): `true` for a minted placeholder (id+handle
    * known from a comment's thread, content not yet observed), `false` for a
    * genuine capture — including a text-less one (e.g. an image-only post).
    * When present this is AUTHORITATIVE for `store.ts`'s `mergeEntity`
@@ -172,8 +172,8 @@ export interface Comment {
   replyIds?: string[];
   /**
    * SCREEN-sensor provenance (LS-04): see `Post.capture`. Comments are never
-   * stubs in cadence's model (`Unit`'s `Comment.stub` is typed `never` —
-   * `cadence/src/types.ts:60`), so there is no `stub` field here.
+   * stubs in the origin app's model (`Unit`'s `Comment.stub` is typed `never` —
+   * `types.ts:60`), so there is no `stub` field here.
    */
   capture?: Capture;
   raw?: Record<string, unknown>;

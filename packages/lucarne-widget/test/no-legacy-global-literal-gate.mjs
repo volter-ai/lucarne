@@ -16,6 +16,10 @@
 // `fixture-neutrality-gate.mjs` solves for itself via its own `SELF` exclusion): this gate is listed in that
 // gate's `EXEMPT_BASENAMES` for the identical reason.
 //
+// `package-clean-gate.mjs` (LS-24c, src/-scoped sibling of this gate and of `fixture-neutrality-gate.mjs`) is
+// excluded below for the SAME reason SELF is: its own source necessarily spells `cadence`/`__cadence`/`.social`
+// in its banned-pattern list and describing comments — that is the gate doing its job, not a regression.
+//
 // Run with `node test/no-legacy-global-literal-gate.mjs` (no build required — this only greps source text).
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve, join } from "node:path";
@@ -45,9 +49,10 @@ function walk(dir) {
 }
 
 const SELF = fileURLToPath(import.meta.url);
+const EXEMPT_BASENAMES = new Set(["package-clean-gate.mjs"]);
 // Every text-ish file in the package — mirrors `grep -rn` scanning the whole tree (dist/node_modules excluded,
 // same as the underlying grep AC would exclude build output/deps by convention).
-const files = walk(PKG_DIR).filter((f) => f !== SELF);
+const files = walk(PKG_DIR).filter((f) => f !== SELF && !EXEMPT_BASENAMES.has(f.split("/").pop()));
 check(`scanned at least one file across packages/lucarne-widget (found ${files.length})`, files.length > 0);
 
 // mirrors `grep -rni "__cadence" packages/lucarne-widget` — case-insensitive per the AC's explicit widening.

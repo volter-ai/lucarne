@@ -11,7 +11,7 @@
  * synchronous disk read through `lucarne-records`: it never opens a socket,
  * never spawns/attaches a browser, and never fetches. See `queries.ts`'s
  * header and the package README for the categorical "behave like a user" law
- * this enforces (CADENCE-SPLIT-TASKSPEC.md §1.3/§1.3a).
+ * this enforces (the split spec's §1.3/§1.3a).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
