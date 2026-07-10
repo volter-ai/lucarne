@@ -28,7 +28,7 @@ import * as queries from "./queries.js";
 const sourceSchema = z
   .string()
   .min(1)
-  .describe("Corpus source namespace to query — whatever a sensor has captured into (e.g. 'x', 'reddit', 'hackernews'), or any other source a sensor writes.");
+  .describe("The source namespace to query — the value a sensor wrote as each record's `provenance.source`. Any non-empty namespace a sensor captures into is valid.");
 
 const sortSchema = z
   .enum(["top", "new", "best", "controversial", "relevance"])

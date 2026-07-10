@@ -89,7 +89,7 @@ export function getPost(dir: string, args: GetPostArgs): ToolResult<Entity> {
   if (!rec) {
     return notCaptured(
       `a ${args.source} post "${args.idOrUrl}"`,
-      `Visit that post/tweet/story on ${args.source} in a driven session.`,
+      `Visit that captured post/item on ${args.source} in a driven session.`,
       { op: "get_post", ...args },
     );
   }
