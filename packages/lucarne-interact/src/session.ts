@@ -24,7 +24,7 @@ import { selectPage } from "./target-select.js";
 export type { PresenceMarker } from "./presence.js";
 import { runTypeLoop } from "./type-loop.js";
 import { type SendFlowOptions, type SendFlowResult, runSendFlow } from "./send-flow.js";
-import { type ActivateTargetDescriptor, classifyActivateTarget, describeActivateRefusal } from "./activate-gate.js";
+import { type ActivatePolicy, type ActivateTargetDescriptor, classifyActivateTarget, describeActivateRefusal } from "./activate-gate.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -63,6 +63,16 @@ export interface InteractSessionOptions {
    * behavior — fully backward compatible. Rebind later with `useTarget()`.
    */
   targetId?: string;
+  /**
+   * DATA-ONLY consumer allowlist (LS-31/S1) for `activate()`'s structural default-refuse classifier
+   * (`activate-gate.ts`) — lets a domain-specific consumer package allowlist a known-safe
+   * compose-OPEN control (reveals a composer, publishes nothing) by host + testid/aria-label, WITHOUT
+   * this package carrying any site vocabulary itself (see test/policy-free-gate.mjs). Reached only
+   * AFTER the classifier's non-overridable safety floor (form-submit controls) has already had a
+   * chance to refuse — a policy can never allowlist a submit control. Unset == no consumer allowlist;
+   * only the structural navigation/disclosure shapes allow.
+   */
+  activatePolicy?: ActivatePolicy;
 }
 
 export interface OpenOptions {
@@ -229,6 +239,8 @@ export class InteractSession extends EventEmitter {
   #targetId: string | undefined;
   #browser: Browser | undefined;
   #connecting: Promise<Browser> | undefined;
+  // The consumer's data-only compose-open allowlist (LS-31/S1) — see InteractSessionOptions.activatePolicy.
+  readonly #activatePolicy: ActivatePolicy | undefined;
 
   constructor(cdpUrlOrSession: CdpUrlSource, opts: InteractSessionOptions = {}) {
     super();
@@ -241,6 +253,7 @@ export class InteractSession extends EventEmitter {
     // PREFERRED yield-to-human probe (yield.ts) — from opts, or duck-typed off the session object.
     this.#activityProbe = opts.activity ?? (typeof cdpUrlOrSession === "object" ? cdpUrlOrSession.activity : undefined);
     this.#targetId = opts.targetId;
+    this.#activatePolicy = opts.activatePolicy;
     this.video = {
       storyboard: (selector, videoOpts) => this.#storyboard(selector, videoOpts),
       clip: (selector, outPath) => this.#clip(selector, outPath),
@@ -439,26 +452,29 @@ export class InteractSession extends EventEmitter {
   /**
    * Keyboard-first activation: focus the element + Enter — no mouse (browser.ts:536-537).
    *
-   * LS-28: structurally NAVIGATION / COMPOSE-OPEN ONLY. Before pressing Enter, this classifies the
-   * located element with a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/
-   * aria-label — NOT a general eval surface, see `#probeActivateTarget` below) and REFUSES (throws,
-   * fires NO keypress) any control that actually PUBLISHES or acts: a form-submit control, a known
-   * publish/send control (X `tweetButton*`/`dmComposerSendButton`, or a strong `send|submit|publish|
-   * "post reply"` CTA), or an account-state affordance (like/follow/repost/subscribe/bookmark/block/
-   * vote) — see `activate-gate.ts` for the pure, unit-tested classifier. This closes the hole where
-   * `activate` was byte-identical to the GATED send-submit gesture: `type("...")` +
-   * `activate("<submit-selector>")` could previously publish content or flip account state with zero
-   * `decideSend`/approval/guard. Navigation AND compose-OPEN targets stay allowed — `<a href>`,
-   * disclosure/expand controls, tab/menu nav, and controls that merely OPEN a composer (X's
-   * `[data-testid="reply"]`) publish nothing, so they still work; the eventual SEND goes through the
-   * gated `send()`.
+   * LS-31/S1: structurally default-REFUSE, allowlist-only. Before pressing Enter, this classifies
+   * the located element with a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/
+   * aria-label/OWN-title/pageUrl/policy-selector-matches — NOT a general eval surface, see
+   * `#probeActivateTarget` below) against `classifyActivateTarget` (`activate-gate.ts`, the pure,
+   * unit-tested classifier): a NON-OVERRIDABLE safety floor refuses any form-submit control FIRST
+   * (even one an allowlist names); then this session's `activatePolicy`
+   * (`InteractSessionOptions.activatePolicy`) may DENY an element by CSS selector even if it reads as
+   * structural nav (a real-href GET-action anchor, e.g. a vote/fave/hide/flag link — see D1 in
+   * activate-gate.ts's module header); then a small set of STRUCTURAL, domain-agnostic shapes
+   * (real-href links, tabs, disclosure toggles, `<summary>`, `<textarea>`, anchor-menuitems) allow;
+   * then `activatePolicy` may allowlist one further, caller-named control by host+testid/aria-label/
+   * selector; EVERYTHING ELSE — every account-state affordance and every publish control, under any
+   * name, on any site — REFUSES by default (throws, fires NO keypress). This closes the class of hole
+   * a blocklist can never fully close: `type("...")` + `activate("<any actionable control not on some
+   * enumerated list>")` can no longer publish content or flip account state ungated. The eventual
+   * SEND still goes through the separately-gated `send()`.
    */
   async activate(selector: string): Promise<ActivateResult> {
     return this.#act("activate", [selector], "nav", async () => {
       const p = await this.#page();
       const loc = p.locator(selector).first();
-      const descriptor = await this.#probeActivateTarget(loc);
-      const decision = classifyActivateTarget(descriptor);
+      const descriptor = await this.#probeActivateTarget(loc, p);
+      const decision = classifyActivateTarget(descriptor, this.#activatePolicy);
       if (!decision.allow) {
         throw new Error(describeActivateRefusal(selector, decision.reason));
       }
@@ -468,33 +484,65 @@ export class InteractSession extends EventEmitter {
   }
 
   /**
-   * The read-only classification probe for `activate()` (LS-28): a FIXED expression (not a
+   * The read-only classification probe for `activate()` (LS-31/S1): a FIXED expression (not a
    * general eval surface — the callback below is baked into this package's source, never
-   * caller-supplied) that reads the located element's tag/type/role/attributes/ancestry/testid/
-   * aria-label. Dispatches nothing to the page — same read-only character as `snap`/`capture`.
+   * caller-supplied) that reads the located element's tag/type/role/attributes(including its OWN
+   * `title`, D1 defense-in-depth)/ancestry/testid/aria-label, plus the page's current URL (`p.url()`,
+   * read outside the in-page callback — a host, not an eval result) so the classifier's deny/
+   * consumer-allowlist steps can host-scope a policy entry. It also runs a READ-ONLY
+   * `element.matches(sel)` against every CSS selector named in `this.#activatePolicy`'s `allow[].selectors`
+   * and `deny[].selectors` (D1/D3) — still not a general eval surface: the selector STRINGS are
+   * caller-supplied data (same trust level as a testid/aria-label string), but the CODE that runs
+   * (`el.matches(sel)`, wrapped so an invalid selector can't throw) is fixed here, never caller code.
+   * Dispatches nothing to the page — same read-only character as `snap`/`capture`.
    */
-  async #probeActivateTarget(loc: import("playwright-core").Locator): Promise<ActivateTargetDescriptor> {
-    return loc.evaluate((el: Element) => {
-      const tag = el.tagName ? el.tagName.toLowerCase() : "";
-      const type = el.getAttribute ? el.getAttribute("type") : null;
-      const role = el.getAttribute ? el.getAttribute("role") : null;
-      const testid = el.getAttribute ? el.getAttribute("data-testid") || el.getAttribute("data-test-id") : null;
-      const ariaLabel = el.getAttribute ? el.getAttribute("aria-label") : null;
-      const href = el.getAttribute ? el.getAttribute("href") : null;
-      const text = (el.textContent || "").trim().slice(0, 120);
-      const form = el.closest ? el.closest("form") : null;
-      const inForm = !!form;
-      let isFormSubmitTrigger = false;
-      const t = (type || "").toLowerCase();
-      if (tag === "button") {
-        // A <button> with NO explicit type defaults to "submit" ONLY inside a <form> (the HTML
-        // spec's default); outside a form it defaults to "button" (does nothing on its own).
-        isFormSubmitTrigger = t === "submit" || (inForm && !type);
-      } else if (tag === "input") {
-        isFormSubmitTrigger = t === "submit" || t === "image";
-      }
-      return { tag, type, role, testid, ariaLabel, href, text, inForm, isFormSubmitTrigger };
-    }, undefined, { timeout: this.#timeoutMs });
+  async #probeActivateTarget(loc: import("playwright-core").Locator, p: Page): Promise<ActivateTargetDescriptor> {
+    const policySelectors = new Set<string>();
+    for (const entry of this.#activatePolicy?.allow ?? []) {
+      for (const sel of entry.selectors ?? []) policySelectors.add(sel);
+    }
+    for (const entry of this.#activatePolicy?.deny ?? []) {
+      for (const sel of entry.selectors ?? []) policySelectors.add(sel);
+    }
+    const selectorList = [...policySelectors];
+    const descriptor = await loc.evaluate(
+      (el: Element, selectors: string[]) => {
+        const tag = el.tagName ? el.tagName.toLowerCase() : "";
+        const type = el.getAttribute ? el.getAttribute("type") : null;
+        const role = el.getAttribute ? el.getAttribute("role") : null;
+        const testid = el.getAttribute ? el.getAttribute("data-testid") || el.getAttribute("data-test-id") : null;
+        const ariaLabel = el.getAttribute ? el.getAttribute("aria-label") : null;
+        const title = el.getAttribute ? el.getAttribute("title") : null;
+        const href = el.getAttribute ? el.getAttribute("href") : null;
+        const text = (el.textContent || "").trim().slice(0, 120);
+        const form = el.closest ? el.closest("form") : null;
+        const inForm = !!form;
+        const ariaExpanded = el.getAttribute ? el.getAttribute("aria-expanded") : null;
+        const ariaHasPopup = el.getAttribute ? el.getAttribute("aria-haspopup") : null;
+        let isFormSubmitTrigger = false;
+        const t = (type || "").toLowerCase();
+        if (tag === "button") {
+          // A <button> with NO explicit type defaults to "submit" ONLY inside a <form> (the HTML
+          // spec's default); outside a form it defaults to "button" (does nothing on its own).
+          isFormSubmitTrigger = t === "submit" || (inForm && !type);
+        } else if (tag === "input") {
+          isFormSubmitTrigger = t === "submit" || t === "image";
+        }
+        const matchedSelectors = selectors.filter((sel) => {
+          try {
+            return typeof el.matches === "function" && el.matches(sel);
+          } catch {
+            // An invalid/unsupported selector string from a caller's policy never breaks the probe —
+            // it simply never matches.
+            return false;
+          }
+        });
+        return { tag, type, role, testid, ariaLabel, title, href, text, inForm, isFormSubmitTrigger, ariaExpanded, ariaHasPopup, matchedSelectors };
+      },
+      selectorList,
+      { timeout: this.#timeoutMs },
+    );
+    return { ...descriptor, pageUrl: p.url() };
   }
 
   /** Human back-navigation — the in-app Back button, else browser history (browser.ts:270-274). */
@@ -627,8 +675,10 @@ export class InteractSession extends EventEmitter {
   /**
    * The GATED send: the ONLY code path in this package that presses Enter to SUBMIT composed
    * content or otherwise ACT on account state (LS-11). `activate()` also presses Enter, but ONLY
-   * after a structural classifier (LS-28, `activate-gate.ts`) refuses any submit/compose or
-   * account-state target — so `activate` cannot reach this gate's job; it is navigation-only.
+   * after a structural, default-REFUSE classifier (LS-31/S1, `activate-gate.ts`) allows the
+   * target — allowed cases are limited to structural nav/disclosure shapes and a caller's
+   * policy-allowlisted compose-open control; every submit/compose or account-state target refuses
+   * by default — so `activate` cannot reach this gate's job; it is navigation-only.
    * `back()`'s bounded in-app-Back Enter/`.click()` is likewise a navigation gesture, not a submit.
    * `send` is the anti-footgun for acting on logged-in accounts — the default is REFUSE; only an
    * explicit approval, or yolo mode, fires the gesture. `send` does not stage text itself; it
