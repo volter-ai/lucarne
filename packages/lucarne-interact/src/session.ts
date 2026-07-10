@@ -12,10 +12,11 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { Browser, CDPSession, Page } from "playwright-core";
+import type { Browser, BrowserContext, CDPSession, Page } from "playwright-core";
 import { assembleMp4FromFrames, cleanupFramesDir, startScreencastToFrames } from "./video/assembler.js";
 import { type PaceKind, type PaceProfile, type PacingConfig, pace as paceOnce, resolvePacing } from "./pacing.js";
 import { type ActivityProbe, type PresenceMarker, PresenceTracker } from "./presence.js";
+import { selectPage } from "./target-select.js";
 // Re-exported (the DATA SHAPE only, not the mechanism) so `presenceSnapshot()`'s return type is
 // nameable from the package root without index.ts importing FROM presence.ts itself (the module
 // specifier stays "./session.js" — see test/presence-export-map.mjs, which greps for the literal
@@ -54,10 +55,37 @@ export interface InteractSessionOptions {
    * to the in-page `window.__lastInputAt` probe.
    */
   activity?: ActivityProbe;
+  /**
+   * Bind this session to one specific tab, by its CDP `Target.targetId` (LS-27) — the same stable,
+   * cross-connection id `presenceSnapshot()`/`#targetIdFor` already use. Every verb's `#page()` then
+   * resolves THIS tab's `Page` (see target-select.ts's `selectPage`) instead of always the
+   * connection's first page. Unset (the default) == today's original, unconditional `pages()[0]`
+   * behavior — fully backward compatible. Rebind later with `useTarget()`.
+   */
+  targetId?: string;
+}
+
+export interface OpenOptions {
+  /**
+   * Force a genuinely NEW tab (`ctx.newPage()`, unconditionally) instead of navigating whatever
+   * tab this session would otherwise resolve to. This is `feed`'s origin-app semantic (the
+   * pre-split eval-server's `feed` case always called `ctx.newPage()` — never reused/clobbered a
+   * tab that was already open, see `browser/server.ts`'s `__setPage` convention). Default false:
+   * `open()` behaves like every other verb — the bound target if one is set, else `pages()[0]`
+   * (creating one only if none exists at all).
+   */
+  newTab?: boolean;
 }
 
 export interface OpenResult {
   url: string;
+  /**
+   * This navigation's CDP `Target.targetId` (LS-27). Lets a caller that just forced a NEW tab
+   * (`{ newTab: true }`) persist it as the session's OWN active tab (e.g. a lucarne engine's
+   * `switchTab`) so later verbs — fresh processes, each resolving the active tab afresh — follow
+   * the tab `open()` actually navigated instead of silently reading/acting on a stale one.
+   */
+  targetId: string;
 }
 
 export interface ScrollResult {
@@ -195,6 +223,10 @@ export class InteractSession extends EventEmitter {
   // Per-Page cache of the browser's own CDP `Target.targetId` — resolved once per Page object
   // (identity-stable within one playwright-core connection) rather than re-queried on every verb.
   readonly #targetIds = new WeakMap<Page, Promise<string>>();
+  // The tab this session is bound to (LS-27), by CDP `Target.targetId` — `undefined` means
+  // unbound (today's original behavior: always `pages()[0]`). Mutable: `useTarget()` rebinds it,
+  // and `open({ newTab: true })` rebinds it to the tab it just created.
+  #targetId: string | undefined;
   #browser: Browser | undefined;
   #connecting: Promise<Browser> | undefined;
 
@@ -208,6 +240,7 @@ export class InteractSession extends EventEmitter {
     this.#pacing = resolvePacing(opts.pacing);
     // PREFERRED yield-to-human probe (yield.ts) — from opts, or duck-typed off the session object.
     this.#activityProbe = opts.activity ?? (typeof cdpUrlOrSession === "object" ? cdpUrlOrSession.activity : undefined);
+    this.#targetId = opts.targetId;
     this.video = {
       storyboard: (selector, videoOpts) => this.#storyboard(selector, videoOpts),
       clip: (selector, outPath) => this.#clip(selector, outPath),
@@ -225,13 +258,42 @@ export class InteractSession extends EventEmitter {
     return this.#browser;
   }
 
-  /** The active page — this package tracks no multi-tab state; it's the connected context's first page. */
+  /**
+   * The active page every verb (read or act — including `send`, via `#page()` calls inside
+   * send-flow.ts's injected deps) resolves fresh on EVERY call: the bound target's Page if
+   * `useTarget()`/`{ targetId }` bound one and it's still open, else `pages()[0]` — see
+   * `#resolvePage`. This is the single chokepoint LS-27 added per-tab targeting through, so a
+   * `tab <i>` switch (rebinding via `useTarget`) takes effect on the very next verb, and a SEND
+   * can never fire on the wrong tab just because some other verb resolved a different one earlier.
+   */
   async #page(): Promise<Page> {
     const b = await this.#connect();
     const ctx = b.contexts()[0] ?? (await b.newContext());
-    const p = ctx.pages()[0] ?? (await ctx.newPage());
+    const p = await this.#resolvePage(ctx);
     await this.#markDriven(p);
     return p;
+  }
+
+  /**
+   * Which Page `#page()`/`open()` resolve to (LS-27): delegates the actual matching RULE to the
+   * pure, Chrome-free `selectPage` (target-select.ts) so that rule is unit-tested without a live
+   * CDP round trip; the only thing this wrapper adds is the real, memoized `#targetIdFor` lookup
+   * and the `ctx.newPage()` fallback for a context with no pages at all yet.
+   */
+  async #resolvePage(ctx: BrowserContext): Promise<Page> {
+    const found = await selectPage(ctx.pages(), this.#targetId, (p) => this.#targetIdFor(p));
+    return found ?? (await ctx.newPage());
+  }
+
+  /**
+   * Bind (or, with `null`, unbind) this session to one specific tab by its CDP `Target.targetId`
+   * (LS-27) — the same stable, cross-connection id `presenceSnapshot()`/`#targetIdFor` already use.
+   * Every verb resolves the bound target FRESH via `#page()` on each call (nothing is cached at
+   * bind time), so calling `useTarget` again later follows a human's subsequent tab switch.
+   * Unbound (`null`, or never called) == today's original, unconditional `pages()[0]` default.
+   */
+  useTarget(targetId: string | null): void {
+    this.#targetId = targetId ?? undefined;
   }
 
   /**
@@ -332,15 +394,23 @@ export class InteractSession extends EventEmitter {
 
   // ── act verbs ────────────────────────────────────────────────────────────────────────────────
 
-  /** The single sanctioned bootstrap navigation (browser.ts:244-268, minus the per-app-URL lookup table + reading-guide-coverage warning — origin-app policy). */
-  async open(url: string): Promise<OpenResult> {
-    return this.#act("open", [url], "nav", async () => {
+  /**
+   * The single sanctioned bootstrap navigation (browser.ts:244-268, minus the per-app-URL lookup
+   * table + reading-guide-coverage warning — origin-app policy). `{ newTab: true }` (LS-27) always
+   * opens a genuinely NEW tab — `feed`'s origin-app semantic — and this session REBINDS to it (so
+   * this instance's later verbs, if any, follow it); the default path goes through the same
+   * bound-tab resolution (`#resolvePage`) every other verb uses.
+   */
+  async open(url: string, opts: OpenOptions = {}): Promise<OpenResult> {
+    return this.#act("open", [url, opts], "nav", async () => {
       const b = await this.#connect();
       const ctx = b.contexts()[0] ?? (await b.newContext());
-      const p = ctx.pages()[0] ?? (await ctx.newPage());
+      const p = opts.newTab ? await ctx.newPage() : await this.#resolvePage(ctx);
+      const targetId = await this.#targetIdFor(p);
+      if (opts.newTab) this.useTarget(targetId);
       await this.#markDriven(p);
       await p.goto(url, { timeout: this.#timeoutMs, waitUntil: "domcontentloaded" });
-      return { url: p.url() };
+      return { url: p.url(), targetId };
     });
   }
 
