@@ -268,7 +268,7 @@ export async function startSessionMedia(opts: {
     // A focus-changing key (Tab/Enter/Escape) must FLUSH the buffer so a field change
     // starts a fresh, separately-classified run — else "username<Tab>password" coalesces
     // into one event classified by the username field and the password leaks unredacted.
-    else if (ev.t === "keydown" && (ev.key === "Tab" || ev.key === "Enter" || ev.key === "Escape")) void flushType();
+    else if (ev.t === "keydown" && (false /*MUT-B*/)) void flushType();
     else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);
     if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
       page.send("Input.dispatchMouseEvent", {
