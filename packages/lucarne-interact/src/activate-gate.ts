@@ -48,8 +48,22 @@ export type ActivateDecision = { allow: true } | { allow: false; reason: string 
 
 // ── per-site known testids (checked verbatim, case-sensitive — the sites' own casing) ──────────
 
-/** X/Twitter: known compose/submit controls. */
+// The core distinction (LS-28 refinement): a control that OPENS a composer (X's reply button, a
+// "Reply"/"Comment" affordance that reveals an input) PUBLISHES NOTHING — the actual publish is a
+// SEPARATE, later gesture (X's `tweetButton`, a `<button type=submit>`, ...). So compose-OPEN is
+// navigation and ALLOWS; only the SUBMIT/PUBLISH control and account-state affordances refuse.
+// Refusing the compose-open button added zero safety (the draft isn't sent by opening a box) while
+// breaking the documented reply flow — hence the split below.
+
+/** X/Twitter: known PUBLISH controls (these actually SUBMIT composed content). */
 const SITE_SUBMIT_TESTIDS = new Set(["tweetButton", "tweetButtonInline", "tweetButtonInline2", "dmComposerSendButton"]);
+
+/**
+ * X/Twitter: known COMPOSE-OPEN controls — they reveal/focus a composer but publish nothing. These
+ * ALLOW (navigation), and are listed explicitly so the generic net can never catch them. The real
+ * publish (`tweetButton*`, above) is what stays refused.
+ */
+const SITE_COMPOSE_OPEN_TESTIDS = new Set(["reply"]);
 
 /** X/Twitter: known account-state affordances. */
 const SITE_ACCOUNT_STATE_TESTIDS = new Set([
@@ -65,12 +79,19 @@ const SITE_ACCOUNT_STATE_TESTIDS = new Set([
   "unblock",
 ]);
 
-// ── generic, per-brief accessible-name / testid / aria-label patterns (site-agnostic fallback) ──
-// covers Reddit's "Comment" submit button, HN's <input type=submit value="reply">, and any site
-// whose compose/account-state control isn't one of the per-site testids above.
+// ── generic, site-agnostic accessible-name / testid patterns (fallback for controls that aren't a
+// per-site testid above). Deliberately STRONG-CTA-ONLY: only unambiguous PUBLISH verbs. ──
 
-/** A compose/send/post/reply/DM/submit-by-name control. */
-const GENERIC_SUBMIT_RE = /post|reply|tweet|send|comment|submit|publish|share your/i;
+/**
+ * A strong PUBLISH/SUBMIT CTA by name. Intentionally does NOT include the bare, ambiguous words
+ * `post` / `reply` / `tweet` / `comment` — those label compose-OPEN affordances far more often than
+ * submits (X's reply button, a "Comment" link that opens a box), and the genuine submits are already
+ * caught by the STRUCTURAL form-submit net (`isFormSubmitTrigger`, `[type=submit]`) plus the per-site
+ * SUBMIT testids. Only clear publish verbs remain: `send`, `submit`, `publish`, and the explicit
+ * `post reply` / `post comment` PHRASES (X's final "Post reply" confirm label — a real publish, not
+ * a bare "Reply" open).
+ */
+const GENERIC_SUBMIT_RE = /\bsend\b|\bsubmit\b|\bpublish\b|\bpost\s+(?:reply|comment)\b/i;
 
 /** An account-state-by-name control (like/follow/repost/subscribe/bookmark/vote/block). */
 const GENERIC_ACCOUNT_STATE_RE = /like|unlike|follow|unfollow|repost|retweet|unretweet|subscribe|unsubscribe|bookmark|block|unblock|upvote|downvote|\bvote\b/i;
@@ -94,17 +115,25 @@ export function classifyActivateTarget(d: ActivateTargetDescriptor): ActivateDec
     return { allow: false, reason: "form-submit control (button/input type=submit, or the form's default submit trigger)" };
   }
 
-  // 2. Per-site known compose/submit testid (X: tweetButton, tweetButtonInline, DM send, ...).
-  //    Exact-match against a small, deliberate set — checked regardless of tag, since these are
-  //    precise site-authored identifiers (not generic words), so there is no navigation-link
-  //    false-positive risk the way there is for the word-based checks below.
+  // 2. Per-site known PUBLISH/SUBMIT testid (X: tweetButton, tweetButtonInline, DM send) — these
+  //    actually publish composed content. Exact-match against a small, deliberate set — checked
+  //    regardless of tag, since these are precise site-authored identifiers (not generic words), so
+  //    there is no navigation-link false-positive risk the way there is for the word-based checks below.
   if (testid && SITE_SUBMIT_TESTIDS.has(testid)) {
-    return { allow: false, reason: `known compose/submit control (data-testid="${testid}")` };
+    return { allow: false, reason: `known publish/submit control (data-testid="${testid}")` };
   }
 
   // 3. Per-site known account-state testid (X: like, retweet, follow, bookmark, block, ...).
   if (testid && SITE_ACCOUNT_STATE_TESTIDS.has(testid)) {
     return { allow: false, reason: `known account-state control (data-testid="${testid}")` };
+  }
+
+  // 3b. Per-site known COMPOSE-OPEN testid (X: `reply` — opens the reply composer, publishes
+  //     nothing). ALLOW, short-circuiting before the generic net so this compose-open affordance is
+  //     never mistaken for a publish. The real publish (`tweetButton*`, checked at 2) stays refused;
+  //     the eventual SEND still goes through the gated `send()`.
+  if (testid && SITE_COMPOSE_OPEN_TESTIDS.has(testid)) {
+    return { allow: true };
   }
 
   // A plain NAVIGATION link — `<a href>` with no role (or an explicit role="link"), or any element
@@ -124,11 +153,15 @@ export function classifyActivateTarget(d: ActivateTargetDescriptor): ActivateDec
   // non-nav-link controls) visible text.
   const genericName = isNavLink ? d.ariaLabel || "" : [d.ariaLabel, d.text].filter(Boolean).join(" ");
 
-  // 4. Generic compose/submit-by-name (testid or accessible-name match) — Reddit/HN/other sites.
+  // 4. Generic PUBLISH-by-name (testid or accessible-name match) — a STRONG CTA only (send/submit/
+  //    publish, or the "post reply"/"post comment" confirm phrase). Bare `post`/`reply`/`tweet`/
+  //    `comment` are deliberately NOT here — they label compose-OPEN affordances more often than
+  //    submits, and real submits are already caught by the structural form-submit net + per-site
+  //    submit testids above.
   if (GENERIC_SUBMIT_RE.test(genericTestid) || GENERIC_SUBMIT_RE.test(genericName)) {
     return {
       allow: false,
-      reason: "compose/submit control (accessible name/testid matches post|reply|tweet|send|comment|submit|publish|share your)",
+      reason: "publish/submit control (accessible name/testid matches send|submit|publish|'post reply'|'post comment')",
     };
   }
 

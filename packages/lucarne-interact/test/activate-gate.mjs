@@ -116,16 +116,37 @@ for (const [label, d] of [
   check(`${label}: REFUSE`, r.allow === false, JSON.stringify(r));
 }
 
-// generic compose/submit-by-name coverage (Reddit/HN comment forms, DM send, etc — no per-site testid)
+// generic PUBLISH/SUBMIT-by-name coverage — STRONG CTAs only (send/submit/publish + the "post
+// reply"/"post comment" confirm phrase). These are unambiguous publish acts and must REFUSE.
 for (const [label, d] of [
-  ["Reddit-style 'Comment' submit button", { ...base(), tag: "button", text: "Comment" }],
-  ["generic 'Post' button", { ...base(), tag: "button", ariaLabel: "Post" }],
   ["generic 'Send' (DM) button", { ...base(), tag: "button", ariaLabel: "Send" }],
+  ["generic 'Submit' button (no type=submit attr, label-only)", { ...base(), tag: "div", role: "button", ariaLabel: "Submit" }],
   ["generic 'Publish' button", { ...base(), tag: "button", text: "Publish" }],
-  ["generic 'Share your thoughts' composer trigger", { ...base(), tag: "button", ariaLabel: "Share your thoughts" }],
+  ["X 'Post reply' confirm label (the publish phrase, not a bare 'Reply')", { ...base(), tag: "button", ariaLabel: "Post reply" }],
+  ["'Post comment' confirm label (publish phrase)", { ...base(), tag: "button", text: "Post comment" }],
 ]) {
   const r = classifyActivateTarget(d);
   check(`${label}: REFUSE`, r.allow === false, JSON.stringify(r));
+}
+
+// ── LS-28 refinement: compose-OPEN affordances PUBLISH NOTHING — they reveal/focus a composer, so
+// they ALLOW (navigation). The bare ambiguous words `reply`/`comment`/`tweet`/`post` no longer
+// refuse; the genuine publish (tweetButton, <button type=submit>) stays refused (proven above). ──
+for (const [label, d] of [
+  // X's reply button — opens the reply composer, publishes nothing. Explicit compose-open testid.
+  ["X [data-testid=reply] (opens the reply composer)", { ...base(), tag: "button", testid: "reply", ariaLabel: "Reply" }],
+  // A plain compose-open button labeled "Reply"/"Comment" (no type=submit, no known submit testid).
+  ["plain 'Reply' compose-open <button> (not type=submit)", { ...base(), tag: "button", ariaLabel: "Reply" }],
+  ["plain 'Comment' compose-open <button> (not type=submit)", { ...base(), tag: "button", text: "Comment" }],
+  ["plain 'Post' <button> (ambiguous bare word, not a known publish control)", { ...base(), tag: "button", ariaLabel: "Post" }],
+  // A "Reply" navigation link / role=link (X/Reddit affordance that reveals the composer).
+  ["'Reply' <a href> compose-open link", { ...base(), tag: "a", href: "#reply", text: "Reply" }],
+  ["'Reply' role=link compose-open affordance", { ...base(), tag: "div", role: "link", ariaLabel: "Reply" }],
+  // "Share your thoughts" composer-placeholder trigger — opens a box, publishes nothing.
+  ["'Share your thoughts' composer-open trigger", { ...base(), tag: "button", ariaLabel: "Share your thoughts" }],
+]) {
+  const r = classifyActivateTarget(d);
+  check(`${label}: ALLOW (compose-open, publishes nothing)`, r.allow === true, JSON.stringify(r));
 }
 
 // 5. `<a href>` → allow
@@ -201,17 +222,44 @@ for (const [label, d] of [
 
 // ── the refusal message directs to the gated paths ──────────────────────────────────────────────
 {
-  const msg = describeActivateRefusal('[data-testid="tweetButton"]', "known compose/submit control");
+  const msg = describeActivateRefusal('[data-testid="tweetButton"]', "known publish/submit control");
   check("refusal message names the selector", msg.includes('tweetButton'), msg);
   check("refusal message directs to the gated send()", /gated `send\(\)`/.test(msg), msg);
   check("refusal message states account-state actions are not automatable", /account-state actions are not automatable/.test(msg), msg);
 }
 
+// ── THE BINDING INVARIANT (LS-28): the compose-open refinement must NOT reopen the submit hole.
+// `type(draft)` + `activate(<any real submit control>)` is STILL structurally refused. Prove each
+// of the four representative submit/account-action controls refuses, and pair each with the
+// compose-OPEN affordance that now (correctly) allows. ──
+{
+  const SUBMIT_CONTROLS = [
+    ["X tweetButton (publish)", { ...base(), tag: "button", testid: "tweetButton", ariaLabel: "Post" }],
+    ["X dmComposerSendButton (DM publish)", { ...base(), tag: "button", testid: "dmComposerSendButton", ariaLabel: "Send" }],
+    ["<button type=submit> comment form", { ...base(), tag: "button", type: "submit", inForm: true, isFormSubmitTrigger: true, text: "save" }],
+    ["like (account-state)", { ...base(), tag: "button", testid: "like", ariaLabel: "Like" }],
+    ["follow (account-state)", { ...base(), tag: "button", testid: "follow", ariaLabel: "Follow" }],
+  ];
+  for (const [label, d] of SUBMIT_CONTROLS) {
+    const r = classifyActivateTarget(d);
+    check(`INVARIANT — type+activate(${label}) still REFUSED (submit hole stays closed)`, r.allow === false, JSON.stringify(r));
+  }
+
+  // The reply-open-allow vs tweetButton-refuse pair (the coordinator's headline pair):
+  const replyOpen = classifyActivateTarget({ ...base(), tag: "button", testid: "reply", ariaLabel: "Reply" });
+  const tweetSubmit = classifyActivateTarget({ ...base(), tag: "button", testid: "tweetButton", ariaLabel: "Post" });
+  check("PAIR — [data-testid=reply] compose-open ALLOWS while [data-testid=tweetButton] publish REFUSES", replyOpen.allow === true && tweetSubmit.allow === false, JSON.stringify({ replyOpen, tweetSubmit }));
+}
+
 // ── belt-and-suspenders hard assertions (fails loudly under `node --test` too) ──────────────────
+// submit hole stays closed:
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "tweetButton" }).allow, false);
-assert.equal(classifyActivateTarget({ ...base(), tag: "button", type: "submit", isFormSubmitTrigger: true }).allow, false);
+assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "dmComposerSendButton" }).allow, false);
+assert.equal(classifyActivateTarget({ ...base(), tag: "button", type: "submit", inForm: true, isFormSubmitTrigger: true }).allow, false);
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "like" }).allow, false);
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "follow" }).allow, false);
+// compose-open / navigation now allows:
+assert.equal(classifyActivateTarget({ ...base(), tag: "button", testid: "reply" }).allow, true);
 assert.equal(classifyActivateTarget({ ...base(), tag: "a", href: "/next" }).allow, true);
 assert.equal(classifyActivateTarget({ ...base(), tag: "button", ariaLabel: "Show 3 more replies" }).allow, true);
 

@@ -26,11 +26,12 @@ const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-interact-actgate-"))
 process.env.LUCARNE_HOME = HOME;
 if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
-// A real <form> with a real submit control, an X-like tweetButton OUTSIDE the form, an account-state
-// "like" control, and two genuine navigation targets (an `<a href>` and a plain expand/disclosure
-// button whose label doesn't match any refuse pattern). Every actionable control is instrumented
-// with a sentinel flag flipped ONLY on its real DOM effect (submit / click) — the test's ground truth
-// is the sentinel, not InteractSession's own report.
+// A real <form> with a real submit control, an X-like tweetButton (PUBLISH) OUTSIDE the form, an
+// account-state "like" control, an X-like COMPOSE-OPEN reply button (`data-testid="reply"` — opens a
+// composer, publishes nothing), and two genuine navigation targets (an `<a href>` and a plain
+// expand/disclosure button). Every control is instrumented with a sentinel flipped ONLY on its real
+// DOM effect (submit / publish-click / like-click / compose-open) — the test's ground truth is the
+// sentinel, not InteractSession's own report.
 const PAGE_HTML = `<!doctype html><html><body>
   <h1 id="hdr">Activate-Gate Fixture</h1>
 
@@ -42,6 +43,10 @@ const PAGE_HTML = `<!doctype html><html><body>
   <button id="tweetBtn" data-testid="tweetButton" onclick="window.__tweetClicked=true">Post</button>
   <button id="likeBtn" data-testid="like" aria-label="Like" onclick="window.__likeClicked=true">&hearts;</button>
 
+  <!-- COMPOSE-OPEN: activating this reveals + focuses the reply composer. It PUBLISHES NOTHING. -->
+  <button id="replyBtn" data-testid="reply" aria-label="Reply" onclick="window.__replyOpened=true;document.getElementById('replyBox').style.display='block';document.getElementById('replyBox').focus()">Reply</button>
+  <textarea id="replyBox" style="display:none"></textarea>
+
   <a id="next" href="/next">go to next page</a>
   <button id="expandBtn" onclick="window.__expanded=true">Show 3 more replies</button>
 
@@ -49,6 +54,7 @@ const PAGE_HTML = `<!doctype html><html><body>
     window.__formSubmitted = false;
     window.__tweetClicked = false;
     window.__likeClicked = false;
+    window.__replyOpened = false;
     window.__expanded = false;
   </script>
 </body></html>`;
@@ -99,6 +105,7 @@ try {
         formSubmitted: window.__formSubmitted,
         tweetClicked: window.__tweetClicked,
         likeClicked: window.__likeClicked,
+        replyOpened: window.__replyOpened,
         expanded: window.__expanded,
         taValue: document.getElementById("ta")?.value,
       }));
@@ -158,6 +165,22 @@ try {
       threw?.message,
     );
     check("activate([data-testid=like]): the like button's onclick NEVER fired", after.likeClicked === false, JSON.stringify(after));
+  }
+
+  // COMPOSE-OPEN STILL works (LS-28 refinement): X-like [data-testid="reply"] opens the reply
+  // composer — it publishes NOTHING, so it must ALLOW and actually fire. This is the documented X
+  // reply-open flow the over-refusal broke; the eventual SEND still goes through gated send().
+  {
+    let threw = null;
+    try {
+      await s.activate('[data-testid="reply"]');
+    } catch (e) {
+      threw = e;
+    }
+    const after = await readFlags();
+    check("activate([data-testid=reply]): does NOT throw (compose-open publishes nothing)", threw === null, String(threw));
+    check("activate([data-testid=reply]): the reply composer WAS opened (real activation happened)", after.replyOpened === true, JSON.stringify(after));
+    check("activate([data-testid=reply]): nothing was published — form/tweet/like sentinels all still false", after.formSubmitted === false && after.tweetClicked === false && after.likeClicked === false, JSON.stringify(after));
   }
 
   // Navigation STILL works: a plain expand/disclosure button (label doesn't match any refuse pattern).

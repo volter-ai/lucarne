@@ -369,15 +369,19 @@ export class InteractSession extends EventEmitter {
   /**
    * Keyboard-first activation: focus the element + Enter — no mouse (browser.ts:536-537).
    *
-   * LS-28: structurally NAVIGATION-ONLY. Before pressing Enter, this classifies the located
-   * element with a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/aria-label
-   * — NOT a general eval surface, see `#probeActivateTarget` below) and REFUSES (throws, fires NO
-   * keypress) any form-submit control, compose/send/post/reply/DM control, or account-state
-   * affordance (like/follow/repost/subscribe/bookmark/block/vote) — see `activate-gate.ts` for the
-   * pure, unit-tested classifier. This closes the hole where `activate` was byte-identical to the
-   * GATED send-submit gesture: `type("...")` + `activate("<submit-selector>")` could previously
-   * publish content or flip account state with zero `decideSend`/approval/guard. Navigation targets
-   * (`<a href>`, disclosure/expand controls, tab/menu nav) are unaffected.
+   * LS-28: structurally NAVIGATION / COMPOSE-OPEN ONLY. Before pressing Enter, this classifies the
+   * located element with a fixed, read-only in-page probe (tag/type/role/attrs/ancestry/testid/
+   * aria-label — NOT a general eval surface, see `#probeActivateTarget` below) and REFUSES (throws,
+   * fires NO keypress) any control that actually PUBLISHES or acts: a form-submit control, a known
+   * publish/send control (X `tweetButton*`/`dmComposerSendButton`, or a strong `send|submit|publish|
+   * "post reply"` CTA), or an account-state affordance (like/follow/repost/subscribe/bookmark/block/
+   * vote) — see `activate-gate.ts` for the pure, unit-tested classifier. This closes the hole where
+   * `activate` was byte-identical to the GATED send-submit gesture: `type("...")` +
+   * `activate("<submit-selector>")` could previously publish content or flip account state with zero
+   * `decideSend`/approval/guard. Navigation AND compose-OPEN targets stay allowed — `<a href>`,
+   * disclosure/expand controls, tab/menu nav, and controls that merely OPEN a composer (X's
+   * `[data-testid="reply"]`) publish nothing, so they still work; the eventual SEND goes through the
+   * gated `send()`.
    */
   async activate(selector: string): Promise<ActivateResult> {
     return this.#act("activate", [selector], "nav", async () => {
