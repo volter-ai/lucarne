@@ -61,7 +61,14 @@ let session;
 let host;
 let browser;
 try {
-  session = await engine.create({ backend: "native", profile: "intent-drain-acc" });
+  // HEADED (headless:false overrides the LUCARNE_HEADLESS=1 default above): this test's whole point is
+  // per-tab focus/visibility scoring, and HEADLESS Chrome reports EVERY page as both visible AND
+  // focused (there's no real window occlusion), so `bringToFront` produces no DOM-visible difference
+  // and no signal — neither hasFocus nor visibilityState — can distinguish the tabs. A real (headed)
+  // Chrome window under the acceptance job's `xvfb-run` gives genuine window semantics: bringToFront
+  // makes the front tab document.visibilityState='visible' and background tabs 'hidden', so the
+  // scoring is actually exercised end-to-end. (Chrome-gated regardless — no browser in this sandbox.)
+  session = await engine.create({ backend: "native", profile: "intent-drain-acc", headless: false });
   const engineOpts = { baseUrl: `http://127.0.0.1:${ENGINE_PORT}`, token: TOKEN };
 
   // A minimal, neutral built bundle — content is irrelevant here (this test never opens the widget UI), only
@@ -105,15 +112,15 @@ try {
   check("page A's queued intent ('a1') came back on some page's items", !!entryA, JSON.stringify(first));
   check("page B's queued intent ('b1') came back on some page's items", !!entryB, JSON.stringify(first));
 
-  // Distinguish the front tab via document.visibilityState, NOT document.hasFocus(): in headless CI
-  // (xvfb, the CI acceptance job) there is no real OS window focus, so `document.hasFocus()` returns
-  // true for EVERY page and "exactly one focused" is not a reliable discriminator. The signal CDP's
-  // `bringToFront` DOES produce headless is visibilityState — the activated target goes 'visible' and
-  // the others go 'hidden' — which is exactly what the product's own tab-scoring weights most heavily
-  // (`visible ? 2 : 0` dominates `focused ? 1 : 0` in host.ts's `activeTabInfo`). So assert the real
-  // property (the brought-to-front tab is the single distinguished/best-scored one) through visibility.
+  // Distinguish the front tab via document.visibilityState (the session runs HEADED — see the
+  // create({ headless:false }) note above — so bringToFront produces a REAL front/back split:
+  // activated target 'visible', the others 'hidden'). visibilityState is also exactly what the
+  // product's own tab-scoring weights most heavily (`visible ? 2 : 0` dominates `focused ? 1 : 0` in
+  // host.ts's `activeTabInfo`), so asserting through it exercises the real scoring path. (Under a
+  // HEADLESS session this could not work — every page reports visible:true AND focused:true with no
+  // occlusion — which is precisely why this test's session is headed.)
   const visibleEntries = first.filter((p) => p.visible === true);
-  check("EXACTLY ONE page reports visible: true (the brought-to-front tab — robust headless, unlike hasFocus)", visibleEntries.length === 1, JSON.stringify(first.map((p) => ({ url: p.url, focused: p.focused, visible: p.visible }))));
+  check("EXACTLY ONE page reports visible: true (the brought-to-front tab under headed Chrome)", visibleEntries.length === 1, JSON.stringify(first.map((p) => ({ url: p.url, focused: p.focused, visible: p.visible }))));
   check(
     "the page brought to the front (B, holding the 'b1' intent) is the one reporting visible: true — never A",
     visibleEntries.length === 1 && visibleEntries[0] === entryB,
@@ -132,8 +139,8 @@ try {
   // ── the read-only sibling: never mutates the (now-empty) queue, and still reports the same focus signal. ──
   await pageA.evaluate((k) => { window[k] = [{ id: "a2", payload: { action: "pick" } }]; }, KEY);
   const info = await host.activeTabInfo();
-  // Assert it resolved to the FRONT tab via visibility (the best-scored page) — robust headless, where
-  // every page reports focused:true. `visible` is the discriminator CDP bringToFront actually moves.
+  // Assert it resolved to the FRONT tab via visibility (the best-scored page). Under this headed
+  // session bringToFront makes exactly the front tab visible, so `visible` is the reliable discriminator.
   check("activeTabInfo() resolves to the brought-to-front (visible, best-scored) page's info", !!info && info.visible === true, JSON.stringify(info));
   const afterProbe = await host.drainIntentsWithContext(QUEUE_NAME);
   const stillThere = afterProbe.find((p) => Array.isArray(p.items) && p.items.some((it) => it && it.id === "a2"));

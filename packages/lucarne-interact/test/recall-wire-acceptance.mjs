@@ -201,9 +201,18 @@ try {
   //    is accounted for by genuine page/document behavior (the two navigations + the one fetch);
   //    nothing extra appears (which is what a recorder-issued/replayed/paginated request would add).
   const expected = [PAGE1_URL, `${BASE}${GRAPHQL_PATH}?variables=%7B%7D`, PAGE2_URL];
-  const unexpected = requestLog.filter((u) => !expected.some((e) => u === e || u.startsWith(e)));
+  // The BROWSER itself auto-issues a few requests no code asked for — a /favicon.ico probe on a
+  // document load, /.well-known/* probes (e.g. devtools/appspecific, digital asset links), a
+  // service-worker script fetch. These are the browser's own, NOT recorder-originated. The Law-3
+  // property under test is "the recorder/STACK issues ZERO synthetic requests" (no replay, no
+  // pagination, no re-fetch of the observed body), NOT "the browser never auto-fetches a favicon" —
+  // so exclude browser-automatic requests before the assertion. A genuinely recorder-originated
+  // request (a replayed/paginated/re-issued fetch) would NOT match this narrow browser-internal set
+  // and would still be caught, so the real invariant is fully preserved.
+  const isBrowserAutomatic = (u) => /\/favicon\.ico(\?|$)/i.test(u) || u.includes("/.well-known/") || /\/(service-worker|serviceworker|sw)\.js(\?|$)/i.test(u);
+  const unexpected = requestLog.filter((u) => !expected.some((e) => u === e || u.startsWith(e)) && !isBrowserAutomatic(u));
   check(
-    "zero recorder-originated requests: every request the browser fired is one of the fixture's own (2 navigations + 1 fetch) — no extra request exists",
+    "zero recorder-originated requests: every request the browser fired (excluding the browser's own favicon/.well-known/sw probes) is one of the fixture's own (2 navigations + 1 fetch) — no extra request exists",
     unexpected.length === 0,
     JSON.stringify({ requestLog, unexpected }),
   );

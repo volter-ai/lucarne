@@ -7,7 +7,7 @@ import { pickPublicUrl, tunnelSpawnSpec, ensureTunnelToken, startTunnel } from "
 import { isWebNavUrl } from "../dist/session-media.js";
 import { globalFilesDir } from "../dist/profiles.js";
 import net from "node:net";
-import { attachPage, attachBrowser } from "../dist/cdp.js";
+import { attachPage as attachPageRaw, attachBrowser } from "../dist/cdp.js";
 import { virtualKeyCode } from "../dist/keymap.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -30,6 +30,41 @@ process.env.LUCARNE_HOME = HOME;
 if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A just-created session's first page target can lag the `create()` call by a beat under CI load
+// (headed Chrome under xvfb spinning up ~25 profiles) — `/json` briefly lists no `type:"page"`
+// target yet, so a raw `attachPage()` throws "no CDP page target to attach to". Poll briefly for the
+// target to appear before giving up (it always shows up within a fraction of a second; a local
+// machine never hits the race). Product `attachPage` is unchanged — this readiness wait lives only in
+// the test, shadowing the import so every attach site below tolerates the startup race uniformly.
+const attachPage = async (base, targetId, timeoutMs = 10000) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await attachPageRaw(base, targetId);
+    } catch (e) {
+      if (Date.now() >= deadline) throw e;
+      await sleep(150);
+    }
+  }
+};
+
+// A FRESH Playwright `connectOverCDP()` discovers targets asynchronously, so
+// `browser.contexts()[0].pages()[0]` can be momentarily `undefined` right after connect even though
+// the session already has a page target (`create()` doesn't resolve until its media plane attached
+// one). Poll briefly for the existing page before falling back to opening one, so a bare `pages()[0]`
+// grab never `undefined`-crashes under CI load.
+const firstPage = async (browser, timeoutMs = 10000) => {
+  const ctx = browser.contexts()[0];
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const pg = ctx?.pages()[0];
+    if (pg) return pg;
+    if (Date.now() >= deadline) return await ctx.newPage();
+    await sleep(150);
+  }
+};
+
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass: !!pass });
@@ -46,7 +81,7 @@ try {
 
   // 1. DRIVE — vanilla Playwright over the returned cdpUrl
   let b = await chromium.connectOverCDP(session.cdpUrl);
-  let p = b.contexts()[0].pages()[0];
+  let p = await firstPage(b);
   await p.goto("https://example.com", { waitUntil: "domcontentloaded" });
   check("drive: connectOverCDP navigates real Chrome", (await p.title()) === "Example Domain");
   await p.goto("about:blank");
@@ -68,7 +103,7 @@ try {
 
   // 3. INPUT PARITY — caps/shift, and Cmd+A editing command, reach real Chrome
   b = await chromium.connectOverCDP(session.cdpUrl);
-  p = b.contexts()[0].pages()[0];
+  p = await firstPage(b);
   // self-contained: re-create the fields if the about:blank DOM didn't survive the
   // reconnect (keeps the input proofs robust on slower/CI machines)
   await p.evaluate(() => {
@@ -1357,7 +1392,7 @@ if (process.env.LUCARNE_TEST_HEADED === "1") {
   try {
     const hs = await hEngine.create({ backend: "native", profile: "headed", headless: false });
     const hb = await chromium.connectOverCDP(hs.cdpUrl);
-    const hp = hb.contexts()[0].pages()[0];
+    const hp = await firstPage(hb);
     await hp.goto("https://example.com", { waitUntil: "domcontentloaded" });
     const ok = (await hp.title()) === "Example Domain";
     await hb.close();
