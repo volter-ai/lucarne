@@ -122,7 +122,18 @@ export interface ActivateResult {
 }
 
 export interface BackOptions {
-  /** Selectors tried (in order, first match wins) for an in-app Back control before falling to history. */
+  /**
+   * Selectors tried (in order, first match wins) for an in-app Back control before falling to
+   * history. CALLER-CONTROLLED — so, exactly like `activate()`'s `selector` argument, a matched
+   * element is never activated directly: it is classified by the SAME `classifyActivateTarget`
+   * gate (LS-45) before `back()` will press Enter on it. A structural-nav shape (real-href anchor,
+   * `role="link"`/`"tab"`, disclosure toggle, `<summary>`, `<textarea>`) passes; a form-submit,
+   * publish, or any other non-nav control is REFUSED, and `back()` safely falls through to
+   * browser-history instead (it never throws — `back()` is a navigation verb, not an approval
+   * gate). If a consumer has a genuine in-app Back BUTTON (not a structural-nav shape) that needs
+   * activating, allowlist it explicitly via `InteractSessionOptions.activatePolicy` — same model
+   * used for a per-site compose-open control on `activate()`.
+   */
   inAppSelectors?: string[];
 }
 
@@ -570,19 +581,34 @@ export class InteractSession extends EventEmitter {
     return { ...descriptor, pageUrl: p.url() };
   }
 
-  /** Human back-navigation — the in-app Back button, else browser history (browser.ts:270-274). */
+  /**
+   * Human back-navigation — the in-app Back button, else browser history (browser.ts:270-274).
+   *
+   * LS-45: `opts.inAppSelectors` is CALLER-CONTROLLED (same trust level as `activate()`'s
+   * `selector` argument), so the matched element is gated through the SAME `classifyActivateTarget`
+   * classifier `activate()` uses before this verb will press Enter on it — a caller cannot pass an
+   * `inAppSelectors` entry that happens to match a publish/submit control and have it fire ungated.
+   * UNLIKE `activate()`, a gate refusal here does NOT throw: `back()` is a navigation verb, so a
+   * refused/absent in-app target simply falls through to the existing browser-history path, which
+   * is always safe and always available. There is NO raw `.click()` fallback (the previous cut's
+   * `catch { loc.click(...) }` was itself an ungated synthetic-click primitive) — the only
+   * activation this verb ever performs is a gated `press("Enter")`.
+   */
   async back(opts: BackOptions = {}): Promise<BackResult> {
     const selectors = opts.inAppSelectors?.length ? opts.inAppSelectors : GENERIC_BACK_SELECTORS;
     return this.#act("back", [opts], "nav", async () => {
       const p = await this.#page();
       const loc = p.locator(selectors.join(", ")).first();
       if (await loc.count()) {
-        try {
-          await loc.press("Enter");
-        } catch {
-          await loc.click({ timeout: 5000 });
+        const descriptor = await this.#probeActivateTarget(loc, p);
+        const decision = classifyActivateTarget(descriptor, this.#activatePolicy);
+        if (decision.allow) {
+          // Gated: only a structural-nav/allowlisted back affordance ever gets Enter pressed.
+          await loc.press("Enter", { timeout: this.#timeoutMs });
+          return { via: "in-app" as const };
         }
-        return { via: "in-app" as const };
+        // The matched element is NOT a recognized nav/disclosure affordance (or is policy-denied) —
+        // never activate it via back(). Fall through to safe history-back below instead of throwing.
       }
       // History fallback. Playwright's DEFAULT `waitUntil` for `goBack` is `'load'`, which does
       // NOT reliably refire on a back navigation — especially back to a bfcache'd / already-loaded
@@ -704,7 +730,8 @@ export class InteractSession extends EventEmitter {
    * target — allowed cases are limited to structural nav/disclosure shapes and a caller's
    * policy-allowlisted compose-open control; every submit/compose or account-state target refuses
    * by default — so `activate` cannot reach this gate's job; it is navigation-only.
-   * `back()`'s bounded in-app-Back Enter/`.click()` is likewise a navigation gesture, not a submit.
+   * `back()`'s in-app-Back Enter (LS-45: itself gated through `classifyActivateTarget`, no `.click()`
+   * anywhere in this class) is likewise a navigation gesture, not a submit.
    * `send` is the anti-footgun for acting on logged-in accounts — the default is REFUSE; only an
    * explicit approval, or yolo mode, fires the gesture. `send` does not stage text itself; it
    * COMMITS a draft the caller already staged via `type()`.
