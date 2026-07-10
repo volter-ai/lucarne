@@ -66,6 +66,20 @@ const pollFocusedId = async (cdp, id, timeoutMs = 3000) => {
   }
 };
 
+// Wait until the coalesced "alice" type-run has actually been FLUSHED and recorded (unredacted),
+// so its flush-time secrecy re-read provably ran while #u was still focused — BEFORE we move focus
+// to #pw. Removes the race where a load-delayed async end-read sees the later #pw focus and
+// over-redacts "alice". Bounded; throws (setup failure surfaces, never silently proceeds).
+const pollActivity = async (eng, profile, pred, timeoutMs = 3000, label = "") => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const acts = eng.sessionActivity(profile).filter((a) => a.kind === "type");
+    if (pred(acts)) return acts;
+    if (Date.now() >= deadline) throw new Error(`P0 setup: activity condition never met${label ? " (" + label + ")" : ""}: ${JSON.stringify(eng.sessionActivity(profile))}`);
+    await sleep(100);
+  }
+};
+
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass: !!pass });
@@ -1346,9 +1360,11 @@ try {
   for (const k of ["h", "u", "n", "t", "e", "r", "2"]) { rdw.send(JSON.stringify({ t: "keydown", key: k, code: "Key" + k.toUpperCase() })); rdw.send(JSON.stringify({ t: "keyup", key: k, code: "Key" + k.toUpperCase() })); }
   await sleep(500);                                            // let keystrokes LAND in the password field
   rdc.send("Page.navigate", { url: "data:text/html,<title>after-submit</title>gone" });  // submit/blur before the 800ms flush
-  await sleep(1500);                                           // flush fires on nav, field gone
+  // Poll-confirm the flush landed (not slept-for): a fixed sleep before reading activity risks
+  // reading before the nav-triggered flush lands under CI load, flaking the `types.length>0`
+  // conjunct below on an otherwise-passing run. Bounded; throws if the flush never lands.
+  const types = await pollActivity(rdEngine, "redact", (acts) => acts.length > 0, 3000, "pre-nav password flush recorded");
   rdw.close(); rdc.close();
-  const types = rdEngine.sessionActivity("redact").filter((a) => a.kind === "type");
   check("activity(P0): a password typed before a submit/nav is STILL redacted (no race leak)",
     types.length > 0 && types.every((e) => e.value === "‹redacted›") && JSON.stringify(types).indexOf("hunter2") === -1);
   await rdEngine.destroy(rd.id);
@@ -1373,7 +1389,14 @@ try {
   for (const k of ["a", "l", "i", "c", "e"]) tap(k, "Key" + k.toUpperCase());  // username (non-secret)
   await sleep(150);
   tap("Tab", "Tab");                                                            // exercises the flush-on-Tab boundary (a Tab keydown flushes the current run — session-media.ts)
-  await sleep(200);                                                             // let the "alice" run's flush (start+flush reads both on #username) complete first
+  // Poll-confirm (not slept-for) that the "alice" run's flush has landed UNREDACTED, i.e. its
+  // async flush-time secrecy re-read provably ran while #u was still focused. flushType unions
+  // start||end secrecy (session-media.ts), and the end-read is an async round trip — under CI
+  // load it can be DELAYED until after the #pw.focus() below lands, so a blind fixed sleep here
+  // is itself a race: the end-read can see #pw (secret) and over-redact "alice", failing the
+  // `blob.indexOf("alice") !== -1` conjunct further down. Bounded; throws a clear setup error if
+  // it never lands, rather than silently proceeding into the focus move.
+  await pollActivity(xfEngine, "xredact", (acts) => acts.some((a) => a.value === "alice"), 3000, "alice flushed unredacted");
   // Deterministically place focus on the password field. Redaction classifies each coalesced
   // type-run by the ACTUALLY-focused field (session-media `readSecrecy` reads document.activeElement
   // at type-start and unions a flush-time re-read), so what matters is that "hunter2" is typed while
@@ -1395,8 +1418,10 @@ try {
   xfw.close(); xfc.close();
   const types = xfEngine.sessionActivity("xredact").filter((a) => a.kind === "type");
   const blob = JSON.stringify(types);
+  const hasTypes = types.length > 0, aliceKept = blob.indexOf("alice") !== -1, hunterGone = blob.indexOf("hunter2") === -1;
   check("activity(P0): a password typed AFTER a Tab from a non-secret field is NOT leaked (cross-field)",
-    types.length > 0 && blob.indexOf("hunter2") === -1 && blob.indexOf("alice") !== -1);
+    hasTypes && hunterGone && aliceKept,
+    `hasTypes=${hasTypes} hunterGone=${hunterGone} aliceKept=${aliceKept} types=${blob}`);
   await xfEngine.destroy(xf.id);
 } finally {
   await xfEngine.close().catch(() => {});
