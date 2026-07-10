@@ -20,9 +20,22 @@ export interface CdpConn {
 
 export interface PageTarget { id: string; url: string; title: string; webSocketDebuggerUrl?: string }
 
+/** Fetch + JSON from a Chrome CDP HTTP endpoint, retrying a TRANSIENT network blip. Under many-session
+ *  load Chrome can momentarily close/refuse its /json endpoint ("other side closed"/ECONNREFUSED/"fetch
+ *  failed"); a bounded retry rides over that. All attempts failing still throws — a genuinely-dead endpoint
+ *  is still surfaced (not masked). Also a production benefit for any containerized/loaded deployment. */
+async function cdpFetchJson<T>(url: string): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try { return (await (await fetch(url)).json()) as T; }
+    catch (e) { lastErr = e; await sleep(150 * (attempt + 1)); }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`lucarne: CDP HTTP fetch failed: ${url}`);
+}
+
 /** List the session's page targets (tabs), newest Chrome ordering. */
 export async function listPages(base: string): Promise<PageTarget[]> {
-  const targets = (await (await fetch(base + "/json")).json()) as Array<PageTarget & { type: string }>;
+  const targets = await cdpFetchJson<Array<PageTarget & { type: string }>>(base + "/json");
   return targets.filter((t) => t.type === "page").map((t) => ({ id: t.id, url: t.url, title: t.title, webSocketDebuggerUrl: t.webSocketDebuggerUrl }));
 }
 
@@ -62,7 +75,7 @@ export async function attachPage(base: string, targetId?: string): Promise<CdpCo
  * a page-session call only scopes to that one session.
  */
 export async function attachBrowser(base: string): Promise<CdpConn> {
-  const ver = (await (await fetch(base + "/json/version")).json()) as { webSocketDebuggerUrl?: string };
+  const ver = await cdpFetchJson<{ webSocketDebuggerUrl?: string }>(base + "/json/version");
   if (!ver.webSocketDebuggerUrl) throw new Error("lucarne: no browser CDP endpoint");
   return connectCdp(ver.webSocketDebuggerUrl);
 }
