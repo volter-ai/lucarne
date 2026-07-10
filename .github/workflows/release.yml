@@ -1,14 +1,23 @@
 name: release
-# Publishes the 5 npm packages (packages/*) to the npm registry via Trusted Publishing (OIDC) —
-# no long-lived NPM_TOKEN. ONE-TIME setup on npmjs.com: for EACH of the 5 packages
-# (lucarne-records, lucarne, lucarne-interact, lucarne-corpus-mcp, lucarne-widget), go to the
-# package's Settings → Trusted Publisher → add a GitHub Actions publisher → owner: volter-ai ·
-# repo: lucarne · workflow: release.yml · environment: (leave blank). Until then, the real-publish
-# path 404s by design — the `dry_run` path needs no setup and can be proven right now.
+# Publishes the 5 npm packages (packages/*) to the npm registry. 4 of the 5 packages
+# (lucarne, lucarne-interact, lucarne-corpus-mcp, lucarne-widget) are not yet published, and npm
+# only allows a Trusted Publisher (OIDC) to be configured on an ALREADY-EXISTING package — so the
+# first publish of each package cannot use OIDC and instead authenticates with an npm token.
+#
+# ONE-TIME setup: the owner creates an npm Granular Access Token (or automation token) with
+# publish rights to the 5 packages (lucarne-records, lucarne, lucarne-interact,
+# lucarne-corpus-mcp, lucarne-widget) and adds it as the repo secret `NPM_TOKEN`. After that,
+# dispatch this workflow with dry_run=false, or push a `v*` tag, to do a real publish (in
+# dependency order, with provenance). Once all 5 packages exist on npm, they MAY later migrate to
+# OIDC Trusted Publishing (configure a trusted publisher per package on npmjs.com) and drop the
+# token — optional hardening, not required for the first publish.
 #
 # Trigger this manually with dry_run=true (default) to prove the publish plan/tarballs with no
-# registry credentials, or push a `v*` tag to do a real publish (in dependency order, with
-# provenance).
+# registry credentials. `pull_request` runs (scoped to this file) are always a dry run too, so the
+# workflow is provable in CI before it's ever eligible to be dispatched (GitHub only allows
+# workflow_dispatch once the workflow file is on the default branch) — and it's fail-safe: no
+# event other than a `v*` tag push or an explicit workflow_dispatch dry_run=false can ever
+# real-publish.
 on:
   workflow_dispatch:
     inputs:
@@ -18,9 +27,11 @@ on:
         default: true
   push:
     tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
 
 permissions:
-  id-token: write   # OIDC for npm trusted publishing + provenance
+  id-token: write   # OIDC for provenance attestation (auth for the first publish is via NPM_TOKEN)
   contents: read
 
 jobs:
@@ -34,19 +45,22 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run build
+      - run: npm install -g npm@latest
 
       # Publish in dependency order: lucarne-records is the base, then the engine (lucarne),
       # then the packages that depend on it.
       - name: Publish packages (dependency order)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -e
 
-          # A tag push (v*) is always a real publish; workflow_dispatch defaults to dry-run.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            DRY=true
-          else
-            DRY=false
-          fi
+          # Fail-safe DRY definition: real publish ONLY on a tag push OR an explicit dispatch
+          # with dry_run=false. Everything else (pull_request, dispatch-default) is a dry run —
+          # a pull_request run can NEVER real-publish, and needs no secret.
+          DRY=true
+          if [ "${{ github.event_name }}" = "push" ]; then DRY=false; fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "false" ]; then DRY=false; fi
           echo "dry_run=$DRY (event=${{ github.event_name }})"
 
           for p in lucarne-records lucarne lucarne-interact lucarne-corpus-mcp lucarne-widget; do
@@ -70,7 +84,7 @@ jobs:
           done
 
       - name: Verify published versions
-        if: github.event_name == 'push' || inputs.dry_run != 'true'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: |
           for p in lucarne-records lucarne lucarne-interact lucarne-corpus-mcp lucarne-widget; do
             ver="$(node -p "require('./packages/$p/package.json').version")"
