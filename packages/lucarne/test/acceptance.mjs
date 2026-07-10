@@ -47,6 +47,25 @@ const firstPage = async (browser, timeoutMs = 10000) => {
   }
 };
 
+// A synthetic CDP `el.focus()` eval does not necessarily have "landed" (i.e. be
+// observable to a subsequent, independently-dispatched synthetic input event) by
+// the time its own round trip resolves — under many-session CI load a blind fixed
+// sleep after the eval is not a reliable bound. Poll-verify `document.activeElement.id`
+// (read-only) instead of sleeping-and-hoping, so callers only proceed once the intended
+// element is PROVABLY focused — the same guarantee a real user's click/Tab gives for free.
+const pollFocusedId = async (cdp, id, timeoutMs = 3000) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const r = await cdp.call("Runtime.evaluate", {
+      expression: "document.activeElement && document.activeElement.id",
+      returnByValue: true,
+    });
+    if (r.result?.value === id) return;
+    if (Date.now() >= deadline) throw new Error(`P0 setup: focus never landed on #${id}`);
+    await sleep(100);
+  }
+};
+
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass: !!pass });
@@ -1365,8 +1384,12 @@ try {
   // path deterministic WITHOUT weakening the assertion — if flush-on-Tab regressed, "alice"+"hunter2"
   // would coalesce into ONE run that the flush-time re-read (now on #pw) redacts wholesale, hiding
   // "alice", so the `blob.indexOf("alice") !== -1` check below still fails on that regression.
+  // The `#pw.focus()` eval is POLL-VERIFIED (not slept-for): a fixed sleep here was itself a race —
+  // under many-session CI load the eval is not necessarily reflected by a blind wait, so we poll
+  // read-only `document.activeElement.id` until it's provably "pw" (bounded; throws a clear setup
+  // error if it never lands, rather than silently typing into the wrong field).
   await xfc.call("Runtime.evaluate", { expression: "document.getElementById('pw').focus()" });
-  await sleep(150);
+  await pollFocusedId(xfc, "pw");
   for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password — #pw is the focused field
   await sleep(1200);                                                            // coalesce + flush
   xfw.close(); xfc.close();
