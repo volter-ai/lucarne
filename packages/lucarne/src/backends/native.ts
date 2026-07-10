@@ -43,6 +43,11 @@ export const nativeBackend: Backend = {
       "--disable-backgrounding-occluded-windows",       // keep rendering while hidden
       "--disable-renderer-backgrounding",
       "--disable-background-timer-throttling",
+      // Use /tmp (not the small /dev/shm, ~64MB in most CI/containers) for Chrome's
+      // shared memory. Without this, tabs crash under many-session load — losing CDP
+      // targets / dropping debugger websockets — the standard containerized-Chrome fix
+      // (also a production benefit for any containerized deployment).
+      "--disable-dev-shm-usage",
       // On Linux without a desktop keyring (headless servers / CI), Chrome can't
       // re-derive its cookie-encryption key across restarts, so persisted cookies
       // don't survive — use the basic store (stable key) there. macOS keeps the

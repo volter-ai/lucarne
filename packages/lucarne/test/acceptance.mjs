@@ -7,7 +7,7 @@ import { pickPublicUrl, tunnelSpawnSpec, ensureTunnelToken, startTunnel } from "
 import { isWebNavUrl } from "../dist/session-media.js";
 import { globalFilesDir } from "../dist/profiles.js";
 import net from "node:net";
-import { attachPage as attachPageRaw, attachBrowser } from "../dist/cdp.js";
+import { attachPage, attachBrowser } from "../dist/cdp.js";
 import { virtualKeyCode } from "../dist/keymap.js";
 import { startRecorder } from "../dist/recorder.js";
 import { totpCode } from "../dist/credentials.js";
@@ -30,24 +30,6 @@ process.env.LUCARNE_HOME = HOME;
 if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// A just-created session's first page target can lag the `create()` call by a beat under CI load
-// (headed Chrome under xvfb spinning up ~25 profiles) — `/json` briefly lists no `type:"page"`
-// target yet, so a raw `attachPage()` throws "no CDP page target to attach to". Poll briefly for the
-// target to appear before giving up (it always shows up within a fraction of a second; a local
-// machine never hits the race). Product `attachPage` is unchanged — this readiness wait lives only in
-// the test, shadowing the import so every attach site below tolerates the startup race uniformly.
-const attachPage = async (base, targetId, timeoutMs = 10000) => {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    try {
-      return await attachPageRaw(base, targetId);
-    } catch (e) {
-      if (Date.now() >= deadline) throw e;
-      await sleep(150);
-    }
-  }
-};
 
 // A FRESH Playwright `connectOverCDP()` discovers targets asynchronously, so
 // `browser.contexts()[0].pages()[0]` can be momentarily `undefined` right after connect even though

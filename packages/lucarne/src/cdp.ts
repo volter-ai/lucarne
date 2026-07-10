@@ -3,6 +3,8 @@
 // `connectOverCDP` driver/agent can still attach independently.
 const WS = (globalThis as unknown as { WebSocket: new (url: string) => any }).WebSocket;
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 export interface CdpConn {
   /** Fire-and-forget (no result needed) — used on the hot input/screencast path. */
   send(method: string, params?: Record<string, unknown>): void;
@@ -26,9 +28,20 @@ export async function listPages(base: string): Promise<PageTarget[]> {
 
 /** Attach to a page target — the first page, or a specific tab by `targetId`. */
 export async function attachPage(base: string, targetId?: string): Promise<CdpConn> {
-  const pages = await listPages(base);
-  const page = targetId ? pages.find((t) => t.id === targetId) : pages[0];
-  if (!page?.webSocketDebuggerUrl) throw new Error(`lucarne: no CDP page target to attach to${targetId ? ` (${targetId})` : ""}`);
+  // Poll briefly for a READY page target. Right after a session/tab is created — and
+  // especially under many-session CI load — the `/json` target list can momentarily be
+  // empty or list a page that has no `webSocketDebuggerUrl` yet. Retry the read for up to
+  // ~5s before giving up. A target that NEVER becomes ready still throws below, so a real
+  // regression (wrong id, dead session) is still caught — this only absorbs the startup race.
+  const deadline = Date.now() + 5000;
+  let page: PageTarget | undefined;
+  for (;;) {
+    const pages = await listPages(base).catch(() => [] as PageTarget[]);
+    page = targetId ? pages.find((t) => t.id === targetId) : pages[0];
+    if (page?.webSocketDebuggerUrl) break;
+    if (Date.now() >= deadline) throw new Error(`lucarne: no CDP page target to attach to${targetId ? ` (${targetId})` : ""}`);
+    await sleep(150);
+  }
   const wsUrl = base.replace("http://", "ws://") + "/devtools/" + page.webSocketDebuggerUrl.split("/devtools/")[1];
   return connectCdp(wsUrl);
 }
@@ -45,7 +58,25 @@ export async function attachBrowser(base: string): Promise<CdpConn> {
 }
 
 async function connectCdp(wsUrl: string): Promise<CdpConn> {
-  const ws = new WS(wsUrl);
+  // Open the debugger socket, retrying a TRANSIENT connect failure a couple of times with a
+  // short backoff — a freshly-created target's ws endpoint can briefly refuse the connection
+  // under CI load (the "CDP websocket failed" flake). A socket that never opens across all
+  // attempts still rejects, so a genuinely-dead endpoint is still surfaced (not masked).
+  let ws: any;
+  for (let attempt = 0; ; attempt++) {
+    ws = new WS(wsUrl);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = (): void => resolve();
+        ws.onerror = (): void => reject(new Error("lucarne: CDP websocket failed"));
+      });
+      break; // opened
+    } catch (e) {
+      try { ws.close(); } catch { /* ignore */ }
+      if (attempt >= 2) throw e; // ~3 attempts total, then surface the failure
+      await sleep(200 * (attempt + 1));
+    }
+  }
   let id = 1;
   let closed = false;
   const handlers = new Map<string, Set<(p: any) => void>>();
@@ -81,11 +112,10 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
     for (const cb of closeCbs) { try { cb(); } catch { /* a close subscriber throwing must not cascade */ } }
     closeCbs.clear();
   };
+  // The socket is already OPEN here (the retry loop above waited for it). Wire the close
+  // handler now — a post-open error/drop surfaces as a close, which handleClose fields.
   ws.onclose = handleClose;
-  await new Promise<void>((resolve, reject) => {
-    ws.onopen = (): void => resolve();
-    ws.onerror = (): void => reject(new Error("lucarne: CDP websocket failed"));
-  });
+  ws.onerror = handleClose;
 
   return {
     send(method, params = {}): void {
