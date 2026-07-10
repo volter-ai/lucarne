@@ -1394,12 +1394,21 @@ try {
     for (;;) { if (await pred()) return true; if (Date.now() >= deadline) return false; await sleep(80); }
   };
   for (const k of ["a", "l", "i", "c", "e"]) tap(k, "Key" + k.toUpperCase());  // username (non-secret)
-  tap("Tab", "Tab");                                                            // flush boundary + focus advance
-  await xfc.call("Runtime.evaluate", { expression: "document.getElementById('pw').focus()" });  // backstop the focus advance
-  const focused = await softPoll(async () => {
+  tap("Tab", "Tab");                                                            // flush boundary; also advances DOM focus #u→#pw
+  const isPwFocused = async () => {
     const r = await xfc.call("Runtime.evaluate", { expression: "document.activeElement && document.activeElement.id", returnByValue: true });
     return r.result?.value === "pw";
-  }, 3000);
+  };
+  // Wait for the Tab's OWN focus-advance to #pw. Do NOT issue an eager #pw.focus() here: it would
+  // race the in-flight Tab (slower 2-hop view-WS path), and if the focus() wins, the then-processed
+  // Tab advances focus #pw→BODY (measured), stranding focus off the password field — a spurious
+  // hunterGone failure or a setup throw on a WORKING engine. Only if the Tab fails to advance within
+  // 3s — by which point it is long-processed, so an explicit focus() cannot race it — do we fall back.
+  let focused = await softPoll(isPwFocused, 3000);
+  if (!focused) {
+    await xfc.call("Runtime.evaluate", { expression: "document.getElementById('pw').focus()" });
+    focused = await softPoll(isPwFocused, 2000);
+  }
   if (!focused) throw new Error("P0 setup: focus never landed on #pw");
   for (const k of ["h", "u", "n", "t", "e", "r", "2"]) tap(k, "Key" + k.toUpperCase());  // password — #pw is the focused field
   // Wait until the password run has flushed: a login_pw run recorded, OR (leaking regression) a plaintext hunter2 anywhere.
