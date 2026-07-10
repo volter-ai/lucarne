@@ -27,6 +27,12 @@
 // English word "profile" from documentation the way the vocabulary gate above bans domain tokens
 // outright.
 //
+// LS-39 (gate-uniformity): the FOURTH check below (bare social-kind FILTER literal ban, formerly
+// LS-37) is now scanned across the WHOLE package `src`, not just `query.ts` — bringing this package's
+// gate scope in line with `lucarne-interact` and `lucarne-corpus-mcp`, which already enforce the same
+// class whole-`src` (see each package's own LS-38 gate note). See that check's own comment below for
+// the full rationale.
+//
 // Run with `node test/package-clean-gate.mjs` (no build required — this only greps source text).
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -123,38 +129,50 @@ check(
   queryHits.length ? queryHits.join("\n    ") : "",
 );
 
-// LS-37 (read-kinds generalize): a FOURTH, broader class of gate — `query.ts` used to carry bare
-// social-kind FILTER literals (`e.kind === "comment"`, `e.kind !== "post"`, a hardcoded `kind:"post"`
-// ref for the comments-op root lookup, …) that silently required/assumed the social taxonomy on the
-// READ side even though `kind` is an open string everywhere else in this package (a schema-blessed
-// non-social record, e.g. `kind:"issue"`, could be APPENDED but then got zero query results). Every
-// list op is now kind-PARAMETERIZED instead (an optional/required `kind` on the QUERY object, never a
-// literal comparison against one of the three social kind names inside the op's own logic) — see
-// query.ts's own LS-37 header note. This check strips comments first (same posture as the LS-33 check
-// above — a doc comment or a `.describe()` string is allowed to NAME "post"/"comment"/"profile" as a
-// recognized-convention EXAMPLE; only a CODE-level filter literal is banned) and scans for the
-// patterns a hardcoded kind-gate would take: `kind === "post"/"comment"/"profile"`, `kind !== "post"`
-// (the two forms this file actually carried before the fix), and a `kind: "post"/"comment"/"profile"`
-// object-literal property (the old comments-op root `findRecord({..., kind:"post", ...})` shape).
+// LS-37 (read-kinds generalize) / LS-39 (gate-uniformity): a FOURTH, broader class of gate — this
+// package's `src` must carry zero bare social-kind FILTER literals (`e.kind === "comment"`,
+// `e.kind !== "post"`, a hardcoded `kind:"post"` ref used as a filter/lookup arg, …) that would
+// silently require/assume the social taxonomy on the READ side even though `kind` is an open string
+// everywhere else in this package (a schema-blessed non-social record, e.g. `kind:"issue"`, could be
+// APPENDED but then get zero query results if any op secretly gated on one of the three social names).
+// `query.ts` used to carry exactly this residue (fixed under LS-37 — see that file's own header note);
+// every list op is now kind-PARAMETERIZED instead (an optional/required `kind` on the QUERY object,
+// never a literal comparison against one of the three social kind names inside the op's own logic).
+//
+// LS-39 (gate-uniformity): originally this check only scanned `query.ts` (the one file LS-37 touched),
+// while the SAME class of gate is enforced whole-`src` in this package's sibling consumers
+// (`lucarne-interact`'s `package-clean-gate.mjs`, LS-38; `lucarne-corpus-mcp`'s, also LS-38) — an
+// inconsistent scope that would let a future file in THIS package (`store.ts`, `cursor.ts`,
+// `validate.ts`, a new file, …) reintroduce a bare social-kind filter literal unnoticed, since only
+// `query.ts` was being watched. Widened to scan the WHOLE package `src` (every file `walk(SRC_DIR)`
+// already found above), matching the sibling packages' posture exactly. Comments/JSDoc are stripped
+// first (same posture as the LS-33 check above and the sibling packages' LS-38 checks — a doc comment
+// is allowed to NAME "post"/"comment"/"profile" as a recognized-convention EXAMPLE; only a CODE-level
+// filter comparison trips this) and scans for the patterns a hardcoded kind-gate would take:
+// `kind === "post"/"comment"/"profile"`, `kind !== "post"`, and a `kind: "post"/"comment"/"profile"`
+// object-literal property used as a filter/lookup arg (the old comments-op root
+// `findRecord({..., kind:"post", ...})` shape). This is deliberately NOT the same shape as a
+// legitimate record-CONSTRUCTION default like `kind: args.kind ?? "post"` — no literal directly
+// follows `kind:` there (an identifier/expression sits between the colon and the fallback literal), so
+// the regex (which requires `kind:` to be followed, modulo whitespace, directly by the quoted literal)
+// never matches it — see `lucarne-corpus-mcp`'s identical note for the same non-match shape.
 const SOCIAL_KIND_FILTER_LITERAL =
   /\bkind\s*(===|==|!==|!=)\s*["'](post|comment|profile)["']|\bkind\s*:\s*["'](post|comment|profile)["']/;
 
-function grepSocialKindFilter(relPath) {
-  const file = join(SRC_DIR, relPath);
+const socialKindOffenders = [];
+for (const file of files) {
   const code = stripComments(readFileSync(file, "utf8"));
-  const hits = [];
   code.split("\n").forEach((line, i) => {
-    if (SOCIAL_KIND_FILTER_LITERAL.test(line)) hits.push(`${relPath}:${i + 1}: ${line.trim()}`);
+    if (SOCIAL_KIND_FILTER_LITERAL.test(line)) socialKindOffenders.push(`${file}:${i + 1}: ${line.trim()}`);
   });
-  return hits;
 }
 
-const socialKindHits = grepSocialKindFilter("query.ts");
 check(
-  'grep-clean (LS-37): query.ts CODE (comments stripped) carries ZERO bare social-kind FILTER literals ' +
-    '(kind === / !== / : "post"|"comment"|"profile") — the general read ops are kind-parameterized, not kind-hardcoded',
-  socialKindHits.length === 0,
-  socialKindHits.length ? socialKindHits.join("\n    ") : "",
+  'grep-clean (LS-37/LS-39): zero bare social-kind FILTER literals (kind === / !== / : "post"|"comment"|"profile") ' +
+    "across the WHOLE package src (comments stripped) — the general read ops are kind-parameterized, not kind-hardcoded, " +
+    "and no future file in this package can silently reintroduce the pattern unnoticed",
+  socialKindOffenders.length === 0,
+  socialKindOffenders.length ? socialKindOffenders.join("\n    ") : "",
 );
 
 const failed = results.filter((r) => !r.pass);
