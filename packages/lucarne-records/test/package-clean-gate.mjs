@@ -15,6 +15,18 @@
 // tokens (e.g. "a code-forge/social/papers source") — same posture as the cadence-token ban above:
 // the general engine can talk ABOUT domains in the abstract, never bake one in by name.
 //
+// LS-33 (store-generalize): a THIRD, narrower class of gate — this one checks LOGIC, not vocabulary.
+// `store.ts`'s merge used to special-case the literal `kind === "profile"` (routing richest-text into
+// `bio` instead of the general `text` field for one hardcoded kind); `query.ts` carried the same
+// residue (`findRecord`'s handle lookup, `search`'s `type:"users"` filter). Both are now kind-agnostic
+// (see each file's own LS-33 header note) — but their DOC COMMENTS still legitimately mention the word
+// "profile" and even the string `kind==="profile"` as prose describing what was REMOVED and why (the
+// same "citation comments are fine" posture as the cadence-token gate above). So this check strips
+// comments (`/* … */` and `// …`) before scanning for the CODE pattern `kind === "profile"` (any
+// quote style, any spacing) — it proves the special case is gone from LOGIC, without banning the
+// English word "profile" from documentation the way the vocabulary gate above bans domain tokens
+// outright.
+//
 // Run with `node test/package-clean-gate.mjs` (no build required — this only greps source text).
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -76,6 +88,39 @@ check(
   "grep-clean: zero cadence/social-app tokens AND zero social-domain tokens (reddit/hackernews/ycombinator/tweet/subreddit/karma) across the WHOLE package src",
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "",
+);
+
+// LS-33: strip comments, then grep for the CODE pattern `kind === "profile"` (any quote/spacing) in
+// store.ts (must be ZERO — the merge special case is fully gone) and query.ts (ideally zero too — see
+// this file's header). Doc-comment mentions of the word "profile" are legitimate and excluded.
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+const KIND_PROFILE_LITERAL = /kind\s*(===|==)\s*["']profile["']/;
+
+function grepKindProfile(relPath) {
+  const file = join(SRC_DIR, relPath);
+  const code = stripComments(readFileSync(file, "utf8"));
+  const hits = [];
+  code.split("\n").forEach((line, i) => {
+    if (KIND_PROFILE_LITERAL.test(line)) hits.push(`${relPath}:${i + 1}: ${line.trim()}`);
+  });
+  return hits;
+}
+
+const storeHits = grepKindProfile("store.ts");
+check(
+  'grep-clean (LS-33): store.ts CODE (comments stripped) carries ZERO `kind === "profile"` special-casing',
+  storeHits.length === 0,
+  storeHits.length ? storeHits.join("\n    ") : "",
+);
+
+const queryHits = grepKindProfile("query.ts");
+check(
+  'grep-clean (LS-33): query.ts CODE (comments stripped) carries ZERO `kind === "profile"` special-casing',
+  queryHits.length === 0,
+  queryHits.length ? queryHits.join("\n    ") : "",
 );
 
 const failed = results.filter((r) => !r.pass);

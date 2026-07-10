@@ -216,6 +216,141 @@ const post = (id, text, metrics, over = {}) => ({
   fs.rmSync(FWD_DIR, { recursive: true, force: true });
 }
 
+// ── LS-33 (store-generalize) G1: kind==="profile" is no longer a merge special case ──────────
+// The panel finding: `mergeEntity` used to route the richest-text winner into `merged.bio`
+// instead of the general `merged.text` whenever `merged.kind === "profile"` — a social
+// convention baked into a domain-agnostic engine. These cases prove the fix directly.
+{
+  // (a) kind:"profile" records merge richest content into `text` (not `bio`).
+  const G1A_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1a-test-"));
+  const thinProfile = { kind: "profile", provenance: prov("prof-a"), handle: "thinp", text: "short bio text" };
+  const richProfile = {
+    kind: "profile",
+    provenance: prov("prof-a"),
+    handle: "thinp",
+    text: "a much longer and richer profile body with lots more content than the thin capture",
+  };
+  appendRecords(G1A_DIR, [thinProfile]);
+  appendRecords(G1A_DIR, [richProfile]);
+  let stored = loadRecords(G1A_DIR).find((e) => e.provenance.id === "prof-a");
+  check("G1a: kind:profile merge writes the richest content into `text`", stored.text === richProfile.text);
+  check("G1a: kind:profile merge does NOT invent a `bio` field out of nowhere", stored.bio === undefined);
+  fs.rmSync(G1A_DIR, { recursive: true, force: true });
+
+  // (b) THE EXACT SKEPTIC BREAK: a non-social kind:"profile" consumer whose records carry ONLY
+  // `text` (no `bio` at all) must not have its content silently redirected. Order matters: the
+  // OLDER record (`prev`) carries the RICHER text, the newer one (`next`, which wins the
+  // donor-wins field spread) carries the THINNER text. Under the old buggy code, `merged.text`
+  // was left to the spread (= the newer, THINNER text) while the richest text was stuffed into
+  // `merged.bio` — a field this consumer never reads and never wrote. The fix must make
+  // `merged.text` itself hold the richest content, full stop.
+  const G1B_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1b-test-"));
+  const olderRicher = {
+    kind: "profile",
+    provenance: prov("prof-b"),
+    handle: "skeptic",
+    text: "a long-form identity-record body — this consumer's kind:profile has nothing to do with social bios",
+  };
+  const newerThinner = { kind: "profile", provenance: prov("prof-b"), handle: "skeptic", text: "short update" };
+  appendRecords(G1B_DIR, [olderRicher]);
+  appendRecords(G1B_DIR, [newerThinner]);
+  stored = loadRecords(G1B_DIR).find((e) => e.provenance.id === "prof-b");
+  check(
+    "G1b (skeptic break): a non-social kind:profile consumer's `text` gets richest-text-wins, not silently thinned",
+    stored.text === olderRicher.text,
+  );
+  check("G1b (skeptic break): no `bio` field was invented for a consumer that never used one", stored.bio === undefined);
+  fs.rmSync(G1B_DIR, { recursive: true, force: true });
+
+  // (c) legacy bio-only line + a text-carrying record → richest wins, no field loss, either
+  // direction (bio richer than the new text, AND text richer than the legacy bio).
+  const G1C_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1c-test-"));
+  const legacyBioOnly = { kind: "profile", provenance: prov("prof-c1"), handle: "legacy1", bio: "short legacy bio" };
+  const freshRicherText = {
+    kind: "profile",
+    provenance: prov("prof-c1"),
+    handle: "legacy1",
+    text: "a longer and much richer text-based body for the same profile identity",
+  };
+  appendRecords(G1C_DIR, [legacyBioOnly]);
+  appendRecords(G1C_DIR, [freshRicherText]);
+  stored = loadRecords(G1C_DIR).find((e) => e.provenance.id === "prof-c1");
+  check("G1c: a richer fresh `text` beats a thinner legacy `bio` (promoted into `text`)", stored.text === freshRicherText.text);
+  check("G1c: the legacy `bio` field survives unmolested alongside it (opaque field, donor-wins spread)", stored.bio === "short legacy bio");
+
+  const richLegacyBio = {
+    kind: "profile",
+    provenance: prov("prof-c2"),
+    handle: "legacy2",
+    bio: "a long-form legacy bio captured before this package wrote a canonical `text` field for profiles at all",
+  };
+  const thinnerFreshText = { kind: "profile", provenance: prov("prof-c2"), handle: "legacy2", text: "short" };
+  appendRecords(G1C_DIR, [richLegacyBio]);
+  appendRecords(G1C_DIR, [thinnerFreshText]);
+  stored = loadRecords(G1C_DIR).find((e) => e.provenance.id === "prof-c2");
+  check(
+    "G1c: a richer legacy `bio` beats a thinner fresh `text` — `textOf`'s legacy alias still feeds richest-text-wins, and the winner lands in `text`",
+    stored.text === richLegacyBio.bio,
+  );
+  fs.rmSync(G1C_DIR, { recursive: true, force: true });
+
+  // (d) stub-never-degrades is UNCHANGED for profiles (mirrors the existing post-shaped proof
+  // above, over kind:"profile" instead, to prove removing the bio-write special case didn't
+  // disturb the orthogonal stub invariant).
+  const G1D_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1d-test-"));
+  const realProfile = {
+    kind: "profile",
+    provenance: prov("prof-d"),
+    handle: "real_handle",
+    text: "a fully captured real profile body",
+    stub: false,
+    metrics: { followers: 10 },
+  };
+  const stubProfile = { kind: "profile", provenance: prov("prof-d"), handle: "placeholder_handle", text: "", stub: true, metrics: {} };
+  appendRecords(G1D_DIR, [realProfile]);
+  appendRecords(G1D_DIR, [stubProfile]);
+  stored = loadRecords(G1D_DIR).find((e) => e.provenance.id === "prof-d");
+  check("G1d: stub-never-degrades holds for kind:profile too (handle not overwritten by a later stub)", stored.handle === "real_handle");
+  check("G1d: stub-never-degrades holds for kind:profile too (text not blanked by a later stub)", stored.text === realProfile.text);
+  check("G1d: the merged profile is not itself marked stub (real iff either contributor is real)", stored.stub !== true);
+  fs.rmSync(G1D_DIR, { recursive: true, force: true });
+}
+
+// ── LS-33 I3-3: `raw` is key-wise merged, not wholesale-replaced ─────────────────────────────
+// The panel finding: `{...base, ...donor}` treats `raw` as ONE shallow field, so a donor whose
+// `raw` is `{bookmarks:n}` only wholesale-replaces a prior `raw:{bookmarks, media:[...]}` —
+// losing the crop pointer on every re-parse/re-merge that doesn't repeat it.
+{
+  const I3_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-i3-3-test-"));
+  const withMedia = {
+    kind: "post",
+    provenance: prov("media-1"),
+    text: "a post with an attached crop",
+    raw: { media: ["https://example.test/crop/media-1.png"], bookmarks: 5 },
+  };
+  // A LATER re-merge (e.g. a `units extract` re-parse) that only observed the bookmark count on
+  // this tick — its OWN `raw` carries nothing about media at all.
+  const bookmarksOnlyRetick = { kind: "post", provenance: prov("media-1"), text: "a post with an attached crop", raw: { bookmarks: 42 } };
+  appendRecords(I3_DIR, [withMedia]);
+  appendRecords(I3_DIR, [bookmarksOnlyRetick]);
+  let stored = loadRecords(I3_DIR).find((e) => e.provenance.id === "media-1");
+  check(
+    "I3-3: a bookmarks-only re-merge KEEPS the earlier `raw.media` crop pointer (key-wise merge, not wholesale replace)",
+    JSON.stringify(stored.raw.media) === JSON.stringify(["https://example.test/crop/media-1.png"]),
+  );
+  check("I3-3: the LATER `raw.bookmarks` value wins for that key (donor-wins per key)", stored.raw.bookmarks === 42);
+
+  // omit-when-empty: neither side ever set `raw` → no `raw:{}` invented.
+  const noRawA = { kind: "post", provenance: prov("media-2"), text: "no raw here" };
+  const noRawB = { kind: "post", provenance: prov("media-2"), text: "still no raw here, but richer text content" };
+  appendRecords(I3_DIR, [noRawA]);
+  appendRecords(I3_DIR, [noRawB]);
+  stored = loadRecords(I3_DIR).find((e) => e.provenance.id === "media-2");
+  check("I3-3: `raw` is omitted entirely (not `{}`) when neither contributor ever set it", !("raw" in stored));
+
+  fs.rmSync(I3_DIR, { recursive: true, force: true });
+}
+
 // ── seed a richer store for the query surface tests ──────────────────────────
 const SEED_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-query-test-"));
 {

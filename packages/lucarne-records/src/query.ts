@@ -17,6 +17,16 @@
  * `unknown`, so every read below is defensive (a `typeof` narrow or a small helper), never a bare
  * cast. A caller whose domain doesn't use these conventions just gets `undefined` back from them,
  * never a crash.
+ *
+ * LS-33 (store-generalize): the `kind==="profile"` literals this package used to carry (an
+ * identity-lookup shortcut in `findRecord`, and the `search`'s `type:"users"` filter) are gone.
+ * `findRecord`'s handle-match is now available to ANY `kind`, not gated to `"profile"` — `handle` is
+ * already a conventional indexed field elsewhere in this file (search/timeline both read it), so
+ * restricting the shortcut to one kind name was residue, not a requirement. `search`'s `type:"users"`
+ * branch now selects structurally — any record carrying a `handle` — instead of by kind name, and
+ * also searches `text` (posts already did) so a `kind:"profile"` consumer that stores its body in
+ * `text` rather than `bio` (LS-33's `store.ts` change) is searchable too. This package now carries
+ * zero `kind==="profile"` literals.
  */
 
 import { decodeCursor, encodeCursor } from "./cursor.js";
@@ -29,9 +39,11 @@ export interface RecordRef {
   kind: string;
   /**
    * Matched against, in order: `provenance.id` (native id), `provenance.canonicalUrl`
-   * (so a caller can pass a URL exactly as `tools.ts`'s `idOrUrl` did), and for
-   * `kind:'profile'` only, `handle` (so `get_profile`'s handle-keyed lookup has a
-   * direct match too — `handle` is a conventional indexed field, read defensively).
+   * (so a caller can pass a URL exactly as `tools.ts`'s `idOrUrl` did), and `handle`
+   * (so an identity-shaped lookup, e.g. `get_profile`'s handle-keyed one, has a direct
+   * match too) — `handle` is a conventional indexed field, read defensively, and this
+   * fallback applies to ANY `kind` that happens to carry one, not just `"profile"`
+   * (LS-33: no kind-literal gate).
    */
   id: string;
 }
@@ -50,7 +62,9 @@ function findRecord(records: readonly Entity[], ref: RecordRef): Entity | undefi
     if (e.kind !== ref.kind || e.provenance.source !== ref.source) return false;
     if (e.provenance.id === ref.id) return true;
     if (e.provenance.canonicalUrl === ref.id) return true;
-    if (e.kind === "profile" && strOf(e.handle) === ref.id) return true;
+    // handle-keyed lookup (LS-33: kind-agnostic — `e.kind === ref.kind` is already
+    // guaranteed above, so this just extends the match to any kind that carries a handle).
+    if (strOf(e.handle) && strOf(e.handle) === ref.id) return true;
     return false;
   });
 }
@@ -178,13 +192,20 @@ export function queryRecords(dir: string, q: RecordQuery): Page<Entity> {
     const type = q.type ?? "posts";
     const needle = q.query.toLowerCase();
     if (type === "users") {
+      // LS-33: identity-shaped records are selected STRUCTURALLY (carries a `handle`) rather
+      // than by the kind-literal `"profile"` — any domain's identity/user-shaped kind matches,
+      // not just one named `"profile"`. `text` is included alongside the legacy `bio` alias so a
+      // `kind:"profile"` consumer that stores its body in `text` (store.ts's LS-33 change) is
+      // searchable here too, same as a post's text already is below.
       const profiles = all.filter(
         (e) =>
-          e.kind === "profile" &&
           e.provenance.source === q.source &&
+          typeof e.handle === "string" &&
+          e.handle.length > 0 &&
           (strOf(e.handle).toLowerCase().includes(needle) ||
             strOf(e.displayName).toLowerCase().includes(needle) ||
-            strOf(e.bio).toLowerCase().includes(needle)),
+            strOf(e.bio).toLowerCase().includes(needle) ||
+            strOf(e.text).toLowerCase().includes(needle)),
       );
       return paginate(applySort(profiles, q.sort), offset, limit);
     }

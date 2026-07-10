@@ -42,14 +42,37 @@
  *
  * LS-29 (generalize-records): this module's LOGIC is byte-identical to the social-only version — only
  * the TYPES widened (`Entity` now names the general `CorpusRecord`, not a closed Post/Comment/Profile
- * union). The one deliberate generalization is `textOf` below: it now honors `bio` as a LEGACY
- * content alias for any `kind`, not just `kind==="profile"` — so a domain record that calls its body
- * field `bio` (the social `Profile` convention this package used to hard-code) still merges
- * correctly under the general richest-text-wins rule, without this package knowing anything about
- * what a "profile" is. The domain payload (every OTHER top-level field — author, container, handle,
- * …) is a shallow, top-level, donor-wins spread via `{ ...base, ...donor }` below — that was already
- * how this merge worked; LS-29 pins it with a test (`test/open-source.mjs`: an arbitrary domain
- * record's own fields, e.g. a GitHub record's `labels: [...]`, survive a merge unmolested).
+ * union). One deliberate generalization survives from that pass: `textOf` below honors `bio` as a
+ * LEGACY content-length alias for ANY `kind`, not just `kind==="profile"` — so a domain record that
+ * calls its body field `bio` (the social `Profile` convention this package used to hard-code) still
+ * merges correctly under the general richest-text-wins rule, without this package knowing anything
+ * about what a "profile" is.
+ *
+ * LS-33 (store-generalize): the one remaining `kind==="profile"` special case — the merge used to
+ * route the richest-text winner into `merged.bio` instead of `merged.text` whenever `merged.kind`
+ * happened to equal the literal `"profile"` — is GONE. `mergeEntity` now ALWAYS writes the richest-
+ * text winner to `merged.text`, for every kind, with no exception: a non-social `kind==="profile"`
+ * consumer that stores its body in `text` (not `bio`) gets the same richest-text-wins guarantee as
+ * anything else, instead of having its content silently redirected to a field it never reads. `bio`
+ * is no longer WRITTEN by this module at all — it rides along as an ordinary opaque top-level field
+ * on the donor-wins spread (same as `author`/`container`/`handle`), and `textOf` still READS it (see
+ * above) purely so an old on-disk bio-only record still compares correctly by content length. This
+ * module now carries ZERO `kind`-literals: nothing here inspects `kind`'s VALUE, only that both sides
+ * of a merge share the SAME kind (the defensive guard just below `mergeEntity`'s signature).
+ *
+ * LS-33 also key-merges `raw` instead of letting the top-level `{...base, ...donor}` spread wholesale-
+ * replace it. `raw` is where a sensor stashes side-channel fields it doesn't want to promote to a
+ * top-level name (e.g. a screen sensor's crop pointer, `raw.media`), and a LATER capture may set a
+ * DIFFERENT `raw` key (e.g. `raw.bookmarks`) without repeating the earlier one — under a wholesale
+ * spread that later donor would silently erase the earlier key (a real loss: `units extract`
+ * re-parsing, `recall snapshot`, or any tick without a fresh crop, would drop `raw.media`). So
+ * `merged.raw` is computed as `{ ...base.raw, ...donor.raw }` (donor wins PER KEY, same rule as the
+ * rest of the merge), and the field is omitted entirely when the result has no keys — domain-agnostic,
+ * since it preserves ANY consumer's raw keys, not just a media pointer. The domain payload (every
+ * OTHER top-level field — author, container, handle, …) is still a shallow, top-level, donor-wins
+ * spread via `{ ...base, ...donor }` below — that was already how this merge worked; LS-29 pins it
+ * with a test (`test/open-source.mjs`: an arbitrary domain record's own fields, e.g. a GitHub record's
+ * `labels: [...]`, survive a merge unmolested).
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -140,6 +163,22 @@ function richerMetrics(a: Entity, b: Entity): Entity["metrics"] {
 }
 
 /**
+ * LS-33 (I3-3): key-wise merge of the `raw` escape hatch, donor wins PER KEY — unlike every other
+ * top-level field, `raw` is itself a bag of independent side-channel keys a sensor may populate
+ * INCREMENTALLY across separate captures (e.g. a crop pointer written once, a bookmark count written
+ * on a later tick that never repeats the crop pointer). A wholesale `{...base, ...donor}` spread would
+ * let the later, narrower `raw` silently erase keys only the earlier one carried. Returns `undefined`
+ * (never `{}`) when neither side contributes any key, so an empty `raw` isn't invented on a merge.
+ */
+function mergeRaw(base: Entity, donor: Entity): Record<string, unknown> | undefined {
+  const baseRaw = base.raw as Record<string, unknown> | undefined;
+  const donorRaw = donor.raw as Record<string, unknown> | undefined;
+  if (!baseRaw && !donorRaw) return undefined;
+  const merged = { ...baseRaw, ...donorRaw };
+  return Object.keys(merged).length ? merged : undefined;
+}
+
+/**
  * Merge two records for the SAME identity, holding both invariants. `next` is
  * the newer/incoming record; `prev` is what the store already has.
  */
@@ -161,13 +200,15 @@ export function mergeEntity(prev: Entity, next: Entity): Entity {
   const merged = { ...base, ...donor } as Entity;
   // richest-text-wins, applied independently of which side was the donor above
   // (an older real capture may still hold more text than a fresher real one).
-  const text = richerText(prev, next);
-  if (merged.kind === "profile") {
-    merged.bio = text || undefined;
-  } else {
-    merged.text = text;
-  }
+  // ALWAYS writes into `text` — no kind-literal special case (LS-33): `bio` is
+  // read (by `textOf`, as a legacy content-length alias) but never written here.
+  merged.text = richerText(prev, next);
   merged.metrics = richerMetrics(prev, next) as never;
+  // LS-33 (I3-3): key-wise merge `raw` instead of letting the spread above
+  // wholesale-replace it — see `mergeRaw`'s doc comment.
+  const raw = mergeRaw(base, donor);
+  if (raw) merged.raw = raw;
+  else delete merged.raw;
   // the merged record is a stub ONLY if BOTH contributors were stubs.
   setMergedStub(merged, prevStub && nextStub);
   return merged;

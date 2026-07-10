@@ -82,7 +82,22 @@ const userPost2 = {
   createdAt: "2026-06-15T00:00:00.000Z",
 };
 
-appendRecords(DIR, [profile, rootPost, comment1, comment2, userPost1, userPost2]);
+// LS-33 (store-generalize): a SECOND profile fixture that carries `text` as its canonical body
+// instead of `bio` (the shape a `lucarne-records`-LS-33 producer, e.g. cadence's `x-graphql.ts`,
+// now emits) — proves get_profile/search work over BOTH a bio-only legacy fixture (`profile`
+// above) and a text-carrying one, since lucarne-records' store/query no longer special-case
+// `kind==="profile"` to route content through `bio` only.
+const textProfile = {
+  kind: "profile",
+  provenance: prov("u_grace", { canonicalUrl: "https://x.com/grace_h" }),
+  handle: "grace_h",
+  displayName: "Grace Hopper",
+  text: "Pioneering computer scientist and Navy rear admiral.",
+  bio: "Pioneering computer scientist and Navy rear admiral.",
+  metrics: { followers: 500 },
+};
+
+appendRecords(DIR, [profile, textProfile, rootPost, comment1, comment2, userPost1, userPost2]);
 
 // ── get_profile: hit, with provenance ─────────────────────────────────────
 {
@@ -90,6 +105,16 @@ appendRecords(DIR, [profile, rootPost, comment1, comment2, userPost1, userPost2]
   check("get_profile: hit returns status:ok", r.status === "ok");
   check("get_profile: returns the seeded profile", r.status === "ok" && r.data.handle === "ada" && r.data.displayName === "Ada Lovelace");
   check("get_profile: carries provenance (source/id/canonicalUrl/fetchedAt/via)", r.status === "ok" && r.data.provenance.source === "x" && r.data.provenance.canonicalUrl === "https://x.com/ada" && r.data.provenance.via === "internal-api");
+}
+
+// ── get_profile: LS-33 — a text-carrying fixture (not bio-only) also works ────────────────
+{
+  const r = getProfile(DIR, { source: "x", handle: "grace_h" });
+  check("get_profile (LS-33 text-carrying fixture): hit returns status:ok", r.status === "ok");
+  check(
+    "get_profile (LS-33 text-carrying fixture): returns the seeded profile with its `text` intact",
+    r.status === "ok" && r.data.handle === "grace_h" && r.data.text === textProfile.text,
+  );
 }
 
 // ── get_profile: miss -> not_captured with browse hint ───────────────────
@@ -133,6 +158,13 @@ appendRecords(DIR, [profile, rootPost, comment1, comment2, userPost1, userPost2]
 
   const users = search(DIR, { source: "x", query: "ada", type: "users" });
   check("search(users): finds the matching captured profile", users.status === "ok" && users.data.items.length === 1 && users.data.items[0].kind === "profile");
+
+  // LS-33: users search over the text-carrying fixture finds it by its `text` field content.
+  const usersByText = search(DIR, { source: "x", query: "rear admiral", type: "users" });
+  check(
+    "search(users, LS-33 text-carrying fixture): finds the profile via its `text` field",
+    usersByText.status === "ok" && usersByText.data.items.length === 1 && usersByText.data.items[0].handle === "grace_h",
+  );
 
   const miss = search(DIR, { source: "x", query: "no-such-term-anywhere-in-the-corpus" });
   check("search: no match returns not_captured (not an empty ok page)", miss.status === "not_captured" && /browse/i.test(miss.hint));
