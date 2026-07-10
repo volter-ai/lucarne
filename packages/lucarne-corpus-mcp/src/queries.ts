@@ -141,10 +141,17 @@ export function getComments(dir: string, args: GetCommentsArgs): ToolResult<Page
   // `depth` filters the returned page down further (a post-filter, honest
   // about the fact this is a store read, not a re-query): 0 = top-level replies only.
   // Read defensively (LS-29): `depth` is a conventional field, not a typed one, on the general Entity.
+  // KIND-AGNOSTIC (fixed alongside the LS-37 read-kinds generalize sweep): this used to EXEMPT every
+  // non-`"comment"` kind from the cap entirely (`e.kind !== "comment" || ...`), so a non-social
+  // `kind:"issue-comment"` deep reply leaked straight past `depth:0`. The cap now applies to ANY
+  // record carrying a numeric `depth`, regardless of kind — a downstream social consumer's own
+  // `kind:"comment"` replies still carry numeric `depth`, so their cap behavior is unchanged; a record with no numeric
+  // `depth` at all (the `typeof e.depth !== "number"` branch) is still passed through uncapped,
+  // exactly as before.
   const items =
     args.depth === undefined
       ? page.items
-      : page.items.filter((e) => e.kind !== "comment" || typeof e.depth !== "number" || e.depth <= args.depth!);
+      : page.items.filter((e) => typeof e.depth !== "number" || e.depth <= args.depth!);
   if (items.length === 0) {
     return notCaptured(
       `comments on ${args.source} post "${args.postIdOrUrl}"`,

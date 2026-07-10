@@ -7,6 +7,20 @@
 // itself, post-split) must be able to depend on this package without it reading like a fork of a
 // still-named product.
 //
+// LS-38 (kind-agnostic tail): EXTENDED with a second class of gate — this package's `src` must ALSO
+// carry zero bare social-kind FILTER literals (`kind === "post"`, `kind !== "post"`, etc. — the same
+// class `lucarne-records`' own package-clean-gate bans in `query.ts`, see that file's LS-37 note).
+// `recall/lock.ts`'s `reconcileMedia` used to carry exactly this residue (`if (r.kind !== "post")
+// continue;`), silently repairing crops for social `kind:"post"` records only even though the crop
+// pipeline it walks (`capture.ts`/`dom-probes.ts`/`media-crop.ts`) is fully kind-agnostic — fixed
+// alongside this gate extension. Scans the WHOLE package `src` (every file, not just `lock.ts`) so no
+// future file can silently reintroduce the pattern unnoticed. Comments/JSDoc/`.describe()` prose are
+// stripped first (same posture as the records-package gate) — only a CODE-level filter comparison
+// trips this; a record-CONSTRUCTION site legitimately setting `kind: "post"` as a literal value it
+// PRODUCES (not filters by) is a different shape (`kind:` inside an object being built, immediately
+// followed by other sibling fields on the SAME literal, not a standalone comparison/filter arg) and
+// this package has none of those in `src` today.
+//
 // Run with `node test/package-clean-gate.mjs` (no build required — this only greps source text).
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -54,6 +68,32 @@ for (const file of files) {
 }
 
 check("grep-clean: zero 'cadence' | '__cadence' | '.social' hits across the WHOLE package src", offenders.length === 0, offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "");
+
+// LS-38: bare social-kind FILTER literal ban, whole-package `src`. Strip comments first — a doc
+// comment or `.describe()` string is allowed to NAME "post"/"comment"/"profile" as a recognized
+// convention EXAMPLE; only a CODE-level filter comparison (`kind === "post"`, `kind !== "post"`, or a
+// `kind: "post"` object-literal property used as a query/filter arg) is banned.
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+const SOCIAL_KIND_FILTER_LITERAL =
+  /\bkind\s*(===|==|!==|!=)\s*["'](post|comment|profile)["']|\bkind\s*:\s*["'](post|comment|profile)["']/;
+
+const kindFilterOffenders = [];
+for (const file of files) {
+  const code = stripComments(readFileSync(file, "utf8"));
+  code.split("\n").forEach((line, i) => {
+    if (SOCIAL_KIND_FILTER_LITERAL.test(line)) kindFilterOffenders.push(`${file}:${i + 1}: ${line.trim()}`);
+  });
+}
+
+check(
+  'grep-clean (LS-38): zero bare social-kind FILTER literals (kind === / !== / : "post"|"comment"|"profile") ' +
+    "across the WHOLE package src (comments stripped) — the crop-reconcile/read paths are kind-agnostic, not kind-hardcoded",
+  kindFilterOffenders.length === 0,
+  kindFilterOffenders.length ? kindFilterOffenders.join("\n    ") : "",
+);
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);

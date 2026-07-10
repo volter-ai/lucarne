@@ -103,6 +103,15 @@ export interface ReconcileResult {
  * `tracker` so future attaches survive a restart too. Read-only of the store except for the
  * PATCHED records this actually fixes, which it writes back through `appendRecords` (still a
  * MERGE, not an overwrite — richest-text-wins / stub-never-degrades hold, `lucarne-records`).
+ *
+ * KIND-AGNOSTIC (fixed alongside the LS-37 read-kinds generalize sweep): this used to skip every
+ * record whose `kind !== "post"`, even though the crop pipeline it repairs (`capture.ts`/
+ * `dom-probes.ts`/`media-crop.ts`) never assumed a social kind — a non-social `kind:"issue"`
+ * consumer's orphaned crop was silently never rebound. The loop below is keyed on the record's own
+ * `provenance.id` matching an on-disk `media-<id>.png` (the `crops[r.provenance.id]` lookup) and on
+ * that record not already carrying media — never on `kind` — so it now rebinds a crop for ANY kind
+ * that has one. A record with no on-disk crop is still left untouched (the `cropPath` existence
+ * check is the only gate); this never fabricates media for a record that wasn't actually captured.
  */
 export function reconcileMedia(dataDir: string, tracker: MediaCropTracker): ReconcileResult {
   let files: string[];
@@ -127,7 +136,6 @@ export function reconcileMedia(dataDir: string, tracker: MediaCropTracker): Reco
   const records = loadRecords(dataDir);
   const patched: Entity[] = [];
   for (const r of records) {
-    if (r.kind !== "post") continue;
     const cropPath = crops[r.provenance.id];
     if (!cropPath) continue;
     const raw = (r as { raw?: Record<string, unknown> }).raw;

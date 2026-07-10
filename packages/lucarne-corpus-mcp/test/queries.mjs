@@ -227,6 +227,93 @@ appendRecords(DIR, [profile, textProfile, rootPost, comment1, comment2, userPost
   );
 }
 
+// ── LS-38 (kind-agnostic tail) — get_comments' `depth` cap applies to a NON-SOCIAL comment kind
+// ("issue-comment") exactly as it does to `kind:"comment"`. Before the fix, the cap's filter read
+// `e.kind !== "comment" || typeof e.depth !== "number" || e.depth <= args.depth`, which EXEMPTED
+// every non-"comment" kind from the cap entirely — a `kind:"issue-comment"` depth-3 child would leak
+// straight past `depth:0` (status:"ok" with the deep reply still in `data.items`) instead of being
+// capped away like a same-shaped social comment would be. This test would FAIL against that old
+// behavior (revert `queries.ts`'s fix to see the deep issue-comment survive the depth:0 cap).
+{
+  const issueRoot = {
+    kind: "issue",
+    provenance: {
+      source: "github",
+      id: "acme/repo#9",
+      canonicalUrl: "https://github.com/acme/repo/issues/9",
+      fetchedAt: "2026-07-08T12:00:00.000Z",
+      via: "internal-api",
+    },
+    text: "flaky test on CI",
+    metrics: { comments: 2 },
+  };
+  const issueCommentTop = {
+    kind: "issue-comment",
+    provenance: {
+      source: "github",
+      id: "acme/repo#9-c1",
+      canonicalUrl: "https://github.com/acme/repo/issues/9#issuecomment-1",
+      fetchedAt: "2026-07-08T12:01:00.000Z",
+      via: "internal-api",
+    },
+    text: "I can reproduce this",
+    threadRootUrl: "https://github.com/acme/repo/issues/9",
+    depth: 0,
+    createdAt: "2026-07-08T12:01:00.000Z",
+  };
+  const issueCommentDeep = {
+    kind: "issue-comment",
+    provenance: {
+      source: "github",
+      id: "acme/repo#9-c2",
+      canonicalUrl: "https://github.com/acme/repo/issues/9#issuecomment-2",
+      fetchedAt: "2026-07-08T12:02:00.000Z",
+      via: "internal-api",
+    },
+    text: "deeply nested follow-up, three levels down",
+    threadRootUrl: "https://github.com/acme/repo/issues/9",
+    depth: 3,
+    createdAt: "2026-07-08T12:02:00.000Z",
+  };
+  appendRecords(DIR, [issueRoot, issueCommentTop, issueCommentDeep]);
+
+  const uncapped = getComments(DIR, { source: "github", postIdOrUrl: "acme/repo#9" });
+  check(
+    "LS-38 get_comments (no depth arg): both non-social issue-comment replies returned, uncapped",
+    uncapped.status === "ok" && uncapped.data.items.length === 2,
+    JSON.stringify(uncapped),
+  );
+
+  const capped = getComments(DIR, { source: "github", postIdOrUrl: "acme/repo#9", depth: 0 });
+  check(
+    "LS-38 get_comments(depth:0): the depth-3 NON-SOCIAL issue-comment is capped away, only the depth-0 one survives",
+    capped.status === "ok" && capped.data.items.length === 1 && capped.data.items[0].provenance.id === "acme/repo#9-c1",
+    JSON.stringify(capped),
+  );
+
+  // Same scenario, capped all the way to nothing left — proves the non-social child is REALLY gone,
+  // not just reordered (a stricter cap than any depth present still returns not_captured on a
+  // root whose only replies are deeper than the cap, same as the social comment behavior above).
+  const overCapped = getComments(DIR, { source: "github", postIdOrUrl: "acme/repo#9", depth: -1 });
+  check(
+    "LS-38 get_comments(depth:-1): both non-social issue-comments (depth 0 and 3) are capped away -> not_captured",
+    overCapped.status === "not_captured",
+    JSON.stringify(overCapped),
+  );
+}
+
+// ── cadence-facing regression guard: kind:"comment" depth behavior is UNCHANGED by the LS-38 fix
+// (it already carried numeric `depth` and was already capped before; this just re-asserts it here,
+// alongside the new non-social proof above, so both are visible in the same run).
+{
+  const stillCapped = getComments(DIR, { source: "x", postIdOrUrl: "9001", depth: 0 });
+  check(
+    "LS-38 regression guard: kind:'comment' depth:0 cap behavior is unchanged (still just the depth:0 reply)",
+    stillCapped.status === "ok" && stillCapped.data.items.length === 1 && stillCapped.data.items[0].provenance.id === "9002",
+    JSON.stringify(stillCapped),
+  );
+}
+
 fs.rmSync(DIR, { recursive: true, force: true });
 
 const failed = results.filter((r) => !r.pass);
