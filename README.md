@@ -112,6 +112,10 @@ Concrete jobs, each a runnable example in [`examples/`](./examples):
   segments or open the built-in player. → [`record-and-replay.ts`](./examples/record-and-replay.ts)
 - **Embed the porthole in your own UI** — single-origin `viewUrl`, drop it in an
   `<iframe>` (read-only or with URL-bar controls). → [`embed-porthole.html`](./examples/embed-porthole.html)
+  After its first browser frame is painted, the iframe posts
+  `{ type: "lucarne:porthole-frame", version: 1 }` to its parent. Embedders can
+  distinguish a loaded porthole document from a live feed; validate both
+  `event.source` and `event.origin` before accepting it.
 - **From Python, or any MCP agent** — stdlib Python client, or the `lucarne-mcp`
   stdio server. → [`python_drive.py`](./examples/python_drive.py), [`mcp-config.json`](./examples/mcp-config.json)
 

@@ -54,7 +54,8 @@ const wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+locati
 let ws;
 function connect(){
   ws=new WebSocket(wsUrl);ws.binaryType='blob';
-  ws.onmessage=async ev=>{if(typeof ev.data==='string')return;const bmp=await createImageBitmap(ev.data);ctx.drawImage(bmp,0,0,VW,VH);bmp.close&&bmp.close();};
+  let announcedFrame=false;
+  ws.onmessage=async ev=>{if(typeof ev.data==='string')return;const bmp=await createImageBitmap(ev.data);ctx.drawImage(bmp,0,0,VW,VH);bmp.close&&bmp.close();if(!announcedFrame){announcedFrame=true;window.parent.postMessage({type:'lucarne:porthole-frame',version:1},'*')}};
   ws.onclose=()=>setTimeout(connect,1000);
   ws.onerror=()=>{try{ws.close()}catch(e){}};
 }
