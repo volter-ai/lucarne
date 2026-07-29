@@ -97,6 +97,28 @@ try {
   check("porthole: receives a JPEG frame over WS", Buffer.isBuffer(frame) && frame.length > 1000 && frame[0] === 0xff && frame[1] === 0xd8,
     Buffer.isBuffer(frame) ? `${frame.length}B, JPEG magic ok` : String(frame.message));
 
+  // An embedding parent needs to distinguish "the iframe document loaded" from
+  // "the porthole painted an actual browser frame." Prove the signal against a
+  // real porthole and real JPEG decode/draw, not just the generated HTML string.
+  const viewer = await chromium.launch({ headless: true });
+  const viewerPage = await viewer.newPage();
+  await viewerPage.addInitScript(() => {
+    window.__lucarneFirstFrames = 0;
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "lucarne:porthole-frame" && event.data?.version === 1) {
+        window.__lucarneFirstFrames++;
+      }
+    });
+  });
+  await viewerPage.goto(session.viewUrl);
+  await viewerPage.waitForFunction(() => window.__lucarneFirstFrames === 1, null, { timeout: 5000 });
+  await sleep(250);
+  check(
+    "porthole: parent gets one readiness signal after the first frame paints",
+    await viewerPage.evaluate(() => window.__lucarneFirstFrames === 1),
+  );
+  await viewer.close();
+
   // 3. INPUT PARITY — caps/shift, and Cmd+A editing command, reach real Chrome
   b = await chromium.connectOverCDP(session.cdpUrl);
   p = await firstPage(b);
