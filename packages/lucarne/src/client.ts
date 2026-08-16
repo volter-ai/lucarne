@@ -45,7 +45,11 @@ export class LucarneClient {
     const res = await fetch(this.baseUrl + path, {
       method: "PUT",
       headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
-      body: data,
+      // A `Uint8Array` IS a valid fetch body at runtime (node's undici and every browser accept a
+      // BufferSource); the cast is only needed because this package compiles with BOTH the node and
+      // DOM lib typings present (the widget modules under src/widget are DOM code), and the DOM
+      // `BodyInit` union's `ArrayBufferView` arm doesn't unify with `Uint8Array<ArrayBufferLike>`.
+      body: data as BodyInit,
     });
     if (!res.ok) throw new Error(`lucarne PUT ${path} -> ${res.status}`);
     return res.json() as Promise<{ ok: boolean }>;

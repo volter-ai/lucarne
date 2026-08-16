@@ -13,7 +13,7 @@
 //
 // Pure — no I/O — so it's directly unit-testable against fixture records + fixture id lists
 // (test/recall-visible-filter.mjs).
-import type { Entity } from "lucarne-records";
+import type { Entity } from "../records/index.js";
 
 /**
  * Keep only `records` whose `provenance.id` is in `visibleIds`, plus any record whose id equals

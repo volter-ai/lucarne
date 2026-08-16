@@ -8,8 +8,8 @@
 import { writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { Page } from "playwright-core";
-import type { Capture, Entity } from "lucarne-records";
-import { appendRecords } from "lucarne-records";
+import type { Capture, Entity } from "../records/index.js";
+import { appendRecords } from "../records/index.js";
 import { tabVisibilityProbe } from "./dom-probes.js";
 import { MediaCropTracker } from "./media-crop.js";
 import { RecallConnection } from "./connection.js";
@@ -63,7 +63,7 @@ export function dispatchExtractors(url: string, aria: string, capture: Capture, 
  * `tracker`, using the caller's OWN `probes.mediaProbe` — absent means no crops), dispatching every
  * matching extractor, applying the viewport-honesty filter (via the caller's own
  * `probes.visibleProbe`/`probes.rootIdFromUrl` — absent means "don't filter" / "no thread root"),
- * and merging the resulting records into the shared store (`lucarne-records`' `appendRecords`).
+ * and merging the resulting records into the shared store (the records module's `appendRecords`).
  */
 export async function runStaticCapture(
   page: Page,
@@ -123,7 +123,7 @@ export async function runStaticCapture(
 export type CaptureOnceSource = string | { cdpUrl: string };
 
 export interface CaptureOnceOptions {
-  /** Where the capture's ARIA text / screenshot / crops / `lucarne-records` store land — same
+  /** Where the capture's ARIA text / screenshot / crops / records store land — same
    *  contract as `startRecall`'s `dataDir`. */
   dataDir: string;
   /** Per-site extractor plugins — same contract as `startRecall`'s `extractors`. */

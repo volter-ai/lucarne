@@ -265,7 +265,7 @@ await recall.stop();
   records }`) — this package bundles none of its own; a caller passes its own
   site-specific ARIA extractor(s) (e.g. cadence's X ARIA extractor, in
   `cadence/src/records/`). Recall dispatches every matching extractor and
-  writes the resulting records through `lucarne-records`'s `appendRecords`.
+  writes the resulting records through the records store's `appendRecords`.
   Likewise `wireAdapters` (LS-13W) — this package bundles no site-specific
   wire adapter either; the default is `[]` (wire capture is a no-op until a
   caller registers a domain's own adapter).
@@ -326,6 +326,72 @@ sensors seen" shape a view renders: counts (`captures`/`videos`/
 three signal kinds. Thumbnails use **ffmpeg** (`thumbDataUri`/`videoPoster`)
 cross-platform; macOS `sips` is used only as a `darwin` fast path.
 
+## The records store (`lucarne-interact/records`)
+
+The domain-agnostic corpus store both sensors write into — one JSONL file
+(`<dir>/records.jsonl`) with atomic tmp-write + rename swaps (a reader never
+sees a torn file), a single-writer / many-reader process contract, and two
+merge invariants: **richest-text-wins** and **stub-never-degrades**. Records
+carry open `source`/`kind` strings and a structural `Provenance` (`via:
+'internal-api' | 'dom' | 'screen'`); the schema names no site and no domain.
+
+```ts
+import { appendRecords, loadRecords, recordKey } from "lucarne-interact/records";
+
+appendRecords(dir, entities);        // idempotent; merges by recordKey
+const all = loadRecords(dir);        // the reader half — no writes, no network
+```
+
+The subpath is dependency-free (`node:fs` only), so a pure reader — a query
+tool, a widget bundle, `lucarne-mcp --corpus-only` — imports just the store
+without pulling in playwright-core or anything else from this package.
+
+## The one platform MCP (`lucarne-mcp`)
+
+This package ships **the** lucarne MCP server — one stdio bin, three tool
+groups:
+
+1. **Corpus** — read-only queries over a records store
+   (`LUCARNE_CORPUS_STORE_DIR`, default `.lucarne/corpus`). **Never fetches**:
+   a miss returns a structured `not_captured` result telling the agent to
+   browse to it in-session instead. `test/mcp-no-egress.mjs` poisons every
+   socket primitive Node exposes and proves the whole call path performs
+   zero network egress.
+2. **Interact verbs** — `lucarne_open` / `lucarne_snap` / `lucarne_scroll` /
+   `lucarne_activate` / `lucarne_back` / `lucarne_capture` / `lucarne_type` /
+   `lucarne_send` / `lucarne_video_*`, each taking a session's `cdpUrl`. The
+   charter holds structurally: there is no click, goto, or eval tool
+   (`test/mcp-charter-gate.mjs` pins the exact registered set), `lucarne_type`
+   stages and never submits, and `lucarne_send` runs the same `decideSend`
+   default-refuse gate as the library — the standing mode is the **server
+   operator's** (`LUCARNE_SEND_MODE=yolo`, default `ask`), never an agent
+   argument, with `approved`/`ack` as per-call signals. Pacing is enforced
+   inside `InteractSession` itself, so an MCP client cannot pace-skip.
+3. **Session lifecycle** — `lucarne_create` / `lucarne_list` /
+   `lucarne_destroy` against a lucarne daemon over plain HTTP
+   (`LUCARNE_URL`, `LUCARNE_TOKEN`); minting returns the `cdpUrl` the
+   interact verbs take. Implemented with `fetch` — this package still
+   depends on no lucarne package.
+
+`--corpus-only` (or `LUCARNE_MCP_CORPUS_ONLY=1`) registers group 1 and
+nothing else; the other two groups sit behind a dynamic import, so that mode
+never even loads `playwright-core` and opens no socket of any kind — the
+safe surface for an agent that should only read what has already been
+captured.
+
+```jsonc
+// e.g. in an MCP client config
+{
+  "mcpServers": {
+    "lucarne": {
+      "command": "lucarne-mcp",
+      "env": { "LUCARNE_CORPUS_STORE_DIR": "/path/to/corpus" }
+      // add "args": ["--corpus-only"] for the read-only surface
+    }
+  }
+}
+```
+
 ## Security posture
 
 Three mechanisms make the "non-bot-like" charter (above) structural, not a
@@ -361,8 +427,7 @@ its own:
   `test/recall-readonly-gates.mjs` greps for it and fails on any hit.
 
 Together the two sensors capture **zero synthetic requests**: recall never
-fetches, replays, paginates, or auto-scrolls on the corpus's behalf — see
-`lucarne-corpus-mcp`'s README for the read side of this same law.
+fetches, replays, paginates, or auto-scrolls on the corpus's behalf.
 
 ## CLI
 

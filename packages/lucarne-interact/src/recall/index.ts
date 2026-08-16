@@ -86,7 +86,7 @@ export { dispatchWireAdapters, startWireSensor, type WireSensorHandle, type Wire
 export type RecallSessionSource = string | { cdpUrl: string; presenceSnapshot?: () => PresenceMarker | null };
 
 export interface StartRecallOptions {
-  /** Where captures land: ARIA text, screenshots, media crops, the shared `lucarne-records` store. */
+  /** Where captures land: ARIA text, screenshots, media crops, the shared records store. */
   dataDir: string;
   /** Per-site extractor plugins (a caller's own site-specific ARIA extractor, e.g. an X extractor)
    *  — the SCREEN sensor's plugins. This package bundles none of its own (LS-29). */

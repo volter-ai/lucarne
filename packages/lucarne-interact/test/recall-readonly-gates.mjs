@@ -8,8 +8,9 @@
 //     (`cropImageFromScreenshot`, `video/assembler.ts`), never a network request.
 //  3. No `click`/`goto`/`eval` — recall never drives the page (only reads: ARIA, screenshot,
 //     screencast, DOM probes, and — LS-13W — the CDP `Network` domain's passive response tap).
-//  4. `lucarne-records` is a real dependency; NO `lucarne` (the engine) import exists in src/ —
-//     recall talks to a session purely through its `cdpUrl`, same posture as `session.ts`.
+//  4. the records store is an IN-PACKAGE module (src/records), and NO `lucarne` (the engine)
+//     dependency or import exists — recall talks to a session purely through its `cdpUrl`, same
+//     posture as `session.ts`.
 //  5. LS-13W: no `fetch(`/`XMLHttpRequest`/`chrome.windows`/`Fetch.enable`/`Fetch.continueRequest`/
 //     `__cs_scroll`/`activeFetch` anywhere in recall — the WIRE sensor is a CDP `Network`-domain tap,
 //     never the request-pausing `Fetch` domain, never a MV3-extension-shaped synthetic call. The
@@ -20,7 +21,7 @@
 // Run with `node test/recall-readonly-gates.mjs` (no build needed — this only greps src/ + reads
 // package.json).
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -64,9 +65,13 @@ check("no XMLHttpRequest usage anywhere in src/recall", xhrHits.length === 0, xh
 const drivingHits = grep("\\.click\\(|\\.goto\\(|page\\.evaluate\\(.*=>.*\\.click|dispatchEvent\\(", RECALL_SRC);
 check("no page-driving calls (.click(/.goto() etc) anywhere in src/recall — read-only", drivingHits.length === 0, drivingHits.join(" | "));
 
-// ── 4. lucarne-records is a real dependency; no `lucarne` (engine) import in src/ ──
+// ── 4. the records store lives IN this package; no `lucarne` (engine) dependency or import ──
 const pkg = JSON.parse(readFileSync(path.join(PKG_ROOT, "package.json"), "utf8"));
-check("lucarne-records is a real (non-dev) dependency of lucarne-interact", !!pkg.dependencies?.["lucarne-records"], JSON.stringify(pkg.dependencies));
+check(
+  "the records store is an in-package module (src/records/index.ts), not an external dependency",
+  existsSync(path.join(SRC, "records", "index.ts")),
+  path.join(SRC, "records", "index.ts"),
+);
 check("'lucarne' (the engine) is NOT a runtime dependency (peer-free, session-only posture)", !pkg.dependencies?.lucarne);
 
 const engineImportHits = grep('from\\s*["\']lucarne["\']', SRC);

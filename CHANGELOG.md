@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [1.7.0]
+
+The platform is **two packages**.
+
+- **`lucarne` 1.7.0 — the engine, widget included.** Sessions you can drive
+  (CDP), watch and control (porthole), and record; plus the in-page widget
+  infrastructure at `lucarne/widget`, `lucarne/widget/host`,
+  `lucarne/widget/runtime`, `lucarne/widget/build`, `lucarne/widget/preact`.
+  `esbuild`, `preact` and `playwright-core` are OPTIONAL peers — the srcdoc
+  build helper loads `esbuild` lazily and names it if it's missing, `preact`
+  stays inside the preact adapter, and the widget selftest keeps its lazy
+  `playwright-core` load — so installing the engine still pulls in neither a
+  bundler nor a UI framework nor a browser.
+  The engine's own MCP bin is gone: the raw computer-use plane (coordinate
+  clicks, rendered HTML) is reachable over the HTTP API, and the agent-facing
+  MCP surface is the human-paced interact plane below.
+
+- **`lucarne-interact` 0.3.0 — the verbs, recall, the records store, and the
+  one MCP.** The human-paced ACT plane (`open`/`snap`/`scroll`/`activate`/
+  `back`/`capture`/`type`/`send`/`video.*`) and the passive read-only recall
+  sensor are joined by the record language and store they write into
+  (`lucarne-interact/records`) and by **`lucarne-mcp`**, the platform's one
+  stdio MCP server: read-only corpus queries, the interact verbs over a
+  session's `cdpUrl`, and session create/list/destroy against a lucarne
+  daemon over plain HTTP. `--corpus-only` (or `LUCARNE_MCP_CORPUS_ONLY=1`)
+  serves the corpus queries alone — a mode that loads no browser stack and
+  performs no network I/O at all.
+  The charter holds at the agent boundary exactly as it holds on the class:
+  there is no `click`, `goto` or `eval` tool; `type` stages and never
+  submits; `send` is the one submit path and runs the same default-refuse
+  `decideSend` gate, with its standing mode set by the operator
+  (`LUCARNE_SEND_MODE`, default `ask`) rather than by the agent.
+  This package depends on no lucarne package: it reaches a session over its
+  `cdpUrl` and a daemon over HTTP.
+
 ## [1.6.1]
 
 ### Fixed

@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appendRecords, loadRecords } from "lucarne-records";
+import { appendRecords, loadRecords } from "../dist/records/index.js";
 import { acquireSingletonLock, RECALL_LOCK_FILE, reconcileMedia, releaseSingletonLock, sweepOrphanVideoDirs } from "../dist/recall/lock.js";
 import { MediaCropTracker } from "../dist/recall/media-crop.js";
 

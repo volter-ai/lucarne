@@ -18,11 +18,11 @@
 // register against this same framework; this package no longer knows any of their names.
 //
 // Records this sensor writes carry `provenance.via:'internal-api'` (LS-04's `Provenance.via` doc)
-// and land in the SAME `lucarne-records` store the screen sensor writes to, via the same
+// and land in the SAME records store the screen sensor writes to, via the same
 // `appendRecords` — ONE recorder, two independent sensors, one store.
 import type { CDPSession, Page } from "playwright-core";
-import type { Entity } from "lucarne-records";
-import { appendRecords } from "lucarne-records";
+import type { Entity } from "../records/index.js";
+import { appendRecords } from "../records/index.js";
 import type { RecallConnection } from "./connection.js";
 import type { RecallSignal } from "./types.js";
 

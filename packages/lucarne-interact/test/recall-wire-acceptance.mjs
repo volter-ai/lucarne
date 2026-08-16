@@ -28,7 +28,7 @@
 //      that issues a request (`Network.enable`/`Network.getResponseBody` are reads; the whole point
 //      of this proof is that the OBSERVED request count matches exactly what the page itself does).
 //   2. dev/03: the app's own GraphQL response is captured and parsed to a `via:'internal-api'`
-//      record in the SAME `lucarne-records` store the screen sensor writes to.
+//      record in the SAME records store the screen sensor writes to.
 //   3. dev/03 buffer-eviction guard: `getResponseBody` is called synchronously off
 //      `Network.loadingFinished` (wire.ts's own implementation detail) — proven behaviorally by
 //      navigating AWAY immediately after the fetch resolves and still finding the record landed
@@ -42,7 +42,7 @@ import { Lucarne } from "lucarne";
 import { chromium } from "playwright-core";
 import { InteractSession } from "../dist/index.js";
 import { startRecall } from "../dist/recall/index.js";
-import { loadRecords } from "lucarne-records";
+import { loadRecords } from "../dist/records/index.js";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
