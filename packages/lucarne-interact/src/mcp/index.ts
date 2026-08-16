@@ -48,7 +48,6 @@ export async function main(): Promise<void> {
   await server.connect(transport);
 
   // Note: never write to stdout — it carries the MCP protocol. Logs go to stderr.
-  if (config.deprecationWarning) process.stderr.write(config.deprecationWarning + "\n");
   process.stderr.write(
     `[lucarne-mcp] up (${config.corpusOnly ? "corpus-only" : "corpus + interact + sessions"}); store: ${config.storeDir}\n` +
       "[lucarne-mcp] corpus queries never fetch — a miss returns not_captured (browse to it in-session)\n" +

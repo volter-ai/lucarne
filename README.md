@@ -289,6 +289,49 @@ minutes (default 60) of one-minute segments. The **semantic activity log** is of
 set `LUCARNE_ACTIVITY=1` (or per session `create({ activity: true })`) to make sessions capture
 it by default.
 
+## The in-page widget (`lucarne/widget/*`)
+
+Reusable glassmorphic in-page widget infrastructure: mount a durable,
+draggable, page-CSS-immune glass panel inside a page of a session you
+control; **stream state in; drain intents out.** Everything is namespaced by
+a caller-supplied `ns`, so two unrelated consumers can each mount their own
+widget on the same page without cross-talk. The engine owns the **shell** —
+chrome (pill/panel/tablist/drag/resize/theme), the versioned host↔iframe
+envelope, and the mount/push/onIntent lifecycle; what a consumer renders
+inside the panel is its own.
+
+The widget's UI is **build-time composition**: the consumer bundles its
+panel code into ONE self-contained srcdoc HTML with `lucarne/widget/build`
+(an esbuild helper — `esbuild` is an optional peer, lazy-imported only
+here), and the host injects that artifact. Nothing is evaluated from
+strings at runtime; past the one mount call (`POST /sessions/:id/inject`)
+the host talks to the page over the session's `cdpUrl` with a small
+self-contained CDP helper.
+
+```ts
+// host side (Node, next to the session)
+import { WidgetHost } from "lucarne/widget/host";
+
+const host = await WidgetHost.attach(sessionId, {
+  ns: "myapp",
+  html: readFileSync("dist/widget.html", "utf8"),  // built via lucarne/widget/build
+  engine: { baseUrl, token },
+});
+host.push({ status: "watching" });                 // → envelope into every top frame
+host.onIntent("ctl", (intent) => { /* ... */ });    // drains a named intent queue
+
+// iframe side (bundled into your srcdoc entrypoint)
+import { createWidget } from "lucarne/widget/runtime";
+import { mountPanel } from "lucarne/widget/preact";  // optional — preact is an optional peer
+
+const w = createWidget({ ns: "myapp", version: 1 });
+w.registerPanel({ id: "status", title: "Status", render: mountPanel(StatusFace), default: true });
+```
+
+`WidgetHost.selftest` asserts singleton / top-frame-only / size-stable /
+survives-reload / responsive against a live session; it lazy-imports
+`playwright-core` (optional peer) only when called.
+
 ## Security
 
 `lucarne` binds to `127.0.0.1` by default — keep it there unless you add a token.
