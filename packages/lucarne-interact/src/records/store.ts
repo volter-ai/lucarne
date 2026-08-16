@@ -16,7 +16,7 @@
  * CONCURRENCY MODEL. This store is designed for the §1.6 architecture: ONE
  * recorder PROCESS is the only writer (its two sensors — screen + wire — write
  * through the same in-process `appendRecords`), and any number of separate
- * READER processes (e.g. `lucarne-corpus-mcp`) call `loadRecords`/`getRecord`/
+ * READER processes (e.g. the MCP corpus tools) call `loadRecords`/`getRecord`/
  * `queryRecords`. `appendRecords` writes to `records.jsonl.tmp` and then
  * `renameSync`s it over `records.jsonl` — an atomic swap on POSIX — so a reader
  * NEVER sees a torn/partial file and a crash mid-write can never truncate the

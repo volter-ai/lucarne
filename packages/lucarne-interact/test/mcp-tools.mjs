@@ -13,8 +13,8 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { appendRecords } from "lucarne-records";
-import { registerTools } from "../dist/tools.js";
+import { appendRecords } from "../dist/records/index.js";
+import { registerCorpusTools } from "../dist/mcp/corpus/tools.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -22,7 +22,7 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-corpus-mcp-e2e-test-"));
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-e2e-test-"));
 const prov = (id, over = {}) => ({
   source: "x",
   id,
@@ -49,8 +49,8 @@ appendRecords(DIR, [
   },
 ]);
 
-const server = new McpServer({ name: "lucarne-corpus-mcp-test", version: "0.1.0" });
-registerTools(server, DIR);
+const server = new McpServer({ name: "mcp-test", version: "0.1.0" });
+registerCorpusTools(server, DIR);
 
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 const client = new Client({ name: "test-client", version: "0.1.0" });
@@ -189,7 +189,7 @@ function parse(result) {
 
 // ── LS-37 (read-kinds generalize) — THE CORPUS-MCP-LEVEL PROOF: a non-social kind ("issue") reaches
 // its data through the REAL MCP tool call path (search + get_timeline), status:"ok", not not_captured
-// — not just through the underlying lucarne-records/queries.ts functions directly.
+// — not just through the underlying the records store/queries.ts functions directly.
 {
   appendRecords(DIR, [
     {

@@ -7,7 +7,7 @@
  * recommend-replies,research-topic}`) barely change their tool-call shape —
  * only their MENTAL MODEL changes (query-a-store, not fetch-a-site). Each
  * handler is a synchronous call into `queries.ts`, which is a synchronous
- * `lucarne-records` disk read — there is no `await bridge.request(...)`
+ * the records store disk read — there is no `await bridge.request(...)`
  * anywhere in this file, because there is no bridge.
  *
  * The three bridge-diagnostic tools from the original (`x_debug`,
@@ -15,7 +15,7 @@
  * diagnosed a socket-based bridge to a browser extension that does not exist
  * in this design (the split spec's §1.3a).
  *
- * LS-29 (generalize-records): `lucarne-records` no longer closes the source set — this bin can query
+ * LS-29 (generalize-records): the records store no longer closes the source set — this bin can query
  * ANY corpus a sensor writes into, not just a fixed list of named sites. `sourceSchema` below is now
  * an open, non-empty string; the five tool DESCRIPTIONS are de-domained (no site names hard-coded)
  * while keeping every load-bearing promise verbatim: read-only, NEVER fetches, browse-in-session,
@@ -49,18 +49,18 @@ function fail(message: string) {
 }
 
 function errorMessage(e: unknown): string {
-  if (e && typeof e === "object" && "message" in e) return `lucarne-corpus-mcp error: ${(e as { message: string }).message}`;
-  return `lucarne-corpus-mcp error: ${String(e)}`;
+  if (e && typeof e === "object" && "message" in e) return `lucarne-mcp error: ${(e as { message: string }).message}`;
+  return `lucarne-mcp error: ${String(e)}`;
 }
 
 /**
- * Register the five read-only query tools against a `lucarne-records` store
+ * Register the five read-only query tools against a the records store store
  * at `storeDir`. `storeDir` is captured once at registration time — every
  * handler is a pure read of whatever `storeDir` currently holds on disk (the
  * recorder process may still be appending to it concurrently; see
- * `lucarne-records/store.ts`'s single-writer/many-readers concurrency model).
+ * `src/records/store.ts`'s single-writer/many-readers concurrency model).
  */
-export function registerTools(server: McpServer, storeDir: string): void {
+export function registerCorpusTools(server: McpServer, storeDir: string): void {
   server.registerTool(
     "get_profile",
     {

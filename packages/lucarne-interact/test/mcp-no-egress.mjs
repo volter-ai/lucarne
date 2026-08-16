@@ -16,8 +16,8 @@ import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
 import dgram from "node:dgram";
-import { appendRecords } from "lucarne-records";
-import { getProfile, getPost, getComments, search, getTimeline } from "../dist/queries.js";
+import { appendRecords } from "../dist/records/index.js";
+import { getProfile, getPost, getComments, search, getTimeline } from "../dist/mcp/corpus/queries.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -66,7 +66,7 @@ if (typeof globalThis.fetch === "function") {
 }
 
 // ── seed a small store (so we can prove BOTH hit and miss paths are egress-free) ──
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-corpus-mcp-no-egress-test-"));
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-no-egress-test-"));
 const prov = (id, over = {}) => ({
   source: "x",
   id,
@@ -126,6 +126,56 @@ function proveEgressFree(name, fn) {
 {
   const r = proveEgressFree("get_profile (hit)", () => getProfile(DIR, { source: "x", handle: "seeded" }));
   check("get_profile (hit): returns the seeded record, not an egress attempt", r?.status === "ok" && r.data.handle === "seeded");
+}
+
+// ── the CORPUS-ONLY server surface, driven end to end with the sockets still poisoned ─────
+// The mode's promise is not "the query functions are pure" (proved above) but "the SERVER built
+// for this mode reaches nothing": build exactly what `src/mcp/index.js` builds under
+// `--corpus-only` (config + the corpus tool group, and nothing else), drive every tool through the
+// real MCP request path, and assert the socket poison never fires.
+{
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { registerCorpusTools } = await import("../dist/mcp/corpus/tools.js");
+  const { resolveConfig } = await import("../dist/mcp/config.js");
+
+  const cfg = resolveConfig({ LUCARNE_CORPUS_STORE_DIR: DIR, LUCARNE_MCP_CORPUS_ONLY: "1" }, []);
+  check("corpus-only mode is what the env/flag resolves to", cfg.corpusOnly === true && cfg.storeDir === DIR);
+
+  const server = new McpServer({ name: "lucarne-mcp-no-egress-test", version: "0.0.0" });
+  registerCorpusTools(server, cfg.storeDir);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "no-egress-test-client", version: "0.0.0" });
+
+  let egressed = null;
+  try {
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    const names = tools.map((t) => t.name).sort();
+    check(
+      "corpus-only: exactly the five read-only corpus tools are registered — no interact verb, no session lifecycle",
+      JSON.stringify(names) === JSON.stringify(["get_comments", "get_post", "get_profile", "get_timeline", "search"]),
+      JSON.stringify(names),
+    );
+    for (const [name, args] of [
+      ["get_profile", { source: "x", handle: "seeded" }],
+      ["get_profile", { source: "x", handle: "never-browsed" }],
+      ["get_post", { source: "x", idOrUrl: "9999999" }],
+      ["get_comments", { source: "x", postIdOrUrl: "9999999" }],
+      ["search", { source: "x", query: "nothing-like-this" }],
+      ["get_timeline", { source: "x", kind: "user_posts", handle: "nobody" }],
+    ]) {
+      await client.callTool({ name, arguments: args });
+    }
+  } catch (e) {
+    egressed = e;
+  }
+  check(
+    "corpus-only: every tool ran through the real MCP call path with zero network attempts",
+    egressed === null,
+    egressed ? String(egressed?.message ?? egressed) : "",
+  );
 }
 
 // ── restore poisoned primitives before exiting ────────────────────────────

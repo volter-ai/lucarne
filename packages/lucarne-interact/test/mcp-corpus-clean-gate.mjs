@@ -1,6 +1,7 @@
-// LS-24c — package cleanliness gate, committed as a re-runnable proof (not just a one-off
-// shell command): the WHOLE package's `src` must carry zero references to `cadence`/`__cadence`/
-// `.social` — this package is a general MCP-surface primitive (§0 of the split spec:
+// LS-24c — CORPUS-surface cleanliness gate, committed as a re-runnable proof (not just a one-off
+// shell command): the MCP's corpus half (`src/mcp/corpus` + `src/mcp/config.ts`) must carry zero
+// references to `cadence`/`__cadence`/`.social` and zero platform-tied vocabulary — the corpus read
+// surface is a general MCP-surface primitive (§0 of the split spec:
 // "nothing general may remain locked in cadence … enforced by grep gates, not intentions"). Citation comments
 // ported from the origin app ("ported from the origin app's `recall.ts:159-194`", etc.) are fine —
 // they just may never spell out that app's actual name, since a downstream consumer (or cadence
@@ -13,7 +14,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC_DIR = resolve(__dirname, "..", "src");
+// The corpus half of the MCP, and only it: this gate's banned list includes bare words ('ask',
+// 'show', 'hot') that the INTERACT half legitimately uses in their ordinary English sense (the send
+// gate's 'ask' mode is the load-bearing example), so scanning the whole package src would make the
+// gate un-passable for reasons that have nothing to do with the law it encodes — that a corpus
+// READER must name no specific platform's vocabulary at its tool boundary.
+const SCAN_ROOTS = [resolve(__dirname, "..", "src", "mcp", "corpus"), resolve(__dirname, "..", "src", "mcp", "config.ts")];
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -50,7 +56,7 @@ const BANNED = [
 
 // LS-38 (kind-agnostic tail): a SECOND class of gate, alongside the vocabulary ban above — this
 // package's `src` must ALSO carry zero bare social-kind FILTER literals (`kind === "post"`,
-// `kind !== "comment"`, etc. — the same class `lucarne-records`' own package-clean-gate bans in
+// `kind !== "comment"`, etc. — the same class the records store' own package-clean-gate bans in
 // `query.ts`, see that file's LS-37 note). `queries.ts`'s `getComments` depth cap used to carry
 // exactly this residue (`e.kind !== "comment" || ...`), which EXEMPTED every non-comment kind from
 // the depth cap entirely — a non-social `kind:"issue-comment"` deep reply leaked past `depth:0` —
@@ -78,8 +84,8 @@ function walk(dir) {
   return out;
 }
 
-const files = walk(SRC_DIR);
-check(`scanned at least one source file under src/ (found ${files.length})`, files.length > 0);
+const files = SCAN_ROOTS.flatMap((r) => (statSync(r).isDirectory() ? walk(r) : [r]));
+check(`scanned at least one source file across the MCP's corpus surface (found ${files.length})`, files.length > 0);
 
 const offenders = [];
 for (const file of files) {
@@ -95,7 +101,7 @@ for (const file of files) {
 }
 
 check(
-  "grep-clean: zero cadence-naming hits AND zero social-platform-tied literals (reddit/hackernews/ycombinator/controversial/hot/ask/show) across the WHOLE package src",
+  "grep-clean: zero cadence-naming hits AND zero social-platform-tied literals (reddit/hackernews/ycombinator/controversial/hot/ask/show) across the MCP's corpus surface",
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "",
 );
@@ -110,7 +116,7 @@ for (const file of files) {
 
 check(
   'grep-clean (LS-38): zero bare social-kind FILTER literals (kind === / !== / : "post"|"comment"|"profile") ' +
-    "across the WHOLE package src (comments stripped) — get_comments' depth cap and every other read path are kind-agnostic, not kind-hardcoded",
+    "across the MCP's corpus surface (comments stripped) — get_comments' depth cap and every other read path are kind-agnostic, not kind-hardcoded",
   kindFilterOffenders.length === 0,
   kindFilterOffenders.length ? kindFilterOffenders.join("\n    ") : "",
 );

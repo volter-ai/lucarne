@@ -1,4 +1,4 @@
-// LS-06 dev/02 — query proof: against a SEEDED lucarne-records store the
+// LS-06 dev/02 — query proof: against a SEEDED the records store store the
 // five reshaped tools (queries.ts) return the seeded records WITH
 // provenance; a query with no matching capture returns a structured
 // `not_captured` result (with a browse-to-it hint), never a network call.
@@ -7,8 +7,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { appendRecords } from "lucarne-records";
-import { getProfile, getPost, getComments, search, getTimeline } from "../dist/queries.js";
+import { appendRecords } from "../dist/records/index.js";
+import { getProfile, getPost, getComments, search, getTimeline } from "../dist/mcp/corpus/queries.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -16,7 +16,7 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-corpus-mcp-query-test-"));
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-mcp-query-test-"));
 
 const prov = (id, over = {}) => ({
   source: "x",
@@ -27,7 +27,7 @@ const prov = (id, over = {}) => ({
   ...over,
 });
 
-// ── seed the store (same fixture shape as lucarne-records' own query tests) ──
+// ── seed the store (same fixture shape as the records store' own query tests) ──
 const profile = {
   kind: "profile",
   provenance: prov("u_ada", { canonicalUrl: "https://x.com/ada" }),
@@ -83,9 +83,9 @@ const userPost2 = {
 };
 
 // LS-33 (store-generalize): a SECOND profile fixture that carries `text` as its canonical body
-// instead of `bio` (the shape a `lucarne-records`-LS-33 producer, e.g. cadence's `x-graphql.ts`,
+// instead of `bio` (the shape a the records store-LS-33 producer, e.g. cadence's `x-graphql.ts`,
 // now emits) — proves get_profile/search work over BOTH a bio-only legacy fixture (`profile`
-// above) and a text-carrying one, since lucarne-records' store/query no longer special-case
+// above) and a text-carrying one, since the records store' store/query no longer special-case
 // `kind==="profile"` to route content through `bio` only.
 const textProfile = {
   kind: "profile",
@@ -176,14 +176,14 @@ appendRecords(DIR, [profile, textProfile, rootPost, comment1, comment2, userPost
 {
   const tl = getTimeline(DIR, { source: "x", kind: "user_posts", handle: "ada" });
   check("get_timeline: returns exactly ada's captured posts", tl.status === "ok" && tl.data.items.length === 2 && tl.data.items.every((p) => p.author.handle === "ada"));
-  check("get_timeline: newest-first ordering preserved from lucarne-records", tl.status === "ok" && tl.data.items[0].provenance.id === "9102");
+  check("get_timeline: newest-first ordering preserved from the records store", tl.status === "ok" && tl.data.items[0].provenance.id === "9102");
 
   const miss = getTimeline(DIR, { source: "x", kind: "user_posts", handle: "someone_never_browsed" });
   check("get_timeline: miss returns not_captured with a browse hint naming the handle", miss.status === "not_captured" && miss.hint.includes("someone_never_browsed"));
 }
 
 // ── LS-37 (read-kinds generalize) — a NON-SOCIAL kind ("issue") reaches its data through these SAME
-// five reshaped functions, not just the underlying lucarne-records primitive directly. Also proves
+// five reshaped functions, not just the underlying the records store primitive directly. Also proves
 // get_profile/get_post's new `kind?` override (defaulted to "profile"/"post") actually routes to a
 // different literal kind when a caller supplies one.
 {

@@ -1,5 +1,5 @@
 /**
- * The five reshaped read tools — pure STORE READS over `lucarne-records`, no
+ * The five reshaped read tools — pure STORE READS over the records store, no
  * network, no bridge, no extension, no fetch. Reshaped from
  * `claude-socials/packages/mcp-server/src/tools.ts`'s five data ops
  * (`get_profile`/`get_post`/`get_comments`/`search`/`get_timeline`,
@@ -16,13 +16,13 @@
  * `bridge_status`, `tools.ts:207-246`) have no analog here — there is no
  * bridge to diagnose — and are intentionally NOT ported (§1.3a).
  *
- * LS-29 (generalize-records): `Source` is now an open `string` — `lucarne-records` no longer closes
+ * LS-29 (generalize-records): `Source` is now an open `string` — the records store no longer closes
  * the source set, so this bin can point at ANY sensor's namespace, not just a closed list of named
  * sites. `Comment`/`Profile` are gone (they were the closed social schema, moved downstream) — the
  * `depth` filter in `getComments` below now reads `depth` DEFENSIVELY off the general `Entity` shape
  * (`CorpusRecord`'s index signature types it `unknown`) instead of casting to a closed `Comment` type.
  *
- * LS-37 (read-kinds generalize): `lucarne-records`' query layer used to silently require/assume the
+ * LS-37 (read-kinds generalize): the records store's query layer used to silently require/assume the
  * social kind names (`"post"`/`"comment"`/`"profile"`) on every list/lookup op, even though `kind` is
  * an open string everywhere else — a schema-blessed non-social record could be appended but never
  * queried back. That hardcoding lived in the PRIMITIVE (`query.ts`), not here, and is gone now (see
@@ -33,8 +33,8 @@
  * hardcoded block. `get_comments` needs no such param: `queryRecords`'s `comments` op is now a pure
  * kind-agnostic relationship query underneath it.
  */
-import { getRecord, queryRecords } from "lucarne-records";
-import type { Entity, Page } from "lucarne-records";
+import { getRecord, queryRecords } from "../../records/index.js";
+import type { Entity, Page } from "../../records/index.js";
 
 type Source = string;
 
@@ -76,7 +76,7 @@ export interface GetProfileArgs {
   handle: string;
   /** LS-37: OPEN, optional, DEFAULTED to `"profile"` — the social convention this tool is named
    *  after. The literal now lives here, as an overridable tool-boundary default, not as a hardcoded
-   *  requirement inside `lucarne-records`' query layer: a caller with a different identity-shaped
+   *  requirement inside the records store's query layer: a caller with a different identity-shaped
    *  kind (rare — most non-social identity records still just call themselves "profile") can pass its
    *  own. */
   kind?: string;
@@ -175,7 +175,7 @@ export interface SearchArgs {
   container?: string;
   limit?: number;
   /** Open string — 'new'/'top'/'best'/'relevance' are recognized conventions; any other source-defined
-   *  sort name is accepted and falls back to capture order in `lucarne-records`' query layer. */
+   *  sort name is accepted and falls back to capture order in the records store's query layer. */
   sort?: string;
   cursor?: string;
 }
@@ -207,7 +207,7 @@ export function search(dir: string, args: SearchArgs): ToolResult<Page<Entity>> 
 export interface GetTimelineArgs {
   source: Source;
   /** Open string — 'user_posts' is a recognized convention (needs handle); any other source-defined
-   *  list name is accepted and falls back to capture order in `lucarne-records`' query layer. */
+   *  list name is accepted and falls back to capture order in the records store's query layer. */
   kind: string;
   handle?: string;
   container?: string;

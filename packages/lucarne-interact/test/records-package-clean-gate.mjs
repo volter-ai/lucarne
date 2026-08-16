@@ -29,7 +29,7 @@
 //
 // LS-39 (gate-uniformity): the FOURTH check below (bare social-kind FILTER literal ban, formerly
 // LS-37) is now scanned across the WHOLE package `src`, not just `query.ts` — bringing this package's
-// gate scope in line with `lucarne-interact` and `lucarne-corpus-mcp`, which already enforce the same
+// gate scope in line with this package's own src-wide gate and the MCP corpus gate, which already enforce the same
 // class whole-`src` (see each package's own LS-38 gate note). See that check's own comment below for
 // the full rationale.
 //
@@ -144,7 +144,7 @@ check(
 //
 // LS-39 (gate-uniformity): originally this check only scanned `query.ts` (the one file LS-37 touched),
 // while the SAME class of gate is enforced whole-`src` in this package's sibling consumers
-// (`lucarne-interact`'s `package-clean-gate.mjs`, LS-38; `lucarne-corpus-mcp`'s, also LS-38) — an
+// (`package-clean-gate.mjs`, LS-38; the MCP corpus gate's, also LS-38) — an
 // inconsistent scope that would let a future file in THIS package (`store.ts`, `cursor.ts`,
 // `validate.ts`, a new file, …) reintroduce a bare social-kind filter literal unnoticed, since only
 // `query.ts` was being watched. Widened to scan the WHOLE package `src` (every file `walk(SRC_DIR)`
@@ -158,7 +158,7 @@ check(
 // legitimate record-CONSTRUCTION default like `kind: args.kind ?? "post"` — no literal directly
 // follows `kind:` there (an identifier/expression sits between the colon and the fallback literal), so
 // the regex (which requires `kind:` to be followed, modulo whitespace, directly by the quoted literal)
-// never matches it — see `lucarne-corpus-mcp`'s identical note for the same non-match shape.
+// never matches it — see the MCP corpus gate's identical note for the same non-match shape.
 const SOCIAL_KIND_FILTER_LITERAL =
   /\bkind\s*(===|==|!==|!=)\s*["'](post|comment|profile)["']|\bkind\s*:\s*["'](post|comment|profile)["']/;
 

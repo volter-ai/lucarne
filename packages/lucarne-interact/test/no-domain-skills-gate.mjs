@@ -20,8 +20,8 @@
 // Existing package-clean gates (e.g. this package's own test/package-clean-gate.mjs) only scan a
 // single package's `src/` — the repo-root skills dirs were entirely outside their blind spot,
 // which is exactly how the four social skills shipped unnoticed. This gate walks the whole repo's
-// skills trees instead (three levels up from this file: packages/lucarne-corpus-mcp/test ->
-// packages/lucarne-corpus-mcp -> packages -> repo root), independent of which package or agent
+// skills trees instead (three levels up from this file: packages/lucarne-interact/test ->
+// packages/lucarne-interact -> packages -> repo root), independent of which package or agent
 // runner (claude vs codex) the violation would land under.
 //
 // Wired into CI: this file is invoked from THIS package's `test:unit` script (package.json), and
@@ -48,7 +48,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// packages/lucarne-corpus-mcp/test -> packages/lucarne-corpus-mcp -> packages -> repo root
+// packages/lucarne-interact/test -> packages/lucarne-interact -> packages -> repo root
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 // Both live skills roots, confirmed via `git ls-tree -r --name-only <branch> | grep -iE
 // '(\.codex|\.claude)/skills'` — no other `<dir>/skills/` root exists in the repo tree today.
