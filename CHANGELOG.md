@@ -1,3 +1,12 @@
+## lucarne 1.7.2
+
+- Widget size handshake: the iframe now re-posts its measured size until the host page acknowledges it
+  (`{action:'sizeAck'}`, on the same `ns`-scoped chrome channel), instead of posting once and hoping. Fixes a
+  roughly coin-flip boot in which the widget's first size message landed before the host armed its listener and
+  was lost forever — leaving a small collapsed pill stranded inside an oversized, mostly-empty glass card. The
+  host also boots at a plausible pill size (220x44, was 300x120), so the pre-handshake frame is no longer a
+  large empty placeholder.
+
 ## lucarne 1.7.1
 
 - Widget glass theme probe: sample the element stack under a real viewport point (not just

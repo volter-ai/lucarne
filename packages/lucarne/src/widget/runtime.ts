@@ -12,6 +12,7 @@
 // imports one.
 import { Emitter } from "./emitter.js";
 import { createEnvelopeReducer } from "./reducer.js";
+import { createSizeHandshake } from "./size-handshake.js";
 import { chromeKey } from "./ns.js";
 
 export type Theme = "light" | "dark";
@@ -292,9 +293,10 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
   }
 
   // anti-jitter resize: tell the host to size the iframe to exactly what we draw. Only post when the size
-  // MEANINGFULLY changes — posting on every observer fire creates a resize→reflow→resize feedback loop.
-  let lastW = 0;
-  let lastH = 0;
+  // MEANINGFULLY changes — posting on every observer fire creates a resize→reflow→resize feedback loop. The
+  // ACKNOWLEDGED half of that relay (re-post until the host answers, so a first post that lands before the host
+  // page armed its listener can't be silently lost) lives in `size-handshake.ts` — pure and separately tested.
+  const sizeHandshake = createSizeHandshake({ ns, post: (msg) => post(ns, msg) });
   let resizeObserver: ResizeObserver | null = null;
   function scheduleResize(): void {
     if (typeof ResizeObserver === "undefined") return;
@@ -305,16 +307,12 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
   }
   function sendResize(): void {
     const r = wrap.getBoundingClientRect();
-    const w = Math.ceil(r.width);
-    const h = Math.ceil(r.height);
-    if (Math.abs(w - lastW) <= 2 && Math.abs(h - lastH) <= 2) return; // ignore jitter → breaks the resize↔reflow loop
-    lastW = w;
-    lastH = h;
-    post(ns, { action: "resize", w, h });
+    sizeHandshake.measured(Math.ceil(r.width), Math.ceil(r.height));
   }
 
   // theme flip + the envelope inbound listener
   function onMessage(e: MessageEvent): void {
+    if (sizeHandshake.handleMessage(e.data)) return; // the host acknowledging one posted size — chrome, never a patch
     const data = e.data as { theme?: Theme } | undefined;
     if (data && typeof data.theme === "string") {
       theme = data.theme;
@@ -370,6 +368,7 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
     },
     destroy(): void {
       window.removeEventListener("message", onMessage);
+      sizeHandshake.dispose();
       resizeObserver?.disconnect();
       clear(wrap);
       wrap.remove();

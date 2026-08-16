@@ -30,5 +30,14 @@ export {
   themeGlobal,
 } from "./ns.js";
 export { createEnvelopeReducer, identityKeyOf, type EnvelopeReducer, type EnvelopeReducerOptions } from "./reducer.js";
+export {
+  createSizeHandshake,
+  DEFAULT_JITTER_PX,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_RETRY_MS,
+  SIZE_ACK_ACTION,
+  type SizeHandshake,
+  type SizeHandshakeOptions,
+} from "./size-handshake.js";
 export { injectorSource, type InjectorOptions } from "./injector.js";
 export { SHELL_CSS } from "./shell-css.js";
