@@ -76,11 +76,20 @@ export function injectorSource(opts: InjectorOptions): string {
     // is what makes it look like real frosted glass on BOTH a dark feed and a white page.
     function pageTheme(){
       try{
-        var els=[document.body, document.documentElement], lum=null;
-        for(var i=0;i<els.length;i++){ var el=els[i]; if(!el) continue;
-          var n=(getComputedStyle(el).backgroundColor||'').replace(/[^0-9.,]/g,'').split(',');
+        // Sample the element STACK under a real viewport point first: many pages (HN's beige
+        // <table>, docs sites with a painted wrapper) leave body/html transparent and paint their
+        // background on a container, so probing only body/html reads null on a light page.
+        var els=[], hops=0;
+        try{ var el=document.elementFromPoint(Math.floor(innerWidth/2), Math.floor(innerHeight/3));
+          while(el && hops++<8){ els.push(el); el=el.parentElement; } }catch(_){}
+        els.push(document.body, document.documentElement);
+        var lum=null;
+        for(var i=0;i<els.length;i++){ var e2=els[i]; if(!e2||!e2.nodeType||e2.nodeType!==1) continue;
+          var n=(getComputedStyle(e2).backgroundColor||'').replace(/[^0-9.,]/g,'').split(',');
           if(n.length>=3){ var a=(n.length>=4)?parseFloat(n[3]):1; if(a>0.2){ lum=0.2126*+n[0]+0.7152*+n[1]+0.0722*+n[2]; break; } } }
-        if(lum===null) return 'dark';                                // bg not painted yet (document-start) → assume dark; applyTheme self-heals
+        // Whole stack transparent: mid-load that means "not painted yet" (stay dark; the guard
+        // interval re-probes), but on a LOADED document it means the UA's default canvas — white.
+        if(lum===null) return document.readyState==='loading' ? 'dark' : 'light';
         return lum>140?'light':'dark';
       }catch(e){ return 'dark'; }
     }
