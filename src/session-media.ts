@@ -34,7 +34,7 @@ export interface SessionMedia {
   cdp: CdpConn;
   frames: FrameSource;
   /** `actor` attributes the event in the activity log: porthole = human, act() = agent. */
-  onInput(ev: InputEvent, actor?: "human" | "agent"): void;
+  onInput(ev: InputEvent, actor?: "human" | "agent"): boolean;
   /** Stream stats (frames + bytes served) for status / "pressure". */
   stats(): { frames: number; streamedBytes: number };
   /** Snapshot of captured logs (network/console/browser), oldest first. */
@@ -89,6 +89,16 @@ export async function startSessionMedia(opts: {
   const firstPage = await listPages(opts.cdpUrl);
   let activeId: string | undefined = firstPage[0]?.id;
   let page = await attachPage(opts.cdpUrl);
+  let closing = false;
+  let pageGeneration = 0;
+  let reconnecting = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let ret: SessionMedia;
+  let dragData: Record<string, unknown> | undefined;
+  let dragInterceptionActive = false;
+  let inputViewport = { height: opts.viewport.height, width: opts.viewport.width };
+  let pointerDown = false;
+  let pointerPosition = { mod: 0, x: 0, y: 0 };
   // Capture downloads to a retrievable per-session dir (list/get over the API).
   // MUST be browser-level + kept open: a page-session setting only scopes to that
   // session, so a download from any other page/driver would escape it.
@@ -199,6 +209,14 @@ export async function startSessionMedia(opts: {
     c.on("Log.entryAdded", (p: { entry: { level: string; text: string } }) =>
       pushLog({ kind: "log", level: p.entry.level, text: p.entry.text, ts: Date.now() }));
   };
+  const refreshInputViewport = (c: CdpConn): void => {
+    void c.call("Page.getLayoutMetrics").then((metrics: { cssLayoutViewport?: { clientHeight?: number; clientWidth?: number } }) => {
+      const viewport = metrics.cssLayoutViewport;
+      if (Number.isFinite(viewport?.clientHeight) && Number.isFinite(viewport?.clientWidth) && viewport!.clientHeight! > 0 && viewport!.clientWidth! > 0) {
+        inputViewport = { height: viewport!.clientHeight!, width: viewport!.clientWidth! };
+      }
+    }).catch(() => {});
+  };
   const wireScreencast = (c: CdpConn): void => {
     if (opts.mobile) {
       // Mobile emulation must be re-applied per page (it's session-scoped), so it
@@ -208,6 +226,19 @@ export async function startSessionMedia(opts: {
       c.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     }
     if (opts.geo) c.send("Emulation.setGeolocationOverride", { latitude: opts.geo.latitude, longitude: opts.geo.longitude, accuracy: opts.geo.accuracy ?? 50 });
+    c.on("Input.dragIntercepted", (event) => {
+      if (c !== page) return;
+      const data = event.data as Record<string, unknown>;
+      c.send("Input.setInterceptDrags", { enabled: false });
+      dragInterceptionActive = false;
+      if (!pointerDown) {
+        c.send("Input.dispatchDragEvent", { data, type: "dragCancel", x: pointerPosition.x, y: pointerPosition.y });
+        return;
+      }
+      dragData = data;
+      c.send("Input.dispatchDragEvent", { data, modifiers: pointerPosition.mod, type: "dragEnter", x: pointerPosition.x, y: pointerPosition.y });
+    });
+    c.on("Page.frameResized", () => { if (c === page) refreshInputViewport(c); });
     c.on("Page.screencastFrame", (p: { data: string; sessionId: number }) => {
       latest = Buffer.from(p.data, "base64");
       lastFrameMs = Date.now();
@@ -216,11 +247,47 @@ export async function startSessionMedia(opts: {
       c.send("Page.screencastFrameAck", { sessionId: p.sessionId });
     });
     c.send("Page.enable");
+    refreshInputViewport(c);
     c.send("Page.startScreencast", { format: "jpeg", quality: opts.quality ?? 60, maxWidth: opts.viewport.width, maxHeight: opts.viewport.height, everyNthFrame: 1 });
     wireLogs(c);
     wireActivity(c);
   };
+  const schedulePageReconnect = (): void => {
+    if (closing || reconnectTimer !== undefined) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void reconnectPage();
+    }, 250);
+    reconnectTimer.unref?.();
+  };
+  const reconnectPage = async (): Promise<void> => {
+    if (closing || reconnecting) return;
+    reconnecting = true;
+    try {
+      const pages = await listPages(opts.cdpUrl);
+      const target = pages.find((candidate) => candidate.id === activeId) ?? pages[0];
+      if (target === undefined) throw new Error("lucarne: no page target is available for porthole recovery");
+      const next = await attachPage(opts.cdpUrl, target.id);
+      const generation = ++pageGeneration;
+      page = next;
+      activeId = target.id;
+      wireScreencast(next);
+      if (ret !== undefined) ret.cdp = next;
+      next.onClose(() => {
+        if (!closing && generation === pageGeneration) schedulePageReconnect();
+      });
+    } catch (error) {
+      pushLog({ kind: "log", level: "warning", text: `lucarne: porthole CDP recovery failed — ${error instanceof Error ? error.message : String(error)}`, ts: Date.now() });
+      schedulePageReconnect();
+    } finally {
+      reconnecting = false;
+    }
+  };
+  const initialGeneration = ++pageGeneration;
   wireScreencast(page);
+  page.onClose(() => {
+    if (!closing && initialGeneration === pageGeneration) schedulePageReconnect();
+  });
 
   // Frame watchdog: `Page.screencastFrame` only fires on visual CHANGE, and headless
   // Chrome composites no frames for a static/idle page — so `latest` could stay null
@@ -258,50 +325,71 @@ export async function startSessionMedia(opts: {
     get: () => latest,
     subscribe: (cb) => { subs.add(cb); return () => subs.delete(cb); },
   };
-  const onInput = (ev: InputEvent, actor: "human" | "agent" = "human"): void => {
+  const inputPoint = (ev: InputEvent): { x: number; y: number } => {
+    const frameHeight = Number.isFinite(ev.frameHeight) && ev.frameHeight! > 0 ? ev.frameHeight! : inputViewport.height;
+    const frameWidth = Number.isFinite(ev.frameWidth) && ev.frameWidth! > 0 ? ev.frameWidth! : inputViewport.width;
+    return {
+      x: (ev.x ?? 0) * inputViewport.width / frameWidth,
+      y: (ev.y ?? 0) * inputViewport.height / frameHeight,
+    };
+  };
+  const onInput = (ev: InputEvent, actor: "human" | "agent" = "human"): boolean => {
     const modifiers = ev.mod ?? 0;
-    if (actor === "human") lastHumanMs = Date.now();
-    // activity log: a click (down) and typed text are the human/agent's semantic acts
-    if (ev.t === "down") { void flushType(); void enrichClick(actor, ev.x, ev.y); }
-    else if (ev.t === "paste" && typeof ev.text === "string") appendType(actor, ev.text);
-    else if (ev.t === "ime" && ev.phase === "commit" && ev.text) appendType(actor, ev.text);
-    // A focus-changing key (Tab/Enter/Escape) must FLUSH the buffer so a field change
-    // starts a fresh, separately-classified run — else "username<Tab>password" coalesces
-    // into one event classified by the username field and the password leaks unredacted.
-    else if (ev.t === "keydown" && (ev.key === "Tab" || ev.key === "Enter" || ev.key === "Escape")) void flushType();
-    else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);
+    let accepted = false;
     if (ev.t === "down" || ev.t === "up" || ev.t === "move") {
-      page.send("Input.dispatchMouseEvent", {
-        type: ev.t === "down" ? "mousePressed" : ev.t === "up" ? "mouseReleased" : "mouseMoved",
-        x: ev.x, y: ev.y,
-        button: ev.t === "move" ? "none" : (MOUSE_BUTTON[ev.button ?? 0] ?? "left"),
-        buttons: ev.buttons ?? 0,           // held buttons → enables drags
-        clickCount: ev.t === "move" ? 0 : (ev.clickCount || 1), // double/triple-click
-        modifiers,
-      });
+      const point = inputPoint(ev);
+      pointerPosition = { mod: modifiers, ...point };
+      const button = MOUSE_BUTTON[ev.button ?? 0] ?? "left";
+      if (ev.t === "down") {
+        pointerDown = true;
+        dragData = undefined;
+        dragInterceptionActive = button === "left" && page.send("Input.setInterceptDrags", { enabled: true });
+      }
+      if (ev.t === "move" && dragData !== undefined) {
+        accepted = page.send("Input.dispatchDragEvent", { data: dragData, modifiers, type: "dragOver", ...point });
+      } else if (ev.t === "up" && dragData !== undefined) {
+        accepted = page.send("Input.dispatchDragEvent", { data: dragData, modifiers, type: "drop", ...point });
+      } else {
+        accepted = page.send("Input.dispatchMouseEvent", {
+          type: ev.t === "down" ? "mousePressed" : ev.t === "up" ? "mouseReleased" : "mouseMoved",
+          ...point,
+          button: ev.t === "move" ? (ev.buttons ? button : "none") : button,
+          buttons: ev.buttons ?? 0,
+          clickCount: ev.t === "move" ? 0 : (ev.clickCount || 1),
+          force: ev.buttons ? 0.5 : 0,
+          modifiers,
+        });
+      }
+      if (ev.t === "up") {
+        if (dragInterceptionActive) page.send("Input.setInterceptDrags", { enabled: false });
+        dragData = undefined;
+        dragInterceptionActive = false;
+        pointerDown = false;
+      }
     } else if (ev.t === "wheel") {
-      page.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.dx, deltaY: ev.dy, modifiers });
+      accepted = page.send("Input.dispatchMouseEvent", { type: "mouseWheel", ...inputPoint(ev), deltaX: ev.dx, deltaY: ev.dy, modifiers });
     } else if (ev.t === "touch") {
       const type = ev.phase === "start" ? "touchStart" : ev.phase === "end" ? "touchEnd" : "touchMove";
-      page.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: ev.x, y: ev.y }] });
+      accepted = page.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [inputPoint(ev)] });
     } else if (ev.t === "ime") {
       // IME/composition (CJK etc.) — plain keydowns can't produce composed text.
       const text = ev.text ?? "";
-      if (ev.phase === "commit") page.send("Input.insertText", { text });
-      else page.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+      accepted = ev.phase === "commit"
+        ? page.send("Input.insertText", { text })
+        : page.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
     } else if (ev.t === "nav") {
       // Allow ONLY web schemes for porthole navigation. file://, chrome://, etc. would
       // turn the browser into an arbitrary host-file reader (read back via /content or
       // /screenshot). Default-deny by allowlist, after stripping leading C0/whitespace
       // (the chars Chrome's URL parser strips) so `\x00file://` can't slip past.
-      if (ev.action === "go" && ev.url && isWebNavUrl(ev.url)) page.send("Page.navigate", { url: ev.url });
-      else if (ev.action === "back") page.send("Runtime.evaluate", { expression: "history.back()" });
-      else if (ev.action === "forward") page.send("Runtime.evaluate", { expression: "history.forward()" });
-      else if (ev.action === "reload") page.send("Page.reload", {});
+      if (ev.action === "go" && ev.url && isWebNavUrl(ev.url)) accepted = page.send("Page.navigate", { url: ev.url });
+      else if (ev.action === "back") accepted = page.send("Runtime.evaluate", { expression: "history.back()" });
+      else if (ev.action === "forward") accepted = page.send("Runtime.evaluate", { expression: "history.forward()" });
+      else if (ev.action === "reload") accepted = page.send("Page.reload", {});
     } else if (ev.t === "paste" && typeof ev.text === "string") {
       // Clipboard sync: deliver text the operator pasted into the porthole as if
       // pasted into the focused field (CDP inserts it like a real paste).
-      page.send("Input.insertText", { text: ev.text });
+      accepted = page.send("Input.insertText", { text: ev.text });
     } else if ((ev.t === "keydown" || ev.t === "keyup") && ev.key) {
       const down = ev.t === "keydown";
       const cmdKey = (modifiers & 2) !== 0 || (modifiers & 4) !== 0; // ctrl or meta = "command" modifier
@@ -309,7 +397,7 @@ export async function startSessionMedia(opts: {
       const text = down && ev.key.length === 1 && !cmdKey ? ev.key : undefined;
       // editing accelerators must be sent as CDP `commands` — synthetic keydowns alone don't fire them
       const command = down && cmdKey && ev.code ? EDIT_COMMANDS[ev.code === "KeyZ" && modifiers & 8 ? "RedoZ" : ev.code] : undefined;
-      page.send("Input.dispatchKeyEvent", {
+      accepted = page.send("Input.dispatchKeyEvent", {
         type: down ? (text !== undefined ? "keyDown" : "rawKeyDown") : "keyUp",
         key: ev.key,
         code: ev.code ?? "",
@@ -321,13 +409,25 @@ export async function startSessionMedia(opts: {
         location: 0,
       });
     }
+    if (!accepted) return false;
+    if (actor === "human") lastHumanMs = Date.now();
+    // Activity is recorded only after the live CDP socket accepts the input.
+    if (ev.t === "down") { const point = inputPoint(ev); void flushType(); void enrichClick(actor, point.x, point.y); }
+    else if (ev.t === "paste" && typeof ev.text === "string") appendType(actor, ev.text);
+    else if (ev.t === "ime" && ev.phase === "commit" && ev.text) appendType(actor, ev.text);
+    // A focus-changing key (Tab/Enter/Escape) must FLUSH the buffer so a field change
+    // starts a fresh, separately-classified run — else "username<Tab>password" coalesces
+    // into one event classified by the username field and the password leaks unredacted.
+    else if (ev.t === "keydown" && (ev.key === "Tab" || ev.key === "Enter" || ev.key === "Escape")) void flushType();
+    else if (ev.t === "keydown" && ev.key && ev.key.length === 1 && (modifiers & 2) === 0 && (modifiers & 4) === 0) appendType(actor, ev.key);
+    return true;
   };
 
   const recorder: Recorder | null = opts.record
     ? startRecorder({ recDir: opts.recDir, fps: opts.fps, retentionMin: opts.retentionMin, segmentSeconds: opts.segmentSeconds, frames })
     : null;
 
-  const ret: SessionMedia = {
+  ret = {
     cdp: page,
     frames,
     onInput,
@@ -349,14 +449,20 @@ export async function startSessionMedia(opts: {
     async switchTab(targetId: string): Promise<void> {
       if (targetId === activeId) return;
       const next = await attachPage(opts.cdpUrl, targetId);
+      const generation = ++pageGeneration;
       wireScreencast(next);
       const old = page;
       page = next;            // input + engine features follow the new tab
       activeId = targetId;
       ret.cdp = next;
+      next.onClose(() => {
+        if (!closing && generation === pageGeneration) schedulePageReconnect();
+      });
       try { old.send("Page.stopScreencast"); old.close(); } catch { /* ignore */ }
     },
     close(): void {
+      closing = true;
+      clearTimeout(reconnectTimer);
       clearInterval(watchdog);
       try { recorder?.close(); } catch { /* ignore */ }
       try { page.close(); } catch { /* ignore */ }

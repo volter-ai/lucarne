@@ -54,7 +54,10 @@ export const nativeBackend: Backend = {
         ? ["--enable-unsafe-extension-debugging", "--disable-features=DisableLoadExtensionCommandLineSwitch"]
         : []),
       ...(ctx.proxy ? [`--proxy-server=${ctx.proxy}`] : []),
-      "about:blank",
+      // Durable browser Surfaces must reopen where the operator left them. Passing
+      // an explicit about:blank target suppresses Chrome's session restoration and
+      // turns every restored porthole into an opaque black canvas.
+      ...(persist ? ["--restore-last-session"] : ["about:blank"]),
     ], { stdio: "ignore" });
     // Fail fast + clearly on a bad/missing binary instead of waiting out the
     // full CDP timeout. The catch keeps a late error (after CDP is up) from

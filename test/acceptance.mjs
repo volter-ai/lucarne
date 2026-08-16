@@ -51,7 +51,7 @@ try {
   check("drive: connectOverCDP navigates real Chrome", (await p.title()) === "Example Domain");
   await p.goto("about:blank");
   await p.evaluate(() => {
-    document.body.innerHTML = '<input id=i><textarea id=t>hello world foo</textarea>';
+    document.body.innerHTML = '<input id=i><textarea id=t>hello world foo</textarea><button id=letterbox style="position:fixed;left:80px;top:80px;width:80px;height:40px" onclick="window.__letterboxClicked=true">click</button>';
     document.getElementById("i").focus();
   });
   await b.close();
@@ -79,6 +79,7 @@ try {
       }
     });
   });
+  await viewerPage.setViewportSize({ width: 800, height: 800 });
   await viewerPage.goto(session.viewUrl);
   await viewerPage.waitForFunction(() => window.__lucarneFirstFrames === 1, null, { timeout: 5000 });
   await sleep(250);
@@ -86,6 +87,15 @@ try {
     "porthole: parent gets one readiness signal after the first frame paints",
     await viewerPage.evaluate(() => window.__lucarneFirstFrames === 1),
   );
+  await viewerPage.mouse.click(62, 237);
+  await sleep(250);
+  const letterboxBrowser = await chromium.connectOverCDP(session.cdpUrl);
+  const letterboxPage = letterboxBrowser.contexts()[0].pages()[0];
+  check(
+    "porthole: letterboxed pointer maps to the rendered browser pixel",
+    await letterboxPage.evaluate(() => window.__letterboxClicked === true),
+  );
+  await letterboxBrowser.close();
   await viewer.close();
 
   // 3. INPUT PARITY — caps/shift, and Cmd+A editing command, reach real Chrome
@@ -505,6 +515,7 @@ try {
   const r1 = await e1.create({ backend: "native", profile: "rst" });
   const b = await chromium.connectOverCDP(r1.cdpUrl);
   await b.contexts()[0].addCookies([{ name: "rst_c", value: "kept", url: "https://example.com", expires: 2000000000 }]);
+  await b.contexts()[0].pages()[0].goto("https://example.com");
   await b.close();
   await e1.close();                                              // kills Chrome, KEEPS the persisted spec
 
@@ -515,6 +526,10 @@ try {
   const back = e2.get("rst");
   check("survive-restart: durable session restored by id after restart", restored.includes("rst") && !!back);
   check("survive-restart: restored session keeps its logged-in state", back && (await readCookieAt(back.cdpUrl)) === "kept");
+  const restoredBrowser = await chromium.connectOverCDP(back.cdpUrl);
+  const restoredUrl = restoredBrowser.contexts()[0].pages()[0]?.url();
+  await restoredBrowser.close();
+  check("survive-restart: restored session reopens its last page", restoredUrl === "https://example.com/");
 
   // an EXPLICIT destroy forgets the spec — a later restart won't resurrect it
   await e2.destroy("rst");

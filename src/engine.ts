@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import type { Backend, BackendHandle } from "./backends/types.js";
 import { attachBackend } from "./backends/attach.js";
 import { dockerBackend } from "./backends/docker.js";
@@ -11,7 +11,7 @@ import { attachBrowser } from "./cdp.js";
 import { FileCredentialStore, totpCode, type CredentialProvider } from "./credentials.js";
 import { readBodyCapped, serveWorkspace, type Send } from "./http.js";
 import { docsHtml, openApiSpec } from "./openapi.js";
-import { portholeHtml } from "./porthole.js";
+import { portholeHtml, type InputEvent } from "./porthole.js";
 import { deleteProfileDir, globalFilesDir, listProfileNames, managedExtensionsDir, profileExists, realChromeUserDataDir, registryFilePath, seedProfile, sessionDirs } from "./profiles.js";
 import { CredentialsService } from "./services/credentials-service.js";
 import { ExtensionsService } from "./services/extensions-service.js";
@@ -110,6 +110,35 @@ function rebindForbidden(headers: http.IncomingHttpHeaders): boolean {
   const origin = headers.origin;
   if (origin) { try { if (!isLoopbackHostLiteral(new URL(origin).hostname)) return true; } catch { return true; } }
   return false;
+}
+
+type InputFeedbackEvent = {
+  buttons?: number;
+  kind: "down" | "move" | "paste" | "typing" | "wheel";
+  label?: string;
+  x?: number;
+  y?: number;
+};
+
+/** Privacy-safe input telemetry: never echo typed or pasted content to viewers. */
+function inputFeedbackEvent(event: InputEvent): InputFeedbackEvent | undefined {
+  if (event.t === "down" || event.t === "move") {
+    return { buttons: event.buttons, kind: event.t, x: event.x, y: event.y };
+  }
+  if (event.t === "wheel") return { kind: "wheel", label: "Scroll", x: event.x, y: event.y };
+  if (event.t === "paste") return { kind: "paste" };
+  if (event.t === "ime") return event.phase === "commit" ? { kind: "typing" } : undefined;
+  if (event.t !== "keydown" || event.repeat) return undefined;
+  const modifiers = [
+    event.mod && event.mod & 1 ? "Alt" : undefined,
+    event.mod && event.mod & 2 ? "Ctrl" : undefined,
+    event.mod && event.mod & 4 ? "⌘" : undefined,
+    event.mod && event.mod & 8 ? "Shift" : undefined,
+  ].filter(Boolean);
+  const printable = event.key !== undefined && event.key.length === 1;
+  return printable && modifiers.length === 0
+    ? { kind: "typing" }
+    : { kind: "typing", label: [...modifiers, printable ? event.key!.toUpperCase() : event.key ?? "Key"].join(" + ") };
 }
 
 /**
@@ -218,6 +247,7 @@ export class Lucarne {
   // stay peelable; the router delegates to each in turn.
   private readonly globalServices: { handle(req: http.IncomingMessage, res: http.ServerResponse, send: Send, pathname: string): Promise<boolean> | boolean }[];
   private readonly wss = new WebSocketServer({ noServer: true });
+  private readonly portholePeers = new Map<string, Set<WebSocket>>();
   private server: http.Server | undefined;
   private reaper: ReturnType<typeof setInterval> | undefined;
   private readonly registryFile: string;
@@ -761,6 +791,25 @@ v.addEventListener('ended',()=>{i++;play()});play();});
     return headerAuth !== undefined && safeEqual(headerAuth, `Bearer ${this.token}`);
   }
 
+  private addPortholePeer(sessionId: string, socket: WebSocket): () => void {
+    const peers = this.portholePeers.get(sessionId) ?? new Set<WebSocket>();
+    peers.add(socket);
+    this.portholePeers.set(sessionId, peers);
+    return () => {
+      peers.delete(socket);
+      if (peers.size === 0) this.portholePeers.delete(sessionId);
+    };
+  }
+
+  private broadcastInputFeedback(sessionId: string, event: InputEvent): void {
+    const feedback = inputFeedbackEvent(event);
+    if (feedback === undefined) return;
+    const payload = JSON.stringify({ event: feedback, t: "input-feedback" });
+    for (const peer of this.portholePeers.get(sessionId) ?? []) {
+      if (peer.readyState === peer.OPEN && peer.bufferedAmount < 64_000) peer.send(payload);
+    }
+  }
+
   listen(): Promise<void> {
     const send: Send = (res, code, body) => {
       res.writeHead(code, { "content-type": "application/json" });
@@ -1000,21 +1049,33 @@ v.addEventListener('ended',()=>{i++;play()});play();});
       if (!this.token && rebindForbidden(req.headers)) { socket.destroy(); return; }
       const wm = new URL(url, "http://x").pathname.match(/^\/sessions\/([^/]+)\/view\/ws$/);
       if (!wm || !this.tokenOk(url, req.headers.authorization)) { socket.destroy(); return; }
-      const s = this.sessions.get(wm[1]!);
+      const sessionId = wm[1]!;
+      const s = this.sessions.get(sessionId);
       if (!s) { socket.destroy(); return; }
       // View-only is enforced server-side (?interactable=0): input is dropped, not
       // merely hidden — a read-only viewer genuinely cannot drive the browser.
       const interactable = new URL(url, "http://x").searchParams.get("interactable") !== "0";
       this.wss.handleUpgrade(req, socket, head, (ws) => {
+        const removePeer = this.addPortholePeer(sessionId, ws);
         const cur = s.media.frames.get();
         if (cur) ws.send(cur);
         // Backpressure: frames are latest-wins, so DROP a frame for a slow/stalled
         // client rather than letting the ws send buffer grow unbounded (a half-open
         // socket would otherwise accrete JPEGs forever).
         const unsub = s.media.frames.subscribe((f) => { if (ws.readyState === ws.OPEN && ws.bufferedAmount < 1_000_000) ws.send(f); });
-        ws.on("message", (d) => { if (!interactable) return; s.lastActivityMs = Date.now(); try { s.media.onInput(JSON.parse(d.toString())); } catch { /* ignore */ } });
-        ws.on("close", unsub);
-        ws.on("error", unsub);
+        ws.on("message", (d) => {
+          if (!interactable) return;
+          try {
+            const event = JSON.parse(d.toString()) as InputEvent;
+            if (s.media.onInput(event)) {
+              s.lastActivityMs = Date.now();
+              this.broadcastInputFeedback(sessionId, event);
+            }
+          } catch { /* ignore */ }
+        });
+        const cleanup = (): void => { unsub(); removePeer(); };
+        ws.on("close", cleanup);
+        ws.on("error", cleanup);
       });
     });
 

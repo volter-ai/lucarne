@@ -4,11 +4,13 @@
 const WS = (globalThis as unknown as { WebSocket: new (url: string) => any }).WebSocket;
 
 export interface CdpConn {
-  /** Fire-and-forget (no result needed) — used on the hot input/screencast path. */
-  send(method: string, params?: Record<string, unknown>): void;
+  /** Fire-and-forget (no result needed) — true when accepted by the live CDP socket. */
+  send(method: string, params?: Record<string, unknown>): boolean;
   /** Request/response — resolves with `result`, rejects on CDP `error`. */
   call(method: string, params?: Record<string, unknown>): Promise<any>;
   on(method: string, cb: (params: any) => void): void;
+  /** Subscribe to loss of this exact CDP target connection. */
+  onClose(cb: () => void): () => void;
   close(): void;
 }
 
@@ -44,6 +46,7 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
   const ws = new WS(wsUrl);
   let id = 1;
   let closed = false;
+  const closeHandlers = new Set<() => void>();
   const handlers = new Map<string, Set<(p: any) => void>>();
   const pending = new Map<number, { resolve: (r: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   ws.onmessage = (m: { data: unknown }): void => {
@@ -73,16 +76,21 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
     closed = true;
     for (const [, p] of pending) { clearTimeout(p.timer); p.reject(new Error("lucarne: CDP socket closed")); }
     pending.clear();
+    for (const cb of closeHandlers) {
+      try { cb(); } catch { /* a close subscriber must not break the drain */ }
+    }
   };
   ws.onclose = onClose;
   await new Promise<void>((resolve, reject) => {
     ws.onopen = (): void => resolve();
     ws.onerror = (): void => reject(new Error("lucarne: CDP websocket failed"));
   });
+  ws.onerror = onClose;
 
   return {
-    send(method, params = {}): void {
-      try { ws.send(JSON.stringify({ id: id++, method, params })); } catch { /* closed */ }
+    send(method, params = {}): boolean {
+      if (closed || ws.readyState !== 1) return false;
+      try { ws.send(JSON.stringify({ id: id++, method, params })); return true; } catch { return false; }
     },
     call(method, params = {}): Promise<any> {
       if (closed) return Promise.reject(new Error("lucarne: CDP socket closed"));
@@ -98,6 +106,14 @@ async function connectCdp(wsUrl: string): Promise<CdpConn> {
     on(method, cb): void {
       if (!handlers.has(method)) handlers.set(method, new Set());
       handlers.get(method)!.add(cb);
+    },
+    onClose(cb): () => void {
+      if (closed) {
+        queueMicrotask(cb);
+        return () => {};
+      }
+      closeHandlers.add(cb);
+      return () => closeHandlers.delete(cb);
     },
     // Drain pending so a close() during an in-flight call doesn't leave it hanging on a
     // non-unref'd 15s timer (pinning the loop); idempotent with the onclose drain.
