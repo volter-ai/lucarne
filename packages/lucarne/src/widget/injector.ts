@@ -65,7 +65,8 @@ export function injectorSource(opts: InjectorOptions): string {
   // NOTE: everything below is delivered to the page as a STRING (template-literal → `Runtime.evaluate` /
   // `Page.addScriptToEvaluateOnNewDocument`), so — as the prior implementation's own version of this comment
   // warns — any regex backslash-escape (`\d`, `\s`) inside it would be stripped before it ever runs. Keep
-  // parsing here backslash-free.
+  // parsing here backslash-free. For the same reason keep the COMMENTS below backtick-free: a stray backtick
+  // (quoting a filename, say) closes the template literal and the file stops parsing.
   return `(function(){
     // addScriptToEvaluateOnNewDocument runs in EVERY frame (main + every child iframe: embeds, ads, quote-posts).
     // Mount ONLY in the top frame, or a busy SPA spawns one widget per iframe as they churn.
@@ -200,7 +201,11 @@ export function injectorSource(opts: InjectorOptions): string {
       // so it only ever covers what's actually drawn and never eats clicks over the page.
       // The HOST owns the rounded corners + clip + GLASS (backdrop-filter cannot cross an iframe boundary, so the
       // blur/tint must live here); the iframe stays transparent so the host's blurred backdrop shows through.
-      host.style.cssText='position:fixed;bottom:16px;right:16px;width:300px;height:120px;z-index:2147483647;border-radius:26px;overflow:hidden;transition:none';
+      // BOOT SIZE = a plausible COLLAPSED PILL (~220x44), not a large placeholder card: the real size arrives one
+      // ack-loop hop later (size-handshake.ts), and until it does this is what the page shows. Sized rather than
+      // hidden deliberately — a widget that reveals only on a message is INVISIBLE on any page where that message
+      // never arrives, which is the worse failure of the two; a ~16px settle is not.
+      host.style.cssText='position:fixed;bottom:16px;right:16px;width:220px;height:44px;z-index:2147483647;border-radius:26px;overflow:hidden;transition:none';
       var P=window[${JSON.stringify(POS_G)}];                          // keep a dragged position across SPA re-mounts
       if(P){
         if(P.hx){                                                      // corner anchor (PiP) → growth expands inward
@@ -266,6 +271,14 @@ export function injectorSource(opts: InjectorOptions): string {
       window.addEventListener('message',function(e){
         var d=e.data&&e.data[CHROME]; if(!d) return;                 // not this ns's channel → ignore (lets several ns instances share one page)
         if(d.action==='resize'){                                     // iframe asked the host to fit its content
+          // ACK FIRST, unconditionally: the iframe re-posts its size on a short interval until it hears this back
+          // (size-handshake.ts), which is what makes the size land even when the FIRST post arrived before
+          // this listener was armed. Echo the RECEIVED w/h (not the clamped ones applied below) — the iframe
+          // matches the ack against what it sent. Same CHROME marker as every other message on this channel,
+          // so a second ns instance on the page can never consume this one's ack.
+          var ackMsg={}; ackMsg[CHROME]={ action:'sizeAck', w:d.w, h:d.h };
+          var ackTarget=e.source||(window[${JSON.stringify(IFRAME_G)}]&&window[${JSON.stringify(IFRAME_G)}].contentWindow);
+          try{ if(ackTarget) ackTarget.postMessage(ackMsg,'*'); }catch(_){}
           var h=document.getElementById(HOST);
           if(h){ h.style.width=Math.max(80,Math.ceil(d.w))+'px'; h.style.height=Math.max(40,Math.ceil(d.h))+'px'; applyRefraction();   // size changed → rebuild the displacement map to fit
             // SPRING SIZE-MORPH (the Dynamic-Island expand): animate width/height on every change AFTER the first
