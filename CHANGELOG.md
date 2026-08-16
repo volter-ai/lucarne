@@ -1,3 +1,10 @@
+## lucarne 1.7.1
+
+- Widget glass theme probe: sample the element stack under a real viewport point (not just
+  `body`/`html`) so pages that paint their background on a container (HN's table, docs sites)
+  read as light; a fully-transparent stack on a loaded document now means the UA's white
+  canvas, not dark. Fixes an illegible dark-frost widget on light pages.
+
 # Changelog
 
 All notable changes to this project are documented here. The format is based on
