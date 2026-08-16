@@ -7,7 +7,7 @@
 // touching a browser.
 //
 // LS-29 (generalize-records): this package no longer depends on any site-specific parser
-// (`lucarne-records`' X ARIA extractor moved downstream to a domain package) — the "real extractor"
+// (the records module's X ARIA extractor moved downstream to a domain package) — the "real extractor"
 // half of this test now uses a small, fully LOCAL, generic fixture extractor (source:"example"-shaped
 // records) instead of importing an X-specific one. The X-specific version of this proof (driving the
 // actual `xAriaExtractor`) now lives in the domain package's own test suite.

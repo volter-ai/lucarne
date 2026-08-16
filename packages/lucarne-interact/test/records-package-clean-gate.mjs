@@ -39,7 +39,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC_DIR = resolve(__dirname, "..", "src");
+// Scoped to the records store's own modules inside this package: the domain-vocabulary ban below is a law
+// about the RECORD LANGUAGE (it must name no site), and the rest of this package's src legitimately names
+// sites in prose (e.g. activate-gate.ts's worked examples of unsafe control shapes).
+const SRC_DIR = resolve(__dirname, "..", "src", "records");
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -91,7 +94,7 @@ for (const file of files) {
 }
 
 check(
-  "grep-clean: zero cadence/social-app tokens AND zero social-domain tokens (reddit/hackernews/ycombinator/tweet/subreddit/karma) across the WHOLE package src",
+  "grep-clean: zero cadence/social-app tokens AND zero social-domain tokens (reddit/hackernews/ycombinator/tweet/subreddit/karma) across the whole records store src",
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 10).join("\n    ")}` : "",
 );
@@ -169,7 +172,7 @@ for (const file of files) {
 
 check(
   'grep-clean (LS-37/LS-39): zero bare social-kind FILTER literals (kind === / !== / : "post"|"comment"|"profile") ' +
-    "across the WHOLE package src (comments stripped) — the general read ops are kind-parameterized, not kind-hardcoded, " +
+    "across the whole records store src (comments stripped) — the general read ops are kind-parameterized, not kind-hardcoded, " +
     "and no future file in this package can silently reintroduce the pattern unnoticed",
   socialKindOffenders.length === 0,
   socialKindOffenders.length ? socialKindOffenders.join("\n    ") : "",

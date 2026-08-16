@@ -1,5 +1,5 @@
 /**
- * The read/query API over a `lucarne-records` store — STORE READS ONLY.
+ * The read/query API over a records store — STORE READS ONLY.
  *
  * Reshaped from the SHAPE of `claude-socials/packages/mcp-server/src/tools.ts`'s five ops (LS-03):
  * `get_profile`/`get_post` are single-entity lookups → here, `getRecord`; `get_comments`/`search`/
@@ -188,7 +188,7 @@ function paginate<T>(items: T[], offset: number, limit: number): Page<T> {
 
 /** Conventional ranking signal: a record's normalized `metrics.score` when present, else the single
  *  largest numeric value anywhere in `metrics` (whatever a domain's own primary ranking signal is
- *  named — followers, stars, upvotes, … — this package doesn't hardcode any domain's own metric
+ *  named — followers, stars, reactions, … — this package doesn't hardcode any domain's own metric
  *  vocabulary). Read defensively (metrics values are `number | null | undefined`).
  *  LS-29: this "largest numeric metric" fallback is a DELIBERATE generalization, not a drift — the
  *  store is source-agnostic now, so ranking must not name a domain-specific metric field; the fallback

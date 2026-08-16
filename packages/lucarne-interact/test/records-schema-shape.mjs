@@ -13,8 +13,8 @@
 //
 // Run with `node test/schema-shape.mjs` (after `npm run build`).
 import assert from "node:assert/strict";
-import { isEntity, assertEntity } from "../dist/validate.js";
-import { encodeCursor, decodeCursor } from "../dist/cursor.js";
+import { isEntity, assertEntity } from "../dist/records/validate.js";
+import { encodeCursor, decodeCursor } from "../dist/records/cursor.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {

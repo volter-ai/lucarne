@@ -32,7 +32,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { runStaticCapture } from "../dist/recall/capture.js";
 import { MediaCropTracker } from "../dist/recall/media-crop.js";
-import { loadRecords } from "lucarne-records";
+import { loadRecords } from "../dist/records/index.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {

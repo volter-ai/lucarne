@@ -1,7 +1,7 @@
 // Recall's public shared types (LS-13) — the SCREEN sensor's plugin contracts + emitted signal
 // shape. Kept in one file so `index.ts` and its sibling modules (tab-scoring, capture, video-watch,
 // …) share one vocabulary without a circular import.
-import type { Capture, Entity } from "lucarne-records";
+import type { Capture, Entity } from "../records/index.js";
 import type { MediaBox } from "./dom-probes.js";
 
 /**

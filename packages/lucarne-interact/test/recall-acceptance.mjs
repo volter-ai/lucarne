@@ -13,7 +13,7 @@
 //      presence-derived by:'agent' on THAT capture (recall is given the driving InteractSession
 //      directly — duck-typed presenceSnapshot()). The url path changed between captures, so
 //      classifyChange returns 'navigated'.
-//   3. via:'screen' records land in the shared `lucarne-records` store at `dataDir`, and
+//   3. via:'screen' records land in the shared records store at `dataDir`, and
 //      viewport-honesty DROPS the off-screen buffered post while KEEPING the on-screen reply AND
 //      the thread root (asserted on the post-'navigated' state, before the scroll below).
 //   4. scroll -> capture-on-change fires with reason:'scrolled'.
@@ -30,7 +30,7 @@
 import { Lucarne } from "lucarne";
 import { InteractSession } from "../dist/index.js";
 import { startRecall } from "../dist/recall/index.js";
-import { loadRecords } from "lucarne-records";
+import { loadRecords } from "../dist/records/index.js";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
@@ -226,7 +226,7 @@ try {
   await sleep(1000);
   const records = loadRecords(DATA_DIR);
   const screenRecords = records.filter((r) => r.provenance.via === "screen");
-  check("via:'screen' records land in the lucarne-records store", screenRecords.length > 0, `${screenRecords.length} screen records`);
+  check("via:'screen' records land in the records store", screenRecords.length > 0, `${screenRecords.length} screen records`);
   const bufferedRecord = screenRecords.find((r) => r.provenance.id === BUFFERED_SID);
   check("viewport-honesty: the far-off-screen buffered post is DROPPED", !bufferedRecord);
   const replyRecord = screenRecords.find((r) => r.provenance.id === REPLY_SID);

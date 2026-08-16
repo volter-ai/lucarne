@@ -4,8 +4,8 @@
 // unit-testable (test/recall-lock.mjs).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { Entity } from "lucarne-records";
-import { appendRecords, loadRecords } from "lucarne-records";
+import type { Entity } from "../records/index.js";
+import { appendRecords, loadRecords } from "../records/index.js";
 import type { MediaCropTracker } from "./media-crop.js";
 
 export const RECALL_LOCK_FILE = ".recall.lock";
@@ -102,7 +102,7 @@ export interface ReconcileResult {
  * unit/record carrying it was ever written or re-merged) — the origin app's `recall.ts:277-287`. Seeds
  * `tracker` so future attaches survive a restart too. Read-only of the store except for the
  * PATCHED records this actually fixes, which it writes back through `appendRecords` (still a
- * MERGE, not an overwrite — richest-text-wins / stub-never-degrades hold, `lucarne-records`).
+ * MERGE, not an overwrite — richest-text-wins / stub-never-degrades hold, `src/records`).
  *
  * KIND-AGNOSTIC (fixed alongside the LS-37 read-kinds generalize sweep): this used to skip every
  * record whose `kind !== "post"`, even though the crop pipeline it repairs (`capture.ts`/

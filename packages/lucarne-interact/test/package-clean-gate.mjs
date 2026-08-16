@@ -9,7 +9,7 @@
 //
 // LS-38 (kind-agnostic tail): EXTENDED with a second class of gate — this package's `src` must ALSO
 // carry zero bare social-kind FILTER literals (`kind === "post"`, `kind !== "post"`, etc. — the same
-// class `lucarne-records`' own package-clean-gate bans in `query.ts`, see that file's LS-37 note).
+// class the records module's own package-clean gate bans in `query.ts`, see that file's LS-37 note).
 // `recall/lock.ts`'s `reconcileMedia` used to carry exactly this residue (`if (r.kind !== "post")
 // continue;`), silently repairing crops for social `kind:"post"` records only even though the crop
 // pipeline it walks (`capture.ts`/`dom-probes.ts`/`media-crop.ts`) is fully kind-agnostic — fixed

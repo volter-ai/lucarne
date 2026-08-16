@@ -9,9 +9,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn as childSpawn } from "node:child_process";
-import { appendRecords, loadRecords, recordKey } from "../dist/store.js";
-import { getRecord, queryRecords } from "../dist/query.js";
-import { isEntity } from "../dist/validate.js";
+import { appendRecords, loadRecords, recordKey } from "../dist/records/store.js";
+import { getRecord, queryRecords } from "../dist/records/query.js";
+import { isEntity } from "../dist/records/validate.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -19,7 +19,7 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-store-test-"));
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-store-test-"));
 
 const prov = (id, over = {}) => ({
   source: "example",
@@ -97,7 +97,7 @@ const post = (id, text, metrics, over = {}) => ({
 // record must protect it, and an explicit `stub:true` on the placeholder must
 // be honored regardless of the structural heuristic.
 {
-  const STUB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub-test-"));
+  const STUB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-stub-test-"));
   // a REAL image-only post: no text, no metrics, but explicitly stub:false, with
   // a distinguishing author we can watch for degradation.
   const realImageOnly = { ...post("4004", "", {}), stub: false, author: { handle: "real_author", profileUrl: "https://example.test/real_author" } };
@@ -109,14 +109,14 @@ const post = (id, text, metrics, over = {}) => ({
   check("explicit-stub: the merged record is not itself marked stub (real iff either contributor is real)", stored.stub !== true);
 
   // order independence: stub FIRST, real (stub:false) later → still real.
-  const STUB_DIR2 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub2-test-"));
+  const STUB_DIR2 = fs.mkdtempSync(path.join(os.tmpdir(), "records-stub2-test-"));
   appendRecords(STUB_DIR2, [{ ...laterStub, author: { handle: "placeholder", profileUrl: "https://example.test/placeholder" } }]);
   appendRecords(STUB_DIR2, [{ ...realImageOnly, author: { handle: "real_author", profileUrl: "https://example.test/real_author" } }]);
   stored = loadRecords(STUB_DIR2).find((e) => e.provenance.id === "4004");
   check("explicit-stub: a real (stub:false) record arriving AFTER a stub wins the merge (author = real)", stored.author.handle === "real_author" && stored.stub !== true);
 
   // raw.stub is honored as the explicit signal too (unitToRecord may stash it there).
-  const STUB_DIR3 = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-stub3-test-"));
+  const STUB_DIR3 = fs.mkdtempSync(path.join(os.tmpdir(), "records-stub3-test-"));
   const realViaRaw = { ...post("5005", "", {}), raw: { stub: false }, author: { handle: "keep_me", profileUrl: "https://example.test/keep_me" } };
   const stubViaRaw = { ...post("5005", "", {}), raw: { stub: true }, author: { handle: "drop_me", profileUrl: "https://example.test/drop_me" } };
   appendRecords(STUB_DIR3, [realViaRaw]);
@@ -137,7 +137,7 @@ const post = (id, text, metrics, over = {}) => ({
 // temp-file + renameSync path it must see a COMPLETE, fully-parseable JSONL at
 // every observation. The child reads until the writer drops a `done` flag.
 {
-  const ATOMIC_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-atomic-test-"));
+  const ATOMIC_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-atomic-test-"));
   const file = path.join(ATOMIC_DIR, "records.jsonl");
   const resultFile = path.join(ATOMIC_DIR, "reader-result.json");
   const doneFlag = path.join(ATOMIC_DIR, "writer-done");
@@ -187,7 +187,7 @@ const post = (id, text, metrics, over = {}) => ({
 // `schema-shape.mjs` instead. This test now uses a still-unsupported via to
 // keep proving the forward-compatibility MECHANISM itself.)
 {
-  const FWD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-fwd-test-"));
+  const FWD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-fwd-test-"));
   const file = path.join(FWD_DIR, "records.jsonl");
   const forwardRecord = {
     kind: "post",
@@ -222,7 +222,7 @@ const post = (id, text, metrics, over = {}) => ({
 // convention baked into a domain-agnostic engine. These cases prove the fix directly.
 {
   // (a) kind:"profile" records merge richest content into `text` (not `bio`).
-  const G1A_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1a-test-"));
+  const G1A_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-g1a-test-"));
   const thinProfile = { kind: "profile", provenance: prov("prof-a"), handle: "thinp", text: "short bio text" };
   const richProfile = {
     kind: "profile",
@@ -244,7 +244,7 @@ const post = (id, text, metrics, over = {}) => ({
   // was left to the spread (= the newer, THINNER text) while the richest text was stuffed into
   // `merged.bio` — a field this consumer never reads and never wrote. The fix must make
   // `merged.text` itself hold the richest content, full stop.
-  const G1B_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1b-test-"));
+  const G1B_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-g1b-test-"));
   const olderRicher = {
     kind: "profile",
     provenance: prov("prof-b"),
@@ -264,7 +264,7 @@ const post = (id, text, metrics, over = {}) => ({
 
   // (c) legacy bio-only line + a text-carrying record → richest wins, no field loss, either
   // direction (bio richer than the new text, AND text richer than the legacy bio).
-  const G1C_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1c-test-"));
+  const G1C_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-g1c-test-"));
   const legacyBioOnly = { kind: "profile", provenance: prov("prof-c1"), handle: "legacy1", bio: "short legacy bio" };
   const freshRicherText = {
     kind: "profile",
@@ -297,7 +297,7 @@ const post = (id, text, metrics, over = {}) => ({
   // (d) stub-never-degrades is UNCHANGED for profiles (mirrors the existing post-shaped proof
   // above, over kind:"profile" instead, to prove removing the bio-write special case didn't
   // disturb the orthogonal stub invariant).
-  const G1D_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-g1d-test-"));
+  const G1D_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-g1d-test-"));
   const realProfile = {
     kind: "profile",
     provenance: prov("prof-d"),
@@ -321,7 +321,7 @@ const post = (id, text, metrics, over = {}) => ({
 // `raw` is `{bookmarks:n}` only wholesale-replaces a prior `raw:{bookmarks, media:[...]}` —
 // losing the crop pointer on every re-parse/re-merge that doesn't repeat it.
 {
-  const I3_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-i3-3-test-"));
+  const I3_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-i3-3-test-"));
   const withMedia = {
     kind: "post",
     provenance: prov("media-1"),
@@ -352,7 +352,7 @@ const post = (id, text, metrics, over = {}) => ({
 }
 
 // ── seed a richer store for the query surface tests ──────────────────────────
-const SEED_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-query-test-"));
+const SEED_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-query-test-"));
 {
   const profile = {
     kind: "profile",

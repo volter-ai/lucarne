@@ -165,7 +165,7 @@ function richerMetrics(a: Entity, b: Entity): Entity["metrics"] {
 /**
  * LS-33 (I3-3): key-wise merge of the `raw` escape hatch, donor wins PER KEY — unlike every other
  * top-level field, `raw` is itself a bag of independent side-channel keys a sensor may populate
- * INCREMENTALLY across separate captures (e.g. a crop pointer written once, a bookmark count written
+ * INCREMENTALLY across separate captures (e.g. a crop pointer written once, a saved-item count written
  * on a later tick that never repeats the crop pointer). A wholesale `{...base, ...donor}` spread would
  * let the later, narrower `raw` silently erase keys only the earlier one carried. Returns `undefined`
  * (never `{}`) when neither side contributes any key, so an empty `raw` isn't invented on a merge.

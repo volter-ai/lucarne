@@ -1,6 +1,6 @@
 {
   "name": "lucarne-interact",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "The non-bot-like interaction plane: one human-paced presence over a lucarne session's cdpUrl. ACT verbs (open/snap/scroll/activate/back/capture/video.*) with enforced normal-distribution pacing after every verb; click/goto/eval do not exist. The OBSERVE half (lucarne-interact/recall) is a passive, read-only SCREEN sensor on the same connection.",
   "type": "module",
   "license": "MIT",
@@ -27,7 +27,8 @@
     "node": ">=22"
   },
   "bin": {
-    "lucarne-interact": "dist/cli.js"
+    "lucarne-interact": "dist/cli.js",
+    "lucarne-mcp": "dist/mcp/index.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -43,6 +44,10 @@
     "./status": {
       "types": "./dist/recall/status.d.ts",
       "import": "./dist/recall/status.js"
+    },
+    "./records": {
+      "types": "./dist/records/index.d.ts",
+      "import": "./dist/records/index.js"
     }
   },
   "files": [
@@ -55,18 +60,18 @@
     "dev": "tsc -b --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "npm run build && node test/tier-property.mjs && node test/pacing.mjs && node test/typing.mjs && node test/yield.mjs && node test/policy-free-gate.mjs && node test/cli-rejection.mjs && node test/send-gate.mjs && node test/decide-send-provenance.mjs && node test/composer-check.mjs && node test/activate-gate.mjs && node test/back-gate.mjs && node test/presence.mjs && node test/presence-export-map.mjs && node test/target-select.mjs && node test/recall-tab-scoring.mjs && node test/recall-visible-filter.mjs && node test/recall-probes-pluggable.mjs && node test/recall-media-crop.mjs && node test/recall-video-watch.mjs && node test/recall-adaptive-pace.mjs && node test/recall-lock.mjs && node test/recall-status.mjs && node test/recall-extractor-dispatch.mjs && node test/recall-wire-dispatch.mjs && node test/recall-readonly-gates.mjs && node test/recall-display-state.mjs && node test/recall-status-wire-thread.mjs && node test/recall-summary.mjs && node test/package-clean-gate.mjs",
+    "test:unit": "npm run build && node test/tier-property.mjs && node test/pacing.mjs && node test/typing.mjs && node test/yield.mjs && node test/policy-free-gate.mjs && node test/cli-rejection.mjs && node test/send-gate.mjs && node test/decide-send-provenance.mjs && node test/composer-check.mjs && node test/activate-gate.mjs && node test/back-gate.mjs && node test/presence.mjs && node test/presence-export-map.mjs && node test/target-select.mjs && node test/recall-tab-scoring.mjs && node test/recall-visible-filter.mjs && node test/recall-probes-pluggable.mjs && node test/recall-media-crop.mjs && node test/recall-video-watch.mjs && node test/recall-adaptive-pace.mjs && node test/recall-lock.mjs && node test/recall-status.mjs && node test/recall-extractor-dispatch.mjs && node test/recall-wire-dispatch.mjs && node test/recall-readonly-gates.mjs && node test/recall-display-state.mjs && node test/recall-status-wire-thread.mjs && node test/recall-summary.mjs && node test/package-clean-gate.mjs && node test/records-schema-shape.mjs && node test/records-store.mjs && node test/records-open-source.mjs && node test/records-package-clean-gate.mjs",
     "test:acceptance": "npm run build && node test/acceptance.mjs && node test/activate-gate-acceptance.mjs && node test/recall-acceptance.mjs && node test/recall-wire-acceptance.mjs && node test/multitab-acceptance.mjs"
   },
   "peerDependencies": {
     "playwright-core": ">=1.40.0"
   },
   "dependencies": {
-    "lucarne-records": "^0.2.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "lucarne": "^1.6.1",
     "playwright-core": "^1.49.0",
     "typescript": "^5.7.0"
   }

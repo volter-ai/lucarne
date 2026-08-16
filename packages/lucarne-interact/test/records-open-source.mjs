@@ -1,6 +1,6 @@
 // LS-29 (generalize-records) — THE GENERALITY PROOF: this package accepts an ARBITRARY, non-social
 // `source` namespace (not just "x"), merges/round-trips it under the same invariants as any other
-// record, and coexists in ONE store with a social-shaped record — proving `lucarne-records` is
+// record, and coexists in ONE store with a social-shaped record — proving the records module is
 // genuinely a domain-agnostic capture-corpus store, not a social schema wearing a general-sounding
 // name. Domain fields a caller invents (e.g. a GitHub record's `labels: [...]`) ride through a merge
 // UNMOLESTED — this package never inspects them by name (schema.ts's header).
@@ -9,9 +9,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { appendRecords, loadRecords, recordKey } from "../dist/store.js";
-import { getRecord, queryRecords } from "../dist/query.js";
-import { isEntity, assertEntity } from "../dist/validate.js";
+import { appendRecords, loadRecords, recordKey } from "../dist/records/store.js";
+import { getRecord, queryRecords } from "../dist/records/query.js";
+import { isEntity, assertEntity } from "../dist/records/validate.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -19,7 +19,7 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-records-open-source-test-"));
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "records-open-source-test-"));
 
 // ── an arbitrary "github" source, with its OWN domain fields this package has never heard of ──
 const githubIssue = {
