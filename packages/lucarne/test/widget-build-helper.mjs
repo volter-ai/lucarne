@@ -5,7 +5,7 @@
 // Run with `node test/build-helper.mjs` (after `npm run build`).
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildSrcdoc } from "../dist/build.js";
+import { buildSrcdoc } from "../dist/widget/build.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -17,7 +17,7 @@ const check = (name, pass, detail = "") => {
 
 const CSS = ".sample { color: red; background: rgba(0,0,0,.2) }";
 const { html, js, css } = await buildSrcdoc({
-  entryPoints: [resolve(__dirname, "fixtures/sample-entry.js")],
+  entryPoints: [resolve(__dirname, "widget-fixtures/sample-entry.js")],
   css: CSS,
   title: "Sample Widget",
   minify: false, // keep the marker string trivially greppable in the assertions below

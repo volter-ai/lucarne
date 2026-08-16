@@ -22,9 +22,9 @@ import os from "node:os";
 import path from "node:path";
 import { Lucarne } from "lucarne";
 import { chromium } from "playwright-core";
-import { buildSrcdoc } from "../dist/build.js";
-import { WidgetHost } from "../dist/host.js";
-import { intentQueueGlobal } from "../dist/ns.js";
+import { buildSrcdoc } from "../dist/widget/build.js";
+import { WidgetHost } from "../dist/widget/host.js";
+import { intentQueueGlobal } from "../dist/widget/ns.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -36,7 +36,7 @@ const check = (name, pass, detail = "") => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-widget-intent-drain-acc-"));
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-intent-drain-acc-"));
 process.env.LUCARNE_HOME = HOME;
 if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
@@ -58,7 +58,7 @@ const KEY = intentQueueGlobal(NS, QUEUE_NAME);
 const server = http.createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/html" });
   res.end(
-    "<!doctype html><html><head><title>lucarne-widget intent-drain fixture</title></head><body>fixture page" +
+    "<!doctype html><html><head><title>lucarne widget intent-drain fixture</title></head><body>fixture page" +
       "<script>(function(){" +
       "var q=new URLSearchParams(location.search);" +
       "var vis=q.get('vis')||'visible';" +
@@ -90,9 +90,9 @@ try {
   // A minimal, neutral built bundle — content is irrelevant here (this test never opens the widget UI), only
   // `WidgetHost.attach`'s production mount path is needed to get a live, cdpUrl-bound host instance.
   const { html } = await buildSrcdoc({
-    entryPoints: [resolve(__dirname, "fixtures/widget-selftest-entry.ts")],
+    entryPoints: [resolve(__dirname, "widget-fixtures/widget-selftest-entry.ts")],
     css: "",
-    title: "lucarne-widget intent-drain fixture",
+    title: "lucarne widget intent-drain fixture",
     define: { __LW_NS__: JSON.stringify(NS) },
   });
   host = await WidgetHost.attach(session, { ns: NS, html, engine: engineOpts, identity: {} });

@@ -1,9 +1,9 @@
 // LS-17 dev/01 — the committed, re-runnable "namespacing commit" gate. The task spec's intent (§2 LS-17) was a
 // one-commit sweep renaming every `__cadence*` page global / host element id / envelope key to the `ns`-derived
-// form (`__lw_<ns>_*`) this package (LS-15/LS-16) was already written with FROM DAY ONE — see `src/ns.ts`'s own
+// form (`__lw_<ns>_*`) this package (LS-15/LS-16) was already written with FROM DAY ONE — see `src/widget/ns.ts`'s own
 // header. This gate is what LOCKS THAT IN: it is the literal AC from the spec —
 //
-//   `grep -rn "__cadence" packages/lucarne-widget` → 0 hits
+//   `grep -rn "__cadence" packages/lucarne/src/widget` → 0 hits
 //
 // — made case-insensitive (per the AC's "case-insensitive `__cadence` too") and committed as a re-runnable script
 // rather than a one-off shell command, so a future change can't silently reintroduce the literal. Distinct from
@@ -27,6 +27,13 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_DIR = resolve(__dirname, "..");
+// Scoped to the widget subtree inside the engine package: the widget modules plus their own tests/fixtures.
+const SCAN_ROOTS = [resolve(PKG_DIR, "src", "widget"), resolve(PKG_DIR, "test")];
+/** Inside `test/`, only the widget's own files/fixtures are in scope (they all carry the `widget-` prefix). */
+function inWidgetScope(file) {
+  const rel = relative(PKG_DIR, file);
+  return rel.startsWith("src/widget/") || rel.startsWith("test/widget-");
+}
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -52,10 +59,10 @@ const SELF = fileURLToPath(import.meta.url);
 const EXEMPT_BASENAMES = new Set(["package-clean-gate.mjs"]);
 // Every text-ish file in the package — mirrors `grep -rn` scanning the whole tree (dist/node_modules excluded,
 // same as the underlying grep AC would exclude build output/deps by convention).
-const files = walk(PKG_DIR).filter((f) => f !== SELF && !EXEMPT_BASENAMES.has(f.split("/").pop()));
-check(`scanned at least one file across packages/lucarne-widget (found ${files.length})`, files.length > 0);
+const files = SCAN_ROOTS.flatMap(walk).filter((f) => inWidgetScope(f) && f !== SELF && !EXEMPT_BASENAMES.has(f.split("/").pop()));
+check(`scanned at least one file across packages/lucarne/src/widget (found ${files.length})`, files.length > 0);
 
-// mirrors `grep -rni "__cadence" packages/lucarne-widget` — case-insensitive per the AC's explicit widening.
+// mirrors `grep -rni "__cadence" packages/lucarne/src/widget` — case-insensitive per the AC's explicit widening.
 const PATTERN = /__cadence/i;
 const offenders = [];
 for (const file of files) {
@@ -71,19 +78,19 @@ for (const file of files) {
   }
 }
 check(
-  `grep -rn "__cadence" packages/lucarne-widget (case-insensitive) → 0 hits`,
+  `grep -rn "__cadence" packages/lucarne/src/widget (case-insensitive) → 0 hits`,
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 20).join("\n    ")}` : "",
 );
 
 // The flip side: prove the ns-derived replacement actually EXISTS somewhere (a package that just never minted
-// any page globals would trivially pass the grep above too) — `nsPrefix`/`hostElementId` etc. from `src/ns.ts`
+// any page globals would trivially pass the grep above too) — `nsPrefix`/`hostElementId` etc. from `src/widget/ns.ts`
 // are the `__lw_<ns>_*` form the spec calls for.
-const nsSource = readFileSync(resolve(PKG_DIR, "src/ns.ts"), "utf8");
+const nsSource = readFileSync(resolve(PKG_DIR, "src/widget/ns.ts"), "utf8");
 check(
-  "the ns-derived replacement family (`__lw_<ns>_*`, src/ns.ts's `nsPrefix`) exists in its place",
+  "the ns-derived replacement family (`__lw_<ns>_*`, src/widget/ns.ts's `nsPrefix`) exists in its place",
   /__lw_\$\{assertNs\(ns\)\}/.test(nsSource) || /`__lw_\$\{/.test(nsSource),
-  "src/ns.ts:nsPrefix",
+  "src/widget/ns.ts:nsPrefix",
 );
 
 const failed = results.filter((r) => !r.pass);

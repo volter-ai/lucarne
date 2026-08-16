@@ -4,7 +4,7 @@
 // (`widget.ts:39,190,197,241`, `widget-bridge.ts:36,159,255`, `main.tsx:17`) — see the split's task spec LS-17:
 // the FULL sweep that rewrites every remaining literal (inside the downstream consumer adopting this package)
 // is a dedicated later commit, but every NAME THIS PACKAGE MINTS is `ns`-derived from day one, so that sweep
-// has nothing left to do inside `lucarne-widget` itself.
+// has nothing left to do inside the widget modules itself.
 //
 // `ns` also lets two independent consumers mount their own widget shell on the SAME page without cross-talk: every
 // page global is namespaced, and the one channel that necessarily broadcasts on the shared `window` (the iframe's
@@ -15,7 +15,7 @@ const NS_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 /** Validate a namespace string — must be a safe JS-identifier-ish token (it gets spliced into generated page-global names and CSS/DOM ids). Throws on anything else, INCLUDING the empty string. */
 export function assertNs(ns: string): string {
   if (typeof ns !== "string" || !NS_PATTERN.test(ns)) {
-    throw new Error(`lucarne-widget: invalid ns ${JSON.stringify(ns)} — must match ${NS_PATTERN} (letters/digits/_/- only, starting with a letter)`);
+    throw new Error(`lucarne/widget: invalid ns ${JSON.stringify(ns)} — must match ${NS_PATTERN} (letters/digits/_/- only, starting with a letter)`);
   }
   return ns;
 }

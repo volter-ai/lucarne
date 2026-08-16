@@ -39,7 +39,7 @@ export async function listPages(cdpUrl: string): Promise<PageTarget[]> {
 
 /** Attach to one page target and return a tiny `evaluate` handle. Rejects if the target has no debugger websocket. */
 export async function attachPage(cdpUrl: string, target: PageTarget): Promise<CdpPage> {
-  if (!target.webSocketDebuggerUrl) throw new Error(`lucarne-widget: page ${target.id} has no CDP debugger url`);
+  if (!target.webSocketDebuggerUrl) throw new Error(`lucarne/widget: page ${target.id} has no CDP debugger url`);
   const base = cdpUrl.replace(/^http/, "ws").replace(/\/$/, "");
   const wsUrl = target.webSocketDebuggerUrl.startsWith("ws") ? target.webSocketDebuggerUrl : base + "/devtools/" + target.webSocketDebuggerUrl.split("/devtools/")[1];
   const ws = new WS(wsUrl);
@@ -59,11 +59,11 @@ export async function attachPage(cdpUrl: string, target: PageTarget): Promise<Cd
     if (d.id === undefined || !pending.has(d.id)) return;
     const p = pending.get(d.id)!;
     pending.delete(d.id);
-    if (d.error) p.reject(new Error(`lucarne-widget CDP error: ${d.error.message ?? "unknown"}`));
+    if (d.error) p.reject(new Error(`lucarne/widget CDP error: ${d.error.message ?? "unknown"}`));
     else p.resolve(d.result);
   };
   ws.onclose = () => {
-    for (const [, p] of pending) p.reject(new Error("lucarne-widget: CDP socket closed"));
+    for (const [, p] of pending) p.reject(new Error("lucarne/widget: CDP socket closed"));
     pending.clear();
   };
   function call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -79,7 +79,7 @@ export async function attachPage(cdpUrl: string, target: PageTarget): Promise<Cd
         result?: { value?: unknown };
         exceptionDetails?: { text?: string };
       };
-      if (r.exceptionDetails) throw new Error(`lucarne-widget: page eval threw: ${r.exceptionDetails.text ?? "unknown"}`);
+      if (r.exceptionDetails) throw new Error(`lucarne/widget: page eval threw: ${r.exceptionDetails.text ?? "unknown"}`);
       return r.result?.value;
     },
     close(): void {

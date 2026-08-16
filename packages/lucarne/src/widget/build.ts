@@ -5,9 +5,24 @@
 // inside bundled string content would otherwise terminate the inline `<script>` early and corrupt the page) —
 // see `escapeScriptClose` below.
 //
-// Uses `esbuild` (a real dependency of this package, not just a dev tool — a consumer builds their OWN bundle
-// entrypoint with this at THEIR build time, e.g. a downstream consumer's own `web/app/src/entry.tsx`, LS-20).
-import { build as esbuild } from "esbuild";
+// Uses `esbuild` — an OPTIONAL peer dependency, loaded LAZILY (a dynamic `import()` inside `buildSrcdoc`) so
+// that installing the engine never pulls a bundler into a consumer that only mints/drives sessions. A consumer
+// builds their OWN bundle entrypoint with this at THEIR build time (e.g. their own `web/app/src/entry.tsx`,
+// LS-20) and installs `esbuild` alongside; a missing peer surfaces as the named error below, not a module-load
+// crash at import time.
+import type { build as esbuildBuild } from "esbuild";
+
+/** Load the optional `esbuild` peer, or throw an error that NAMES the missing peer and how to install it. */
+async function loadEsbuild(): Promise<typeof esbuildBuild> {
+  try {
+    return (await import("esbuild")).build;
+  } catch (e) {
+    throw new Error(
+      "lucarne/widget/build: the optional peer dependency 'esbuild' is not installed — " +
+        `run \`npm install esbuild\` to use buildSrcdoc (${(e as Error)?.message ?? String(e)})`,
+    );
+  }
+}
 
 export interface BuildSrcdocOptions {
   /** One or more bundle entrypoints (paths), bundled together — matches esbuild's own `entryPoints`. */
@@ -45,6 +60,7 @@ function escapeHtml(s: string): string {
 /** Bundle `entryPoints` + `css` into one self-contained srcdoc HTML document. */
 export async function buildSrcdoc(opts: BuildSrcdocOptions): Promise<BuildSrcdocResult> {
   const entryPoints = Array.isArray(opts.entryPoints) ? opts.entryPoints : [opts.entryPoints];
+  const esbuild = await loadEsbuild();
   const result = await esbuild({
     entryPoints,
     bundle: true,
@@ -57,7 +73,7 @@ export async function buildSrcdoc(opts: BuildSrcdocOptions): Promise<BuildSrcdoc
     define: opts.define,
   });
   const outputFile = result.outputFiles?.[0];
-  if (!outputFile) throw new Error("lucarne-widget: esbuild produced no output file");
+  if (!outputFile) throw new Error("lucarne/widget: esbuild produced no output file");
   const js = escapeScriptClose(outputFile.text);
   const css = opts.css ?? "";
   const title = escapeHtml(opts.title ?? "widget");

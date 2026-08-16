@@ -1,6 +1,5 @@
 export { Lucarne, createEngine } from "./engine.js";
 export { LucarneClient } from "./client.js";
-export { startMcpServer } from "./mcp.js";
 export { openApiSpec } from "./openapi.js";
 export { FileCredentialStore } from "./credentials.js";
 export { VERSION } from "./version.js";

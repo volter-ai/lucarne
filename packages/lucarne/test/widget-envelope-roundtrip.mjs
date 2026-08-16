@@ -8,8 +8,8 @@
 // same function before handing the JSON to the page).
 //
 // Run with `node test/envelope-roundtrip.mjs` (after `npm run build`).
-import { widgetMessage } from "../dist/envelope.js";
-import { createEnvelopeReducer } from "../dist/reducer.js";
+import { widgetMessage } from "../dist/widget/envelope.js";
+import { createEnvelopeReducer } from "../dist/widget/reducer.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {

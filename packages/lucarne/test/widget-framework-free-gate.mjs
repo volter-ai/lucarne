@@ -1,5 +1,5 @@
 // LS-15 dev/03 — the framework-free-core gate, committed as a re-runnable proof (not just a one-off shell
-// command): `grep -rn "preact" packages/lucarne-widget/src --include=*.ts --exclude-dir=preact` must be 0 hits.
+// command): `grep -rn "preact" packages/lucarne/src/widget --include=*.ts --exclude-dir=preact` must be 0 hits.
 // The runtime CORE is plain DOM + a tiny emitter (`src/emitter.ts`) — `src/preact/index.ts` is the ONLY file
 // allowed to import `preact`, so a consumer who wants a framework-free panel never pulls it in transitively.
 //
@@ -9,7 +9,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC_DIR = resolve(__dirname, "..", "src");
+const SRC_DIR = resolve(__dirname, "..", "src", "widget");
 
 const results = [];
 const check = (name, pass, detail = "") => {

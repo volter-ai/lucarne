@@ -15,10 +15,10 @@ import os from "node:os";
 import path from "node:path";
 import { Lucarne } from "lucarne";
 import { chromium } from "playwright-core";
-import { buildSrcdoc } from "../dist/build.js";
-import { SHELL_CSS } from "../dist/index.js";
-import { WidgetHost } from "../dist/host.js";
-import { hostElementId } from "../dist/ns.js";
+import { buildSrcdoc } from "../dist/widget/build.js";
+import { SHELL_CSS } from "../dist/widget/index.js";
+import { WidgetHost } from "../dist/widget/host.js";
+import { hostElementId } from "../dist/widget/ns.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +28,7 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-widget-ns-coexist-"));
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-ns-coexist-"));
 process.env.LUCARNE_HOME = HOME;
 if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
@@ -81,15 +81,15 @@ try {
   const cssA = `${SHELL_CSS}\n.marker { color: #5fd99a; font-weight: 600 }`;
   const cssB = `${SHELL_CSS}\n.marker { color: #d95f8f; font-weight: 600 }`;
   const { html: htmlA } = await buildSrcdoc({
-    entryPoints: [resolve(__dirname, "fixtures/widget-selftest-entry.ts")],
+    entryPoints: [resolve(__dirname, "widget-fixtures/widget-selftest-entry.ts")],
     css: cssA,
-    title: "lucarne-widget ns-coexistence fixture A",
+    title: "lucarne widget ns-coexistence fixture A",
     define: { __LW_NS__: JSON.stringify(NS_A) },
   });
   const { html: htmlB } = await buildSrcdoc({
-    entryPoints: [resolve(__dirname, "fixtures/widget-selftest-entry.ts")],
+    entryPoints: [resolve(__dirname, "widget-fixtures/widget-selftest-entry.ts")],
     css: cssB,
-    title: "lucarne-widget ns-coexistence fixture B",
+    title: "lucarne widget ns-coexistence fixture B",
     define: { __LW_NS__: JSON.stringify(NS_B) },
   });
   check("built both ns-tagged fixture bundles", htmlA.trim().toLowerCase().startsWith("<!doctype html>") && htmlB.trim().toLowerCase().startsWith("<!doctype html>"));

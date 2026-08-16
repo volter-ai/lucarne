@@ -1,6 +1,6 @@
 // The root export — the environment-agnostic vocabulary shared by both sides of the widget (host + iframe
-// runtime) and by a consumer wiring the engine's `injectPolicy`. Node-only (`WidgetHost`, `lucarne-widget/host`)
-// and DOM-only (`createWidget`, `lucarne-widget/runtime`) code live at their own subpaths — see `package.json`'s
+// runtime) and by a consumer wiring the engine's `injectPolicy`. Node-only (`WidgetHost`, `lucarne/widget/host`)
+// and DOM-only (`createWidget`, `lucarne/widget/runtime`) code live at their own subpaths — see `package.json`'s
 // `exports` map — so importing "." never pulls in either a `lucarne` HTTP client or a `document` dependency.
 export {
   ENVELOPE_KEY,

@@ -2,7 +2,7 @@
 // `framework-free-gate.mjs`'s style): case-insensitive `grep` for app-specific naming
 // ("cadence"/"Cadence"/"CADENCE", "candidate", ".social") across the WHOLE package (`src/`, `test/`,
 // `README.md`) must be 0 hits outside a CHANGELOG/migration doc (this package ships neither, so in practice
-// that carve-out is currently unused). The selftest's own neutral fixture (`test/fixtures/widget-selftest-entry.ts`
+// that carve-out is currently unused). The selftest's own neutral fixture (`test/widget-fixtures/widget-selftest-entry.ts`
 // — LS-16's replacement for the cadence-candidate `TESTDATA` the original selftest used) is what this
 // primarily protects, but the gate is package-wide so a stray provenance comment can't silently reintroduce
 // app-specific naming either.
@@ -14,6 +14,16 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_DIR = resolve(__dirname, "..");
+// The widget SCOPE inside the engine package: the widget modules themselves plus every widget test/fixture
+// next to them. Scoped rather than package-wide because the engine's own source legitimately uses one of the
+// banned words in an unrelated sense (`CHROME_CANDIDATES`, src/engine.ts) — the law this gate encodes is
+// about the widget's neutrality, so the widget subtree is exactly its subject.
+const SCAN_ROOTS = [resolve(PKG_DIR, "src", "widget"), resolve(PKG_DIR, "test")];
+/** Inside `test/`, only the widget's own files/fixtures are in scope (they all carry the `widget-` prefix). */
+function inWidgetScope(file) {
+  const rel = relative(PKG_DIR, file);
+  return rel.startsWith("src/widget/") || rel.startsWith("test/widget-");
+}
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -31,7 +41,7 @@ const EXCLUDE_DIRS = new Set(["node_modules", "dist", ".git"]);
 // `package-clean-gate.mjs` (LS-24c) is exempt for the identical reason: it is the src/-scoped sibling of THIS
 // gate (same law, narrower scope — src/ only, no test/ or README.md), and its own source necessarily spells
 // "cadence"/`.social` in its banned-pattern list and comments describing what it bans.
-const EXEMPT_BASENAMES = new Set(["CHANGELOG.md", "no-legacy-global-literal-gate.mjs", "package-clean-gate.mjs"]);
+const EXEMPT_BASENAMES = new Set(["CHANGELOG.md", "widget-no-legacy-global-literal-gate.mjs", "package-clean-gate.mjs"]);
 const SCAN_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".md", ".json"]);
 
 function walk(dir) {
@@ -47,7 +57,8 @@ function walk(dir) {
 }
 
 const SELF = fileURLToPath(import.meta.url);
-const files = walk(PKG_DIR).filter((f) => {
+const files = SCAN_ROOTS.flatMap(walk).filter((f) => {
+  if (!inWidgetScope(f)) return false;
   if (f === SELF) return false; // this file necessarily SPELLS the pattern it greps for — see PATTERN below
   const base = f.split("/").pop();
   if (EXEMPT_BASENAMES.has(base)) return false;
@@ -57,7 +68,7 @@ const files = walk(PKG_DIR).filter((f) => {
 });
 check(`scanned at least one file (found ${files.length})`, files.length > 0);
 
-// mirrors `grep -REn "cadence|candidate|\.social" packages/lucarne-widget`, case-insensitive
+// mirrors `grep -REn "cadence|candidate|\.social" packages/lucarne/src/widget`, case-insensitive
 const PATTERN = /cadence|candidate|\.social/i;
 const offenders = [];
 for (const file of files) {
@@ -68,14 +79,14 @@ for (const file of files) {
   }
 }
 check(
-  "grep-clean: zero case-insensitive 'cadence' / 'candidate' / '.social' hits across the package (outside CHANGELOG/migration docs)",
+  "grep-clean: zero case-insensitive 'cadence' / 'candidate' / '.social' hits across the widget subtree (outside CHANGELOG/migration docs)",
   offenders.length === 0,
   offenders.length ? `${offenders.length} hit(s):\n    ${offenders.slice(0, 20).join("\n    ")}` : "",
 );
 
 // The flip side of the same AC: the selftest's own neutral fixture must actually EXIST (a package that simply
 // never shipped one would trivially pass the grep above too).
-const fixtureEntry = resolve(PKG_DIR, "test/fixtures/widget-selftest-entry.ts");
+const fixtureEntry = resolve(PKG_DIR, "test/widget-fixtures/widget-selftest-entry.ts");
 check("the LS-16 neutral selftest fixture entry exists", (() => {
   try {
     readFileSync(fixtureEntry, "utf8");

@@ -1,6 +1,6 @@
 // LS-16 dev/01 acceptance proof — the package's OWN committed re-runnable proof that `WidgetHost.selftest`
 // actually mounts + behaves in a real page: mints a REAL lucarne session (native Chrome), builds the NEUTRAL
-// fixture bundle (`test/fixtures/widget-selftest-entry.ts` — two generic panels + a pill, zero app-specific
+// fixture bundle (`test/widget-fixtures/widget-selftest-entry.ts` — two generic panels + a pill, zero app-specific
 // content, replacing the app-specific test data the prior single-app selftest used), and runs
 // `WidgetHost.selftest` against it end-to-end. Needs Google Chrome + the optional peer dependency
 // `playwright-core` installed, PLUS a working Chrome sandbox — a locked-down container can have both
@@ -16,9 +16,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Lucarne } from "lucarne";
-import { buildSrcdoc } from "../dist/build.js";
-import { SHELL_CSS } from "../dist/index.js";
-import { WidgetHost } from "../dist/host.js";
+import { buildSrcdoc } from "../dist/widget/build.js";
+import { SHELL_CSS } from "../dist/widget/index.js";
+import { WidgetHost } from "../dist/widget/host.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +28,7 @@ const check = (name, pass, detail = "") => {
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-widget-selftest-acc-"));
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "lucarne-selftest-acc-"));
 process.env.LUCARNE_HOME = HOME;
 if (!("LUCARNE_HEADLESS" in process.env)) process.env.LUCARNE_HEADLESS = "1";
 
@@ -41,9 +41,9 @@ const FIXTURES = {
 
 const CSS = `${SHELL_CSS}\n.marker { color: #5fd99a; font-weight: 600 }`;
 const { html } = await buildSrcdoc({
-  entryPoints: [resolve(__dirname, "fixtures/widget-selftest-entry.ts")],
+  entryPoints: [resolve(__dirname, "widget-fixtures/widget-selftest-entry.ts")],
   css: CSS,
-  title: "lucarne-widget selftest fixture",
+  title: "lucarne widget selftest fixture",
   define: { __LW_NS__: JSON.stringify(NS) },
 });
 check("built the neutral fixture srcdoc bundle", html.trim().toLowerCase().startsWith("<!doctype html>"), `${html.length} bytes`);

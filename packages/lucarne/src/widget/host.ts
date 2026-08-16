@@ -2,13 +2,13 @@
 // `widget-bridge.ts:32-61,156-171,252-277` skeleton: `toWidget`/`toWidgets` (postMessage push), the crash-safe
 // tick pump (`every` — "a single rejected tick must not take the server down"), and the read-and-clear
 // queue-drain with dedup-by-id (`ctlSeen`/`cfgSeen`, generalized to any number of NAMED intent queues).
-// Mounting is LS-02's engine feature: `POST /sessions/:id/inject` via `lucarne`'s `LucarneClient` — this is
-// the one place this package depends on `lucarne` (per §1.6: "widget MAY depend on `lucarne`, unlike interact").
+// Mounting is LS-02's engine feature: `POST /sessions/:id/inject` via the engine's own `LucarneClient` — this
+// is the one place the widget modules reach back into the rest of the engine.
 //
 // Everything past the mount call (push/onIntent/every/remove) talks to the page directly over the session's raw
-// `cdpUrl` (see `cdp-lite.ts`) — a small, FIXED set of expressions this package builds itself, not a re-exposed
-// arbitrary-eval surface (the engine's own `/eval` REPL was retired, not generalized — §1.5).
-import { LucarneClient } from "lucarne";
+// `cdpUrl` (see `cdp-lite.ts`) — a small, FIXED set of expressions these modules build themselves, not a
+// re-exposed arbitrary-eval surface (the engine's own `/eval` REPL was retired, not generalized — §1.5).
+import { LucarneClient } from "../client.js";
 import { evaluateOnAllPages, evaluateOnAllPagesCollecting, MOUNT_REACHABLE_SKIP_URL_PREFIXES } from "./cdp-lite.js";
 import { type Identity, widgetMessage } from "./envelope.js";
 import { injectorSource } from "./injector.js";
@@ -196,7 +196,7 @@ export class WidgetHost {
         .then(fn)
         .catch((e: unknown) => {
           try {
-            console.error(`[lucarne-widget:${this.ns}] tick error (continuing): ${(e as Error)?.message ?? e}`);
+            console.error(`[lucarne/widget:${this.ns}] tick error (continuing): ${(e as Error)?.message ?? e}`);
           } catch {
             /* logging must never throw */
           }
@@ -248,7 +248,7 @@ export class WidgetHost {
             await cb({ id: raw.id, payload: raw.payload });
           } catch (e) {
             try {
-              console.error(`[lucarne-widget:${this.ns}] intent '${name}' handler threw (continuing): ${(e as Error)?.message ?? e}`);
+              console.error(`[lucarne/widget:${this.ns}] intent '${name}' handler threw (continuing): ${(e as Error)?.message ?? e}`);
             } catch {
               /* ignore */
             }

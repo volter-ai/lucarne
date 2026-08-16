@@ -1,6 +1,6 @@
 {
   "name": "lucarne",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
   "type": "module",
   "license": "MIT",
@@ -30,8 +30,7 @@
     "node": ">=22"
   },
   "bin": {
-    "lucarne": "dist/cli.js",
-    "lucarne-mcp": "dist/mcp.js"
+    "lucarne": "dist/cli.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -39,6 +38,26 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./widget": {
+      "types": "./dist/widget/index.d.ts",
+      "import": "./dist/widget/index.js"
+    },
+    "./widget/host": {
+      "types": "./dist/widget/host.d.ts",
+      "import": "./dist/widget/host.js"
+    },
+    "./widget/runtime": {
+      "types": "./dist/widget/runtime.d.ts",
+      "import": "./dist/widget/runtime.js"
+    },
+    "./widget/build": {
+      "types": "./dist/widget/build.d.ts",
+      "import": "./dist/widget/build.js"
+    },
+    "./widget/preact": {
+      "types": "./dist/widget/preact/index.d.ts",
+      "import": "./dist/widget/preact/index.js"
     }
   },
   "files": [
@@ -55,9 +74,9 @@
     "prepublishOnly": "npm run build",
     "build:image": "docker build -t lucarne-browser:latest docker",
     "test": "npm run build && node test/acceptance.mjs",
-    "test:acceptance": "node test/acceptance.mjs",
+    "test:acceptance": "node test/acceptance.mjs && node test/widget-selftest-acceptance.mjs && node test/widget-ns-coexistence-acceptance.mjs && node test/widget-intent-drain-context-acceptance.mjs",
     "test:docker": "node test/docker-smoke.mjs",
-    "test:unit": "node test/inject-unit.mjs && node test/package-clean-gate.mjs",
+    "test:unit": "npm run build && node test/inject-unit.mjs && node test/package-clean-gate.mjs && node test/widget-build-helper.mjs && node test/widget-envelope-roundtrip.mjs && node test/widget-framework-free-gate.mjs && node test/widget-fixture-neutrality-gate.mjs && node test/widget-no-legacy-global-literal-gate.mjs && node test/widget-ns-coexistence.mjs && node test/widget-intent-drain-scope-gate.mjs",
     "prepack": "rm -rf clients examples LICENSE README.md && cp -R ../../clients clients && cp -R ../../examples examples && cp ../../LICENSE LICENSE && cp ../../README.md README.md",
     "postpack": "rm -rf clients examples LICENSE README.md && ln -s ../../clients clients && ln -s ../../examples examples && ln -s ../../LICENSE LICENSE && ln -s ../../README.md README.md"
   },
@@ -65,10 +84,29 @@
     "termfleet": "^0.2.0",
     "ws": "^8.18.0"
   },
+  "peerDependencies": {
+    "esbuild": ">=0.20.0",
+    "playwright-core": ">=1.40.0",
+    "preact": ">=10.0.0"
+  },
+  "peerDependenciesMeta": {
+    "esbuild": {
+      "optional": true
+    },
+    "playwright-core": {
+      "optional": true
+    },
+    "preact": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
+    "esbuild": "^0.24.0",
     "playwright": "^1.49.0",
+    "playwright-core": "^1.49.0",
+    "preact": "^10.19.0",
     "typescript": "^5.7.0",
     "ztrack": "^0.34.1"
   }

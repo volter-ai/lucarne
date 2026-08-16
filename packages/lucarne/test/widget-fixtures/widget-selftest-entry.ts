@@ -6,7 +6,7 @@
 // the iframe, and a marker string — never a fixture-specific selector — `selftest()` opens/reads it the exact
 // same way it would open/read ANY OTHER consumer's bundle built the same way (e.g. a downstream consumer's own,
 // LS-20) — this fixture proves the harness works, it does not special-case it.
-import { createWidget } from "../../src/runtime.js";
+import { createWidget } from "../../src/widget/runtime.js";
 
 // Substituted at bundle time via `buildSrcdoc`'s `define` option (see the acceptance script) — the iframe's
 // `ns` must match the one the host (`WidgetHost.attach`) and injector were built with (runtime.ts's own

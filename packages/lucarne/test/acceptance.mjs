@@ -828,37 +828,6 @@ try {
   await cbEngine.close().catch(() => {});
 }
 
-// ── P3: MCP server (stdio JSON-RPC drives real sessions) ─────────────────────
-const mcpEngine = new Lucarne({ port: 7832, token: TOKEN, record: false });
-await mcpEngine.listen();
-let mcp;
-try {
-  mcp = spawn("node", ["dist/mcp.js"], { env: { ...process.env, LUCARNE_URL: "http://127.0.0.1:7832", LUCARNE_TOKEN: TOKEN } });
-  const responses = [];
-  let buf = "";
-  mcp.stdout.on("data", (d) => { buf += d.toString(); let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (line.trim()) try { responses.push(JSON.parse(line)); } catch { /* partial */ } } });
-  const rpc = (id, method, params) => mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-  const waitFor = async (id, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { const r = responses.find((x) => x.id === id); if (r) return r; await sleep(100); } return null; };
-
-  rpc(1, "initialize", {});
-  const init = await waitFor(1);
-  check("mcp: initialize returns server info", init?.result?.serverInfo?.name === "lucarne");
-  check("mcp: serverInfo version tracks the package (no drift)", init?.result?.serverInfo?.version === VERSION);
-  rpc(2, "tools/list", {});
-  const tl = await waitFor(2);
-  check("mcp: tools/list advertises lucarne tools", (tl?.result?.tools || []).some((t) => t.name === "lucarne_create"));
-  rpc(3, "tools/call", { name: "lucarne_create", arguments: { backend: "native", profile: "mcp" } });
-  const created = await waitFor(3, 30000);
-  const sid = created && JSON.parse(created.result.content[0].text).id;
-  check("mcp: tools/call creates a real session", sid === "mcp" && mcpEngine.list().some((s) => s.id === "mcp"));
-  rpc(4, "tools/call", { name: "lucarne_destroy", arguments: { id: "mcp" } });
-  await waitFor(4);
-  check("mcp: tools/call destroys the session", !mcpEngine.list().some((s) => s.id === "mcp"));
-} finally {
-  if (mcp) mcp.kill();
-  await mcpEngine.close().catch(() => {});
-}
-
 // ── P3: Python SDK (structural — stdlib client loads with all methods) ───────
 try {
   const out = execFileSync("python3", ["-c", "import sys; sys.path.insert(0,'clients/python'); import lucarne; c=lucarne.LucarneClient(); print(all(hasattr(c,m) for m in ('health','create','list','get','destroy','act','content')))"], { encoding: "utf8" });
@@ -1044,7 +1013,7 @@ try {
   const packedFiles = packed[0].files.map((f) => f.path);
   check("pack: ships the Python client referenced in the README", packedFiles.includes("clients/python/lucarne.py"));
   check("pack: ships the runnable examples", packedFiles.some((f) => f.startsWith("examples/")));
-  check("pack: ships the CLI + MCP binaries", packedFiles.includes("dist/cli.js") && packedFiles.includes("dist/mcp.js"));
+  check("pack: ships the CLI binary", packedFiles.includes("dist/cli.js"));
 }
 
 // ── Security hardening (no Chrome) — the adversarial-review fixes ─────────────

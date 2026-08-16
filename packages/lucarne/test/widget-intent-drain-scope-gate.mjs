@@ -18,8 +18,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WidgetHost } from "../dist/host.js";
-import { intentQueueGlobal } from "../dist/ns.js";
+import { WidgetHost } from "../dist/widget/host.js";
+import { intentQueueGlobal } from "../dist/widget/ns.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -64,14 +64,14 @@ check("the read-only expression still carries the same visibility/focus/url/titl
 // way the package's other gates assert a negative: source-grep the public method bodies for the one thing that
 // WOULD reopen the hazard (an `expr`/`expression` PARAMETER threaded straight from a public method's own
 // caller-supplied argument into `evaluateOnAllPagesCollecting`, bypassing `probeExpr` entirely). ──
-const hostSrc = readFileSync(resolve(__dirname, "..", "src", "host.ts"), "utf8");
+const hostSrc = readFileSync(resolve(__dirname, "..", "src", "widget", "host.ts"), "utf8");
 const publicMethodsAcceptNoRawExpr = !/drainIntentsWithContext\s*\(\s*(expr|expression)/.test(hostSrc) && !/activeTabInfo\s*\(\s*(expr|expression)/.test(hostSrc);
 check("drainIntentsWithContext/activeTabInfo take NO caller-supplied expression parameter", publicMethodsAcceptNoRawExpr);
 check(
   "WidgetHost's public surface never exports `evaluateOnAllPagesCollecting`/`evaluateOnAllPages` (the raw multi-page eval primitive) as an arbitrary-expression endpoint",
   !/export\s+\{[^}]*evaluateOnAllPagesCollecting/.test(hostSrc) && !/export\s+function\s+evaluate\(/.test(hostSrc),
 );
-const indexSrc = readFileSync(resolve(__dirname, "..", "src", "index.ts"), "utf8");
+const indexSrc = readFileSync(resolve(__dirname, "..", "src", "widget", "index.ts"), "utf8");
 check("the package's root export map never re-exports cdp-lite's raw evaluator", !/cdp-lite/.test(indexSrc));
 
 const failed = results.filter((r) => !r.pass);

@@ -1,5 +1,5 @@
 // The RUNNER half of `WidgetHost.selftest` (see `host.ts`) — split out so the class body stays focused on the
-// production mount/push/onIntent/every/remove surface. This module is the ONLY place `lucarne-widget` reaches
+// production mount/push/onIntent/every/remove surface. This module is the ONLY place the widget modules reaches
 // for `playwright-core`, and it does so LAZILY (a dynamic `import()` behind a non-literal specifier, so
 // TypeScript never resolves its types and a consumer who never calls `.selftest()` never needs it installed —
 // `playwright-core` stays an OPTIONAL peer dependency the same way the package's other optional UI-framework

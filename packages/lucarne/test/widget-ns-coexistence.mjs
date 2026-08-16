@@ -6,8 +6,8 @@
 // two namespaces.
 //
 // Run with `node test/ns-coexistence.mjs` (after `npm run build`).
-import { widgetMessage } from "../dist/envelope.js";
-import { createEnvelopeReducer } from "../dist/reducer.js";
+import { widgetMessage } from "../dist/widget/envelope.js";
+import { createEnvelopeReducer } from "../dist/widget/reducer.js";
 import {
   chromeKey,
   dragGlobal,
@@ -21,7 +21,7 @@ import {
   scrimGlobal,
   shellStickyId,
   themeGlobal,
-} from "../dist/ns.js";
+} from "../dist/widget/ns.js";
 
 const results = [];
 const check = (name, pass, detail = "") => {
