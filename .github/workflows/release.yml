@@ -1,16 +1,16 @@
 name: release
-# Publishes the 5 npm packages (packages/*) to the npm registry. 4 of the 5 packages
-# (lucarne, lucarne-interact, lucarne-corpus-mcp, lucarne-widget) are not yet published, and npm
-# only allows a Trusted Publisher (OIDC) to be configured on an ALREADY-EXISTING package — so the
-# first publish of each package cannot use OIDC and instead authenticates with an npm token.
+# Publishes the 2 npm packages (packages/*) to the npm registry: `lucarne` (the engine, widget
+# included) and `lucarne-interact` (the verbs, recall, the records store, and the one lucarne-mcp).
+# `lucarne-interact` is not yet published, and npm only allows a Trusted Publisher (OIDC) to be
+# configured on an ALREADY-EXISTING package — so its first publish cannot use OIDC and instead
+# authenticates with an npm token.
 #
 # ONE-TIME setup: the owner creates an npm Granular Access Token (or automation token) with
-# publish rights to the 5 packages (lucarne-records, lucarne, lucarne-interact,
-# lucarne-corpus-mcp, lucarne-widget) and adds it as the repo secret `NPM_TOKEN`. After that,
-# dispatch this workflow with dry_run=false, or push a `v*` tag, to do a real publish (in
-# dependency order, with provenance). Once all 5 packages exist on npm, they MAY later migrate to
-# OIDC Trusted Publishing (configure a trusted publisher per package on npmjs.com) and drop the
-# token — optional hardening, not required for the first publish.
+# publish rights to both packages (lucarne, lucarne-interact) and adds it as the repo secret
+# `NPM_TOKEN`. After that, dispatch this workflow with dry_run=false, or push a `v*` tag, to do a
+# real publish (with provenance). Once both packages exist on npm, they MAY later migrate to OIDC
+# Trusted Publishing (configure a trusted publisher per package on npmjs.com) and drop the token —
+# optional hardening, not required for the first publish.
 #
 # Trigger this manually with dry_run=true (default) to prove the publish plan/tarballs with no
 # registry credentials. `pull_request` runs (scoped to this file) are always a dry run too, so the
@@ -47,9 +47,9 @@ jobs:
       - run: npm run build
       - run: npm install -g npm@latest
 
-      # Publish in dependency order: lucarne-records is the base, then the engine (lucarne),
-      # then the packages that depend on it.
-      - name: Publish packages (dependency order)
+      # The two packages are independent: lucarne-interact depends on no lucarne package (it
+      # reaches a session over its cdpUrl, and a daemon over HTTP), so publish order is free.
+      - name: Publish packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -63,7 +63,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "false" ]; then DRY=false; fi
           echo "dry_run=$DRY (event=${{ github.event_name }})"
 
-          for p in lucarne-records lucarne lucarne-interact lucarne-corpus-mcp lucarne-widget; do
+          for p in lucarne lucarne-interact; do
             ver="$(node -p "require('./packages/$p/package.json').version")"
             echo "== $p@$ver =="
 
@@ -86,7 +86,7 @@ jobs:
       - name: Verify published versions
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: |
-          for p in lucarne-records lucarne lucarne-interact lucarne-corpus-mcp lucarne-widget; do
+          for p in lucarne lucarne-interact; do
             ver="$(node -p "require('./packages/$p/package.json').version")"
             live="$(npm view "$p" version)"
             echo "$p: local=$ver published=$live"

@@ -14,6 +14,5 @@ npx lucarne serve
 | [`supervised-login.ts`](./supervised-login.ts) | store a credential, inject it server-side (the agent never sees the password/TOTP) |
 | [`embed-porthole.html`](./embed-porthole.html) | `<iframe>` a session's porthole into your own page (read-only / with controls) |
 | [`python_drive.py`](./python_drive.py) | drive from Python via the stdlib client + Playwright |
-| [`mcp-config.json`](./mcp-config.json) | wire the `lucarne-mcp` server into an MCP client |
 
 The `.ts` files run on Node 22+ with `node --experimental-strip-types examples/<file>.ts`.

@@ -26,22 +26,16 @@ It's the missing middle between *headless automation* (drivable, but you can't w
 
 ## The monorepo
 
-`lucarne` is an **npm-workspaces monorepo** (`packages/*`) — this engine package is
-its first, published citizen, and four newer packages build a
-browse/interact/record/retrieve stack on top of it:
+`lucarne` is an **npm-workspaces monorepo** (`packages/*`) with two packages:
 
 | Package | What it is |
 |---|---|
-| [`lucarne`](./packages/lucarne/README.md) | **the engine** (this README) — sessions you can drive (CDP), watch + control (porthole), and record. |
-| [`lucarne-records`](./packages/lucarne-records/README.md) | the one provenance record language for the platform — a normalized cross-site schema (`Profile`/`Post`/`Comment`) plus a dependency-free `node:fs` record store + query API. |
-| [`lucarne-interact`](./packages/lucarne-interact/README.md) | **non-bot-like interaction: act + observe/record, screen + wire sensors, zero synthetic requests** — a human-paced ACT plane (`open`/`snap`/`scroll`/`activate`/`type`/`send`) over a session's `cdpUrl`, with an enforced pause after every verb, plus a passive, read-only OBSERVE/recall half that only records what a genuine session organically loads. |
-| [`lucarne-widget`](./packages/lucarne-widget/README.md) | the reusable glassmorphic in-page widget infrastructure — mount a durable, draggable, namespaced glass panel inside a session's page; stream state in, drain intents out. |
-| [`lucarne-corpus-mcp`](./packages/lucarne-corpus-mcp/README.md) | an optional, thin, read-only stdio MCP bin over a `lucarne-records` store — answers `get_profile`/`get_post`/`get_comments`/`search`/`get_timeline` from what's already been captured; a miss says so structurally instead of fetching. |
+| [`lucarne`](./packages/lucarne/README.md) | **the engine** (this README) — sessions you can drive (CDP), watch + control (porthole), and record; plus the in-page widget infrastructure (`lucarne/widget/*`). |
+| [`lucarne-interact`](./packages/lucarne-interact/README.md) | **non-bot-like interaction: act + observe/record, screen + wire sensors, zero synthetic requests** — a human-paced ACT plane (`open`/`snap`/`scroll`/`activate`/`type`/`send`) over a session's `cdpUrl`, with an enforced pause after every verb, plus a passive, read-only OBSERVE/recall half that only records what a genuine session organically loads, the records store both write into, and the platform's one MCP server (`lucarne-mcp`). |
 
-Each package is independently published/versioned. `lucarne-interact` and
-`lucarne-widget` depend on this engine package (the HTTP client, for
-`/inject`); `lucarne-corpus-mcp` depends on `lucarne-records` for its schema
-and store. See each package's own README for its install, usage, and
+Each package is independently published/versioned, and `lucarne-interact`
+depends on no lucarne package: it reaches a session over its `cdpUrl` and a
+daemon over HTTP. See each package's own README for its install, usage, and
 **Charter**/**Security posture** sections.
 
 ## Install
@@ -99,9 +93,8 @@ const browser = await chromium.connectOverCDP(session.cdpUrl);   // drive with P
 The client covers the full API — `create`/`list`/`get`/`status`/`act`/`login`/`tabs`/`logs`/`content`/`activity`/`screenshot`/`pdf`/`recordings`/`exportContext`/… .
 
 The full API is described by an **OpenAPI 3.1** spec at `/openapi.json`, with a Swagger UI at `/docs`.
-There's also a stdlib-only **Python client** (`clients/python/lucarne.py`) and an **MCP server**
-(`lucarne-mcp`, stdio) that exposes lucarne as agent tools — point any MCP client at it with
-`LUCARNE_URL` / `LUCARNE_TOKEN`. Per-session knobs include `mobile`, `quality`, `proxy`, `geo`,
+There's also a stdlib-only **Python client** (`clients/python/lucarne.py`).
+Per-session knobs include `mobile`, `quality`, `proxy`, `geo`,
 `metadata`, `maxLifetimeMs`/`inactivityMs`, and engine-level `maxConcurrent` + `cors`.
 
 Or embed the engine directly, no daemon:
@@ -132,8 +125,7 @@ Concrete jobs, each a runnable example in [`examples/`](./examples):
   segments or open the built-in player. → [`record-and-replay.ts`](./examples/record-and-replay.ts)
 - **Embed the porthole in your own UI** — single-origin `viewUrl`, drop it in an
   `<iframe>` (read-only or with URL-bar controls). → [`embed-porthole.html`](./examples/embed-porthole.html)
-- **From Python, or any MCP agent** — stdlib Python client, or the `lucarne-mcp`
-  stdio server. → [`python_drive.py`](./examples/python_drive.py), [`mcp-config.json`](./examples/mcp-config.json)
+- **From Python** — stdlib Python client. → [`python_drive.py`](./examples/python_drive.py)
 
 ## Use it from Python
 
@@ -158,32 +150,6 @@ with sync_playwright() as p:
 The Python client covers `health/create/list/get/destroy/act/content`; for the rest of
 the surface, call the HTTP API directly (see [API](#api) / `/openapi.json`). Full example:
 [`python_drive.py`](./examples/python_drive.py).
-
-## MCP server
-
-`lucarne-mcp` is a stdio MCP server that exposes lucarne as agent tools — give your
-AI assistant (Claude Desktop, etc.) a browser. **Start a daemon first** (`lucarne serve`);
-the MCP server is a thin bridge to it over `LUCARNE_URL`, so sessions outlive the agent.
-`native` sessions need Chrome installed.
-
-```json
-{
-  "mcpServers": {
-    "lucarne": {
-      "command": "npx",
-      "args": ["-y", "lucarne-mcp"],
-      "env": { "LUCARNE_URL": "http://127.0.0.1:7800", "LUCARNE_TOKEN": "" }
-    }
-  }
-}
-```
-
-Tools: **`lucarne_create`**, **`lucarne_list`**, **`lucarne_destroy`**, **`lucarne_act`**
-(click/move/type/key/scroll/screenshot), **`lucarne_content`** (rendered HTML).
-`LUCARNE_TOKEN: ""` = no auth (fine on loopback); set it if you started `serve` with a token.
-(Restart your MCP client after editing its config.) The MCP lane is deliberately thin and
-`act` is **coordinate-based** — for selector-driven automation, drive the session's `cdpUrl`
-with Playwright instead.
 
 ## Backends
 

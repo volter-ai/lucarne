@@ -265,7 +265,7 @@ await recall.stop();
   records }`) — this package bundles none of its own; a caller passes its own
   site-specific ARIA extractor(s) (e.g. cadence's X ARIA extractor, in
   `cadence/src/records/`). Recall dispatches every matching extractor and
-  writes the resulting records through `lucarne-records`'s `appendRecords`.
+  writes the resulting records through the records store's `appendRecords`.
   Likewise `wireAdapters` (LS-13W) — this package bundles no site-specific
   wire adapter either; the default is `[]` (wire capture is a no-op until a
   caller registers a domain's own adapter).
@@ -361,8 +361,7 @@ its own:
   `test/recall-readonly-gates.mjs` greps for it and fails on any hit.
 
 Together the two sensors capture **zero synthetic requests**: recall never
-fetches, replays, paginates, or auto-scrolls on the corpus's behalf — see
-`lucarne-corpus-mcp`'s README for the read side of this same law.
+fetches, replays, paginates, or auto-scrolls on the corpus's behalf.
 
 ## CLI
 
