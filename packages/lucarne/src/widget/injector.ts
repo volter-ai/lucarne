@@ -16,9 +16,8 @@
 //      `document.documentElement` may not exist yet — `mount()` below no-ops and lets the interval-driven
 //      guard (and the engine's separate load-time re-eval) retry once the DOM exists.
 //   2. It is idempotent by contract: it re-runs on EVERY navigation/reload and (per the engine's inject store)
-//      once more on the page's `load` event — `mount()`'s `document.getElementById(HOST)` guard and the
-//      `!window[GUARD]` guard around the interval/listener registration make a second invocation of this exact
-//      source a safe no-op rather than a double-mount.
+//      once more on the page's `load` event — `mount()`'s host guard updates the existing iframe only when the
+//      bundle revision changed, while the `!window[GUARD]` guard keeps listeners singleton.
 //
 // DISPLAY + INTENT only — this source never sends anything anywhere on its own. Intents flow OUT via
 // postMessage → the iframe posts to `parent` under the `chromeKey(ns)` marker; a resize/ready/peek/drag message
@@ -45,12 +44,22 @@ export interface InjectorOptions {
   html: string;
 }
 
+function htmlRevision(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${value.length.toString(36)}-${(hash >>> 0).toString(36)}`;
+}
+
 /**
  * Build the injector source for one `ns` + built `html`. The returned string is handed to the engine as a
  * sticky script injection (`bypassCSP: true`) — see `host.ts`'s `WidgetHost.attach`.
  */
 export function injectorSource(opts: InjectorOptions): string {
   const { ns, html } = opts;
+  const revision = htmlRevision(html);
   const HOST = hostElementId(ns);
   const CHROME = chromeKey(ns);
   const THEME_G = themeGlobal(ns);
@@ -71,7 +80,7 @@ export function injectorSource(opts: InjectorOptions): string {
     // addScriptToEvaluateOnNewDocument runs in EVERY frame (main + every child iframe: embeds, ads, quote-posts).
     // Mount ONLY in the top frame, or a busy SPA spawns one widget per iframe as they churn.
     try { if (window.top !== window.self) return; } catch(e) { return; }   // cross-origin access throws → also a subframe → bail
-    var HOST=${JSON.stringify(HOST)}, HTML=${JSON.stringify(html)}, CHROME=${JSON.stringify(CHROME)};
+    var HOST=${JSON.stringify(HOST)}, HTML=${JSON.stringify(html)}, REV=${JSON.stringify(revision)}, CHROME=${JSON.stringify(CHROME)};
     // GLASS must adapt to the page: a dark frost over a light page just reads as a dark slab. So we probe the
     // page's background luminance and pick a dark or light frost (the iframe flips its own theme to match). This
     // is what makes it look like real frosted glass on BOTH a dark feed and a white page.
@@ -193,10 +202,22 @@ export function injectorSource(opts: InjectorOptions): string {
       }
     }
     function mount(){
-      if(document.getElementById(HOST)) return;
+      var current=document.getElementById(HOST);
+      if(current){
+        // Registering the same sticky injection id replaces its source. Apply
+        // a changed consumer bundle to the already-mounted iframe too; the
+        // ordinary idempotency guard must not pin yesterday's UI until the
+        // host page happens to navigate.
+        if(current.getAttribute('data-lw-revision')!==REV){
+          var live=window[${JSON.stringify(IFRAME_G)}]||(current.shadowRoot&&current.shadowRoot.querySelector('iframe'));
+          if(live){ current.setAttribute('data-lw-revision',REV); live.srcdoc=HTML; window[${JSON.stringify(IFRAME_G)}]=live; }
+        }
+        return;
+      }
       var parent=document.body||document.documentElement;
       if(!parent) return;                                            // runs at document-start on reload — DOM not ready yet; the guard retries
       var host=document.createElement('div'); host.id=HOST;
+      host.setAttribute('data-lw-revision',REV);
       // anchored bottom-right; size is DRIVEN BY THE IFRAME via resize messages (badge = small, panel = larger),
       // so it only ever covers what's actually drawn and never eats clicks over the page.
       // The HOST owns the rounded corners + clip + GLASS (backdrop-filter cannot cross an iframe boundary, so the
