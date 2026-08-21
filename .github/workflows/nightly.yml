@@ -1,0 +1,37 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lucarne-nightly
+  cancel-in-progress: true
+
+jobs:
+  complete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Chrome, ffmpeg, and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget xvfb ffmpeg
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+          google-chrome --version
+      - run: npm ci
+      - run: npm run test:unit
+      - run: npm run build
+      - run: xvfb-run -a npm run test:acceptance
+        env:
+          LUCARNE_TEST_HEADED: "1"
