@@ -1,3 +1,9 @@
+## lucarne 1.7.3
+
+- Widget hot replacement: registering changed iframe HTML under the same widget namespace now reloads the
+  existing mounted iframe in place. Daemon restarts pick up rebuilt consumer UI immediately without waiting
+  for the host page to navigate, while the host element and page-level listeners remain singletons.
+
 ## lucarne 1.7.2
 
 - Widget size handshake: the iframe now re-posts its measured size until the host page acknowledges it
