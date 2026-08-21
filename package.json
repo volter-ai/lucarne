@@ -19,6 +19,7 @@
     "test:acceptance": "npm run test:acceptance --workspaces --if-present",
     "test:docker": "npm run test:docker --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present && npm run test:docs",
+    "test:merge": "npm run build && node packages/lucarne/test/widget-build-helper.mjs && node packages/lucarne/test/widget-envelope-roundtrip.mjs && node packages/lucarne/test/widget-size-handshake.mjs && node packages/lucarne/test/widget-ns-coexistence.mjs",
     "test:docs": "node test/docs-lint.mjs",
     "build:image": "npm run build:image --workspaces --if-present"
   },
