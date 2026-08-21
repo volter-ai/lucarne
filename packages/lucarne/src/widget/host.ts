@@ -11,8 +11,8 @@
 import { LucarneClient } from "../client.js";
 import { evaluateOnAllPages, evaluateOnAllPagesCollecting, MOUNT_REACHABLE_SKIP_URL_PREFIXES } from "./cdp-lite.js";
 import { type Identity, widgetMessage } from "./envelope.js";
-import { injectorSource } from "./injector.js";
-import { assertNs, guardGlobal, hostElementId, iframeGlobal, intentQueueGlobal, shellStickyId } from "./ns.js";
+import { injectorSource, type InjectorOptions } from "./injector.js";
+import { assertNs, disposeGlobal, guardGlobal, hostElementId, iframeGlobal, intentQueueGlobal, shellStickyId } from "./ns.js";
 import { runWidgetSelftest, type SelftestCheck, type SelftestFixtures, type SelftestResult } from "./selftest.js";
 
 export type { SelftestCheck, SelftestFixtures, SelftestResult } from "./selftest.js";
@@ -21,6 +21,9 @@ export interface WidgetHostEngineOptions {
   baseUrl?: string;
   token?: string;
 }
+
+/** Builds the durable, page-context source used to mount a widget. */
+export type WidgetInjector = (options: InjectorOptions) => string;
 
 /** Accepted as the first arg to `WidgetHost.attach`: either a session id (resolved via the engine client) or an already-fetched `{ id, cdpUrl }` (e.g. the object `LucarneClient#create`/`#get` returns). */
 export type SessionRef = string | { id: string; cdpUrl: string };
@@ -34,6 +37,11 @@ export interface WidgetHostOptions {
   engine?: WidgetHostEngineOptions;
   /** Stamped into every `push` — the iframe pins to the first identity it sees (see `reducer.ts`). */
   identity?: Identity;
+  /**
+   * Optional delivery-shell adapter. Lucarne still owns session attachment, envelopes, pushes, and intent
+   * drains; the adapter only replaces the default page injector that renders the surrounding window.
+   */
+  injector?: WidgetInjector;
 }
 
 export type IntentHandler = (intent: { id: string | number; payload: unknown }) => void | Promise<void>;
@@ -107,7 +115,7 @@ export class WidgetHost {
       id = sessionRef.id;
       cdpUrl = sessionRef.cdpUrl;
     }
-    const source = injectorSource({ ns, html: opts.html });
+    const source = (opts.injector ?? injectorSource)({ ns, html: opts.html });
     await client.setInjection(id, { id: shellStickyId(ns), source, bypassCSP: true });
     return new WidgetHost(id, cdpUrl, ns, client, opts.identity ?? {});
   }
@@ -152,7 +160,10 @@ export class WidgetHost {
 
     let host: WidgetHost;
     try {
-      host = await WidgetHost.attach({ id, cdpUrl }, { ns, html: opts.html, engine: opts.engine, identity: opts.identity ?? {} });
+      host = await WidgetHost.attach(
+        { id, cdpUrl },
+        { ns, html: opts.html, engine: opts.engine, identity: opts.identity ?? {} },
+      );
     } catch (e) {
       const check: SelftestCheck = { name: "selftest harness: mounts the shell (WidgetHost.attach)", pass: false, detail: (e as Error)?.message ?? String(e) };
       return { pass: false, checks: [check] };
@@ -354,7 +365,11 @@ export class WidgetHost {
     const hostId = hostElementId(this.ns);
     const guard = guardGlobal(this.ns);
     const iframeG = iframeGlobal(this.ns);
+    const disposeG = disposeGlobal(this.ns);
     const expr = `(function(){
+      var dispose = window[${JSON.stringify(disposeG)}];
+      if (typeof dispose === 'function') { try { dispose(); } catch(e){} }
+      window[${JSON.stringify(disposeG)}] = null;
       var h = document.getElementById(${JSON.stringify(hostId)}); if (h) h.remove();
       if (window[${JSON.stringify(guard)}]) { clearInterval(window[${JSON.stringify(guard)}]); window[${JSON.stringify(guard)}] = null; }
       window[${JSON.stringify(iframeG)}] = null;

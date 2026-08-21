@@ -16,6 +16,7 @@ export {
 export {
   assertNs,
   chromeKey,
+  disposeGlobal,
   dragGlobal,
   glassIds,
   guardGlobal,

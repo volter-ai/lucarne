@@ -64,6 +64,11 @@ export function guardGlobal(ns: string): string {
   return `${nsPrefix(ns)}_guard`;
 }
 
+/** Optional page-global teardown hook installed by alternate delivery shells. */
+export function disposeGlobal(ns: string): string {
+  return `${nsPrefix(ns)}_dispose`;
+}
+
 /** The window global holding in-flight drag state (the prior implementation's single fixed drag-state global). */
 export function dragGlobal(ns: string): string {
   return `${nsPrefix(ns)}_drag`;

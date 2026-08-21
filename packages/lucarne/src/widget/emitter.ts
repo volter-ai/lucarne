@@ -17,4 +17,8 @@ export class Emitter<T> {
   emit(value: T): void {
     for (const cb of [...this.listeners]) cb(value);
   }
+
+  clear(): void {
+    this.listeners.clear();
+  }
 }

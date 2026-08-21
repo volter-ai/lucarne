@@ -328,6 +328,29 @@ const w = createWidget({ ns: "myapp", version: 1 });
 w.registerPanel({ id: "status", title: "Status", render: mountPanel(StatusFace), default: true });
 ```
 
+`createWidget` includes Lucarne's original pill/panel chrome for compatibility. When a dedicated
+overlay runtime owns the surrounding window, use the transport-only API and render the app directly:
+
+```ts
+import { createWidgetTransport } from "lucarne/widget/runtime";
+
+const transport = createWidgetTransport({ ns: "myapp" });
+renderApp(document.getElementById("app")!, transport.state);
+transport.onPatch(() => renderApp(document.getElementById("app")!, transport.state));
+transport.sendIntent("ctl", { action: "refresh" });
+```
+
+The host-side delivery shell is replaceable without replacing Lucarne's browser attachment or wire
+semantics. Pass a source factory as `injector`; the factory receives the same validated `ns` and built
+`html` used by the default injector:
+
+```ts
+await WidgetHost.attach(sessionId, { ns: "myapp", html, injector });
+```
+
+Alternate shells can install `window[disposeGlobal(ns)]` for exact teardown. `WidgetHost.remove()` calls
+that hook before removing the conventional host node and compatibility globals.
+
 `WidgetHost.selftest` asserts singleton / top-frame-only / size-stable /
 survives-reload / responsive against a live session; it lazy-imports
 `playwright-core` (optional peer) only when called.

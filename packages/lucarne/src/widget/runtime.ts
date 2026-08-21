@@ -53,6 +53,38 @@ export interface CreateWidgetOptions {
   root?: HTMLElement;
 }
 
+export interface CreateWidgetTransportOptions {
+  /** This instance's namespace — must match the `ns` used by `WidgetHost.attach`. */
+  ns: string;
+}
+
+/**
+ * The visual-shell-free half of a Lucarne widget. It owns only the versioned host→iframe envelope,
+ * identity pinning, accumulated state, page-theme relay, and named iframe→host intents. This is the
+ * integration point for apps whose launcher/window chrome is supplied by another shell.
+ */
+export interface WidgetTransport {
+  /** The shallow-merged accumulation of every accepted patch. */
+  readonly state: unknown;
+  /** Fires once per accepted envelope, after `state` has been updated. */
+  onPatch(cb: (patch: unknown) => void): () => void;
+  /** Queue a named intent for `WidgetHost.onIntent(name, cb)` to drain. */
+  sendIntent(name: string, payload: unknown): string;
+  /** Update delivery-shell launcher metadata when the selected shell supports it. */
+  setLauncher(state: {
+    badge?: string | number | null;
+    label?: string;
+    icon?: string | null;
+    hidden?: boolean;
+  }): void;
+  /** Ask the delivery shell to close without coupling the app to its visual implementation. */
+  closeShell(): void;
+  onTheme(cb: (theme: Theme) => void): () => void;
+  /** Fires when an alternate delivery shell opens or closes this app's viewport. */
+  onVisibility(cb: (visible: boolean) => void): () => void;
+  destroy(): void;
+}
+
 export interface Widget {
   registerPanel(def: PanelDef): void;
   registerSheet(def: SheetDef): void;
@@ -90,6 +122,82 @@ function mergePatch(prev: unknown, patch: unknown): unknown {
 }
 
 /**
+ * Connect an iframe app to Lucarne without rendering any launcher, panel, tab, drag handle, or resize
+ * chrome. Consumers may render directly into their own root while a dedicated overlay runtime owns the
+ * surrounding window.
+ */
+export function createWidgetTransport(opts: CreateWidgetTransportOptions): WidgetTransport {
+  const ns = opts.ns;
+  const patchEmitter = new Emitter<unknown>();
+  const themeEmitter = new Emitter<Theme>();
+  const visibilityEmitter = new Emitter<boolean>();
+  let state: unknown = {};
+  let destroyed = false;
+
+  const reducer = createEnvelopeReducer({
+    ns,
+    onPatch: (patch) => {
+      state = mergePatch(state, patch);
+      patchEmitter.emit(patch);
+    },
+  });
+
+  function onMessage(e: MessageEvent): void {
+    const data = e.data as { theme?: Theme } | undefined;
+    if (data && (data.theme === "light" || data.theme === "dark")) {
+      document.documentElement.setAttribute("data-theme", data.theme);
+      themeEmitter.emit(data.theme);
+      return;
+    }
+    const shellMessage = (e.data as Record<string, unknown> | null)?.[chromeKey(ns)] as
+      | Record<string, unknown>
+      | undefined;
+    if (shellMessage?.action === "visibility" && typeof shellMessage.visible === "boolean") {
+      visibilityEmitter.emit(shellMessage.visible);
+      return;
+    }
+    reducer.handleMessage(e.data);
+  }
+
+  window.addEventListener("message", onMessage);
+  post(ns, { action: "ready" });
+
+  return {
+    get state() {
+      return state;
+    },
+    onPatch(cb) {
+      return patchEmitter.on(cb);
+    },
+    sendIntent(name, payload) {
+      const id = genId();
+      post(ns, { action: "intent", name, id, payload });
+      return id;
+    },
+    setLauncher(state) {
+      post(ns, { action: "launcher", ...state });
+    },
+    closeShell() {
+      post(ns, { action: "close" });
+    },
+    onTheme(cb) {
+      return themeEmitter.on(cb);
+    },
+    onVisibility(cb) {
+      return visibilityEmitter.on(cb);
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      window.removeEventListener("message", onMessage);
+      patchEmitter.clear();
+      themeEmitter.clear();
+      visibilityEmitter.clear();
+    },
+  };
+}
+
+/**
  * Build one widget instance's iframe-side runtime: the envelope subscription, the shell chrome (pill/panel/
  * tablist/drag/resize/theme), and the panel/sheet registry. Call once per bundle entrypoint.
  */
@@ -99,24 +207,13 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
 
   const panels: PanelDef[] = [];
   const sheets = new Map<string, SheetDef>();
-  const patchEmitter = new Emitter<unknown>();
-  const themeEmitter = new Emitter<Theme>();
+  const transport = createWidgetTransport({ ns });
 
-  let state: unknown = {};
   let isOpen = false;
   let activeTab: string | null = null;
   let openSheetId: string | null = null;
   let pillState: PillState = { tone: "off", label: "", sub: "" };
-  let theme: Theme = "dark";
-
-  const reducer = createEnvelopeReducer({
-    ns,
-    onPatch: (patch) => {
-      state = mergePatch(state, patch);
-      patchEmitter.emit(patch);
-      renderActive();
-    },
-  });
+  const unsubscribeRender = transport.onPatch(() => renderActive());
 
   // ── DOM shell ──────────────────────────────────────────────────────────────────────────────
   const wrap = document.createElement("div");
@@ -267,7 +364,7 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
       const overlay = document.createElement("div");
       overlay.className = "sheet";
       panelEl.appendChild(overlay);
-      sheet.render(overlay, state);
+      sheet.render(overlay, transport.state);
     }
 
     wrap.appendChild(panelEl);
@@ -279,11 +376,11 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
     if (!isOpen) return;
     const container = activeTab ? bodyContainers.get(activeTab) : undefined;
     const def = panels.find((p) => p.id === activeTab);
-    if (container && def) def.render(container, state);
+    if (container && def) def.render(container, transport.state);
     if (openSheetId) {
       const sheetEl = wrap.querySelector<HTMLElement>(".sheet");
       const sheet = sheets.get(openSheetId);
-      if (sheetEl && sheet) sheet.render(sheetEl, state);
+      if (sheetEl && sheet) sheet.render(sheetEl, transport.state);
     }
   }
 
@@ -310,20 +407,11 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
     sizeHandshake.measured(Math.ceil(r.width), Math.ceil(r.height));
   }
 
-  // theme flip + the envelope inbound listener
+  // Size acknowledgements belong to the legacy shell. Envelope/theme handling lives in the transport.
   function onMessage(e: MessageEvent): void {
-    if (sizeHandshake.handleMessage(e.data)) return; // the host acknowledging one posted size — chrome, never a patch
-    const data = e.data as { theme?: Theme } | undefined;
-    if (data && typeof data.theme === "string") {
-      theme = data.theme;
-      document.documentElement.setAttribute("data-theme", theme);
-      themeEmitter.emit(theme);
-      return;
-    }
-    reducer.handleMessage(e.data);
+    sizeHandshake.handleMessage(e.data);
   }
   window.addEventListener("message", onMessage);
-  post(ns, { action: "ready" });
 
   const api: Widget = {
     registerPanel(def: PanelDef): void {
@@ -335,12 +423,10 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
       sheets.set(def.id, def);
     },
     onPatch(cb: (patch: unknown) => void): () => void {
-      return patchEmitter.on(cb);
+      return transport.onPatch(cb);
     },
     sendIntent(name: string, payload: unknown): string {
-      const id = genId();
-      post(ns, { action: "intent", name, id, payload });
-      return id;
+      return transport.sendIntent(name, payload);
     },
     setPill(next: PillState): void {
       pillState = { ...pillState, ...next };
@@ -354,7 +440,7 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
       sendResize();
     },
     onTheme(cb: (theme: Theme) => void): () => void {
-      return themeEmitter.on(cb);
+      return transport.onTheme(cb);
     },
     open(): void {
       if (isOpen) return;
@@ -368,6 +454,8 @@ export function createWidget(opts: CreateWidgetOptions): Widget {
     },
     destroy(): void {
       window.removeEventListener("message", onMessage);
+      unsubscribeRender();
+      transport.destroy();
       sizeHandshake.dispose();
       resizeObserver?.disconnect();
       clear(wrap);
