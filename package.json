@@ -24,6 +24,7 @@
     "build:image": "npm run build:image --workspaces --if-present"
   },
   "devDependencies": {
+    "@termfleet/core": "^0.2.0",
     "typescript": "^5.7.0"
   }
 }

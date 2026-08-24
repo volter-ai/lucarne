@@ -12,7 +12,7 @@
 // `launch` accepts arbitrary --key value params and passes them through verbatim; the system never
 // interprets them (a profile gives them meaning, e.g. a ztrack-using profile declares ZTRACK_ISSUE).
 import { existsSync, readFileSync } from 'node:fs';
-import { ProviderClient, providerRefFromUrl } from 'termfleet';
+import { ProviderClient, providerRefFromUrl } from '@termfleet/core/provider-client.js';
 import { resolveDefaultProvider } from '@termfleet/core/local-providers.js';
 import { RUNNER_DEFAULTS } from './runner-defaults.mjs';
 

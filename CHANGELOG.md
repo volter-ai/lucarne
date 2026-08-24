@@ -1,3 +1,8 @@
+## lucarne 1.7.5
+
+- Packaging fix: `termfleet` is no longer installed with Lucarne. The repository's autonomy runner
+  uses `@termfleet/core` directly as development-only tooling; neither is part of Lucarne's runtime.
+
 ## lucarne 1.7.3
 
 - Widget hot replacement: registering changed iframe HTML under the same widget namespace now reloads the
