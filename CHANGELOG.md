@@ -1,3 +1,25 @@
+## lucarne 1.8.0
+
+- Browser provider (`lucarne/browser-provider`, bin `lucarne-browser-provider`): lucarne implements
+  supercode's `supercode/browser-provider-v1` for a browser it is ATTACHED to over CDP, under the provider
+  identity `lucarne.cdp`. All 21 operations are served — `browser.script` included, because page code
+  genuinely runs here and refusing it would be a lie — and pointer and keyboard acts leave as `Input.*` CDP
+  traffic rather than synthesized DOM events. The endpoint comes from `--cdp-url` or from an `--announce-dir`
+  of `{port,pid,pane,label}` files; the discovery record under `$SUPERCODE_HOME/providers/browser` is
+  owner-only (0600) and is removed when the provider is stopped.
+- Mountable viewer (`lucarne/viewer`): `createViewerHandler({ cdpUrl })` returns an `(req, res)` handler,
+  plus its WebSocket `upgrade`, serving the porthole for one attached browser — so a host that runs no
+  lucarne engine can mount the viewer under any prefix on its own HTTP door. The CDP tap opens on the first
+  request, and routing reads the tail of the path, so the handler never needs to know its mount prefix.
+- Pre-act inspection: a mutating operation describes the element from a reading taken BEFORE the act, and a
+  destroyed execution context on a mutating operation is reported as the success it is (reattach,
+  `acted`/`navigated`). A click that navigates — or that removes its own target — no longer comes back
+  `NOT_FOUND`.
+- Honest script bound: a requested `browser.script` timeout is clamped to the provider's 9 s script budget,
+  because supercode abandons a provider call after 12 s and the registry's 30 s default is therefore
+  unreachable through the CLI. The clamp is stated on the outcome (`notice`) and in `browser.status`
+  (`scriptTimeoutMs`, beside the fidelity record) rather than surfacing to a caller as a hang.
+
 ## lucarne 1.7.5
 
 - Packaging fix: `termfleet` is no longer installed with Lucarne. The repository's autonomy runner
