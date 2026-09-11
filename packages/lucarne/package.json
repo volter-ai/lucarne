@@ -44,6 +44,10 @@
       "types": "./dist/browser/index.d.ts",
       "import": "./dist/browser/index.js"
     },
+    "./viewer": {
+      "types": "./dist/viewer.d.ts",
+      "import": "./dist/viewer.js"
+    },
     "./widget": {
       "types": "./dist/widget/index.d.ts",
       "import": "./dist/widget/index.js"

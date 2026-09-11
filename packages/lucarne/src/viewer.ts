@@ -75,38 +75,63 @@ export function createViewerHandler(options: ViewerOptions): ViewerHandler {
     "\n<script>fetch('./frame.jpg').then(r=>r.ok?r.blob():null).then(b=>b&&createImageBitmap(b))" +
     ".then(bm=>{if(bm){ctx.drawImage(bm,0,0,VW,VH);bm.close&&bm.close()}}).catch(()=>{});</script>\n";
 
-  const leaf = (url: string): string => {
+  /**
+   * The handler is mounted under a prefix it is never told ("/browser/<pane>/"), so routing
+   * reads the TAIL of the path: a trailing slash is the page, a known filename is that asset,
+   * and a prefix asked for without its slash is redirected onto one rather than 404'd.
+   */
+  const ASSETS = new Set(["index.html", "frame.jpg", "status.json", "ws"]);
+  const route = (url: string): string => {
     const pathname = new URL(url, "http://viewer.invalid").pathname;
-    const trimmed = pathname.replace(/\/+$/, "");
-    const index = trimmed.lastIndexOf("/");
-    return index === -1 ? trimmed : trimmed.slice(index + 1);
+    if (pathname.endsWith("/")) return "index.html";
+    const name = pathname.slice(pathname.lastIndexOf("/") + 1);
+    if (ASSETS.has(name)) return name;
+    return name.includes(".") ? "404" : "redirect";
+  };
+
+  /**
+   * A JPEG of the page NOW. The screencast only emits on visual change, so a page that has
+   * been static since the tap opened has no cached frame; capture one over the same CDP
+   * socket rather than reporting an empty viewer.
+   */
+  const frame = async (m: SessionMedia): Promise<Buffer | null> => {
+    const cached = m.frames.get();
+    if (cached) return cached;
+    try {
+      const shot = await m.cdp.call("Page.captureScreenshot", { format: "jpeg", quality: options.quality ?? 60 }) as { data?: string };
+      return shot?.data ? Buffer.from(shot.data, "base64") : null;
+    } catch { return null; }
   };
 
   const handler = ((req: http.IncomingMessage, res: http.ServerResponse): void => {
     const url = req.url ?? "/";
-    const name = leaf(url);
+    const name = route(url);
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "method not allowed" }));
       return;
     }
-    if (name === "" || name === "index.html" || name === "view") {
+    if (name === "redirect") {
+      const pathname = new URL(url, "http://viewer.invalid").pathname;
+      res.writeHead(302, { location: pathname + "/" });
+      res.end();
+      return;
+    }
+    if (name === "index.html") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       res.end(req.method === "HEAD" ? undefined : html);
       return;
     }
     if (name === "frame.jpg") {
-      void attach().then((m) => {
-        const frame = m.frames.get();
-        if (!frame) {
-          // The screencast only emits on visual change; a page that has not painted since the
-          // tap opened has no frame YET. Say so rather than inventing one.
+      void attach().then(async (m) => {
+        const jpeg = await frame(m);
+        if (!jpeg) {
           res.writeHead(503, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "no frame captured yet" }));
+          res.end(JSON.stringify({ error: "the attached page produced no frame" }));
           return;
         }
-        res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store", "content-length": String(frame.length) });
-        res.end(req.method === "HEAD" ? undefined : frame);
+        res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store", "content-length": String(jpeg.length) });
+        res.end(req.method === "HEAD" ? undefined : jpeg);
       }).catch((error: Error) => {
         res.writeHead(502, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(error?.message ?? error) }));
@@ -116,8 +141,13 @@ export function createViewerHandler(options: ViewerOptions): ViewerHandler {
     if (name === "status.json") {
       void attach().then(async (m) => {
         const now = await m.activityNow();
+        // `activityNow().url` is only known once a navigation has been OBSERVED; a page that
+        // was already loaded when the tap opened has none, so read the live one.
+        const live = now.url ?? await m.cdp.call("Runtime.evaluate", { expression: "location.href", returnByValue: true })
+          .then((out: { result?: { value?: unknown } }) => (typeof out.result?.value === "string" ? out.result.value : undefined))
+          .catch(() => undefined);
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-        res.end(JSON.stringify({ endpoint: base, viewport, interactable, url: now.url, title: now.title, stats: m.stats() }));
+        res.end(JSON.stringify({ endpoint: base, viewport, interactable, url: live, title: now.title, stats: m.stats() }));
       }).catch((error: Error) => {
         res.writeHead(502, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(error?.message ?? error) }));
@@ -129,7 +159,7 @@ export function createViewerHandler(options: ViewerOptions): ViewerHandler {
   }) as ViewerHandler;
 
   handler.upgrade = (req: http.IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (leaf(req.url ?? "/") !== "ws") { socket.destroy(); return; }
+    if (route(req.url ?? "/") !== "ws") { socket.destroy(); return; }
     void attach().then((m) => {
       wss.handleUpgrade(req, socket, head, (ws) => {
         const current = m.frames.get();
