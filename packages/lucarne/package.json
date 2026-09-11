@@ -1,7 +1,7 @@
 {
   "name": "lucarne",
   "version": "1.7.5",
-  "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record — on your own machine and your own IP.",
+  "description": "Self-hostable browser sessions you can drive (Playwright/CDP), watch and control (porthole), and record \u2014 on your own machine and your own IP.",
   "type": "module",
   "license": "MIT",
   "author": "Aaron Volter",
@@ -30,7 +30,8 @@
     "node": ">=22"
   },
   "bin": {
-    "lucarne": "dist/cli.js"
+    "lucarne": "dist/cli.js",
+    "lucarne-browser-provider": "dist/browser/cli.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,6 +39,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./browser-provider": {
+      "types": "./dist/browser/index.d.ts",
+      "import": "./dist/browser/index.js"
     },
     "./widget": {
       "types": "./dist/widget/index.d.ts",
