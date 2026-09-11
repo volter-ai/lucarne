@@ -360,6 +360,17 @@ export const PAGE_AGENT_SOURCE = String.raw`
     catch (e) { return String(value); }
   }
 
+  // One act per mutating operation, so execute() can inspect the target before performing it.
+  var ACTS = {
+    'browser.click': function (locator) { return locator.click(); },
+    'browser.hover': function (locator) { return locator.hover(); },
+    'browser.focus': function (locator) { return locator.focus(); },
+    'browser.fill': function (locator, input) { return locator.fill(input.value); },
+    'browser.check': function (locator) { return locator.check(); },
+    'browser.uncheck': function (locator) { return locator.uncheck(); },
+    'browser.press': function (locator, input) { return locator.press(input.key); }
+  };
+
   function ok(operation, value) { return { ok: true, operation: operation, target: target(), value: value }; }
   function bad(operation, code, message) { return { ok: false, operation: operation, error: { code: code, message: message }, target: target() }; }
 
@@ -434,17 +445,20 @@ export const PAGE_AGENT_SOURCE = String.raw`
           return ok(operation, { value: serializable(value) });
         } finally { clearTimeout(timer); }
       }
-      if (operation === 'browser.click') { await locator.click(); return ok(operation, await locator.inspect()); }
-      if (operation === 'browser.hover') { await locator.hover(); return ok(operation, await locator.inspect()); }
-      if (operation === 'browser.focus') { await locator.focus(); return ok(operation, await locator.inspect()); }
-      if (operation === 'browser.fill') { await locator.fill(input.value); return ok(operation, await locator.inspect()); }
-      if (operation === 'browser.check') { await locator.check(); return ok(operation, await locator.inspect()); }
-      if (operation === 'browser.uncheck') { await locator.uncheck(); return ok(operation, await locator.inspect()); }
       if (operation === 'browser.select') return ok(operation, { values: await locator.selectOption(input.values) });
-      if (operation === 'browser.press') {
-        if (locator) { await locator.press(input.key); return ok(operation, await locator.inspect()); }
+      if (operation === 'browser.press' && !locator) {
         await page.keyboard.press(input.key);
         return ok(operation, { key: input.key });
+      }
+      if (ACTS[operation]) {
+        // The element is described BEFORE the act, never after. A click that navigates or that
+        // removes its own button leaves nothing to re-resolve, and re-resolving would report
+        // NOT_FOUND for an action that in fact succeeded. The pre-act inspection is the honest
+        // answer to "what did you act on"; a target that vanished still reports ok.
+        var before = null;
+        try { before = inspect(one(input.locator, index)); } catch (e) { /* the act below reports NOT_FOUND itself */ }
+        await ACTS[operation](locator, input);
+        return ok(operation, before || { acted: true });
       }
       return bad(operation, 'UNSUPPORTED', 'lucarne does not implement ' + String(operation) + ' in the page.');
     } catch (error) {

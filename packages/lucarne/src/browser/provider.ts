@@ -32,10 +32,34 @@ export const PROVIDER_NAME = "Lucarne (CDP attach)";
 const MAX_REQUEST_BYTES = 256 * 1024;
 /** Supercode gives a provider 12s end to end; answer inside that or report TIMED_OUT. */
 const OPERATION_BUDGET_MS = 11_000;
+/**
+ * The REAL bound on `browser.script`, and it is not the registry's 30s default. Supercode's
+ * caller abandons a provider call after `BROWSER_PROVIDER_TIMEOUT` (12s), so a script granted
+ * 30s would outlive the only party waiting for its answer — the page would keep running code
+ * nobody can receive. A requested timeout is therefore clamped to this, and the clamp is stated
+ * on the outcome and in `browser.status` rather than left for a caller to discover as a hang.
+ */
+const SCRIPT_BUDGET_MS = 9_000;
 const HOST_BINDING = "__lucarneHost";
 
 /** Operations lucarne answers in the node process rather than in the page. */
+/** Chrome's several ways of saying "the page you were talking to is gone". */
+function navigatedAway(message: string): boolean {
+  return /Execution context was destroyed|Inspected target navigated or closed|Cannot find context|Target closed|socket closed/i.test(message);
+}
+
 const NODE_OPERATIONS = new Set(["browser.status", "browser.back", "browser.forward", "browser.reload"]);
+
+/**
+ * Operations that CHANGE the page. If one of these takes the page away mid-flight — a click that
+ * navigates destroys the execution context the answer was coming back through — the act still
+ * happened, and lucarne reports it as the success it was.
+ */
+const MUTATING_OPERATIONS = new Set([
+  "browser.click", "browser.fill", "browser.press", "browser.hover", "browser.focus",
+  "browser.check", "browser.uncheck", "browser.select", "browser.scroll", "browser.mouse",
+  "browser.drag", "browser.wheel", "browser.script",
+]);
 
 const PAGE_OPERATIONS = new Set([
   "browser.snapshot", "browser.query", "browser.wait", "browser.click", "browser.fill",
@@ -57,6 +81,8 @@ export const PROVIDER_FIDELITY = {
   input: "CDP Input domain for pointer, wheel, drag and keyboard; DOM value assignment for <select>",
   evaluation: "page code runs through CDP Runtime.evaluate",
   script: "supported — `page` is lucarne's in-page Playwright-shaped shim, whose acts take the same trusted-input path",
+  scriptTimeoutMs: SCRIPT_BUDGET_MS,
+  scriptTimeoutNote: "a requested script timeout is clamped to scriptTimeoutMs; supercode's own 12s provider-call timeout makes the registry's 30s default unreachable through the CLI",
   screenshots: false,
   refusals: "none beyond the operation's own failure; lucarne applies no content policy of its own",
 } as const;
@@ -354,6 +380,8 @@ export async function startBrowserProvider(options: BrowserProviderOptions): Pro
           endpoint: cdpBase,
           syntheticEvents: false,
           trustedInput: true,
+          operationBudgetMs: OPERATION_BUDGET_MS,
+          scriptTimeoutMs: SCRIPT_BUDGET_MS,
           pages: pages.map((p) => ({ id: p.id, url: p.url, title: p.title })),
           operations: [...NODE_OPERATIONS, ...PAGE_OPERATIONS].sort(),
           fidelity: PROVIDER_FIDELITY,
@@ -371,14 +399,40 @@ export async function startBrowserProvider(options: BrowserProviderOptions): Pro
       await ensureAgent();
       return { ok: true, operation, target: await pageTarget(), value: { requested: true } };
     }
-    const call = { protocol: BROWSER_OPERATION_PROTOCOL, operation, input };
+    // `browser.script` is the one operation a caller can ask to run longer than the wire allows.
+    let effective = input;
+    let notice: string | undefined;
+    if (operation === "browser.script") {
+      const requested = typeof input.timeout === "number" ? input.timeout : 30_000;
+      const applied = Math.min(requested, SCRIPT_BUDGET_MS);
+      if (applied < requested) {
+        notice = "script timeout clamped from " + requested + "ms to " + applied +
+          "ms — supercode abandons a provider call after 12s, so a longer script has no caller left to answer.";
+      }
+      effective = { ...input, timeout: applied };
+    }
+    const call = { protocol: BROWSER_OPERATION_PROTOCOL, operation, input: effective };
     const expression = "window.__lucarneBrowser.execute(" + JSON.stringify(call) + ")";
-    const out = await cdp.call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }) as
-      { result?: { value?: Record<string, unknown> }; exceptionDetails?: { text?: string } };
+    let out: { result?: { value?: Record<string, unknown> }; exceptionDetails?: { text?: string } };
+    try {
+      out = await cdp.call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }) as typeof out;
+    } catch (error) {
+      // The answer never came back because the page it was coming from is gone. For a mutating
+      // operation that is what SUCCESS looks like: the click landed and the navigation it caused
+      // tore down the context. For a read, nothing was learned, so it stays a failure.
+      const message = (error as Error)?.message ?? String(error);
+      if (MUTATING_OPERATIONS.has(operation) && navigatedAway(message)) {
+        await sleep(120);
+        await ensureLive();
+        await ensureAgent();
+        return { ok: true, operation, target: await pageTarget(), value: { acted: true, navigated: true }, ...(notice ? { notice } : {}) };
+      }
+      return failure(operation, "FAILED", message);
+    }
     if (out.exceptionDetails) return failure(operation, "FAILED", out.exceptionDetails.text ?? "the page agent threw");
     const value = out.result?.value;
     if (!value || typeof value.ok !== "boolean") return failure(operation, "FAILED", "the page agent returned no result");
-    return value;
+    return notice ? { ...value, notice } : value;
   };
 
   const serve = async (operation: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
