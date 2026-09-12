@@ -21,7 +21,6 @@
     "scripts/agent-propose.ts",
     "scripts/agent-visual-verify.ts",
     "scripts/agent.ts",
-    "scripts/autonomy-runner.mjs",
     "scripts/check-supply-chain.ts",
     "scripts/human-approval-gate.ts",
     "scripts/prompts/claude/develop.txt",
