@@ -116,7 +116,7 @@ all three platforms' feature surfaces) so "done" is provable. `✅ have · 🔨 
 
 **Phase 4 — agents, ecosystem, scale (P3): ✅ COMPLETE** — MCP server · computer-use REST endpoint · concurrency/pooling/queue · BYO-proxy + geo override · CORS · Python SDK · high-level-actions decision · Selenium/1Password/scrape/OTel/IndexedDB/profile-encryption documented. *(71/71 proofs total.)*
 
-**termfleet-native window kind — decided:** lucarne stays termfleet-agnostic (nothing in this repo depends on termfleet). The integration is the **separate `volter-ai/termfleet-lucarne` bridge** (an optional `@termfleet/lucarne` provider that registers lucarne sessions as windows); it is the right home for the window-kind, keeping the engine a clean, standalone OSS package. No termfleet coupling lands here.
+**provider-native window kind — decided:** lucarne stays provider-agnostic (nothing in this repo depends on any fleet tool). An integration that registers lucarne sessions as another product's windows lives in that product's own bridge, never here, keeping the engine a clean, standalone OSS package.
 
 > **The roadmap is fully built and proven.** Every operational feature in the union of Browserbase · Steel · Browserless is ✅ (with a committed acceptance proof) or a deliberately-inverted 🚫 non-goal (stealth/anti-detect/captcha/proxy-network/cloud) or a documented-deferral. **71/71 proofs green.**
 
@@ -162,7 +162,7 @@ full chain (console→bridge→lucarne) renders a live green pixel + click/type 
 **P0** — persistent profiles: set cookie/login in profile X, destroy + recreate same profile, assert it persists · seed: fixture profile's known cookie present in new session · clipboard: paste delivers text into a focused real-Chrome input · file upload: page's file input reports matching filename + sha256 · downloads: triggered download listed + fetched bytes' sha256 match.
 **P1** — durability: keepAlive session survives daemon kill+restart, reconnect by id, state intact · multi-tab: API lists 2 tabs, porthole switches, frames differ · touch: dispatched tap fires page handler at mapped coords · screenshot/PDF: valid PNG(magic+dims)/PDF(%PDF+pagecount) · health: count == live sessions · context export/import: exported cookies/storage equal after import.
 **P2** — logs: captured log contains the known request URL + console line · replay: ≥N frames for N seconds recorded · credentials/TOTP: auto-fills a fixture login, generates a valid TOTP · SDK/OpenAPI: SDK round-trips create/list/destroy, spec validates.
-**P3** — MCP: client calls create/list/drive/destroy with asserted results · termfleet-native: the in-UI proof (provider green + window renders live pixel + click/type lands) — committed, not ad hoc.
+**P3** — MCP: client calls create/list/drive/destroy with asserted results · provider-native: the in-UI proof (window renders live pixel + click/type lands) — committed, not ad hoc.
 
 ## Initiative II — Activity log: agent-ergonomic observation of the human (beyond parity)
 
