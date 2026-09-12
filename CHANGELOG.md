@@ -22,8 +22,7 @@
 
 ## lucarne 1.7.5
 
-- Packaging fix: `termfleet` is no longer installed with Lucarne. The repository's autonomy runner
-  uses `@termfleet/core` directly as development-only tooling; neither is part of Lucarne's runtime.
+- Packaging fix: no fleet tooling is installed with Lucarne; nothing of it is part of Lucarne's runtime.
 
 ## lucarne 1.7.3
 
