@@ -37,23 +37,17 @@ exactly one eligible dispatch happened, or after you verified none is eligible.
 You LAUNCH a worker through the Runner — the substrate-agnostic seam — passing the
 **GitHub issue number** as the work item, and a **`--branch`** that ISOLATES the work:
 
-```
-bun scripts/runner.ts launch develop --ref <issue-number> --branch agent/issue-<issue-number>
-```
-
-`--branch` requests isolation explicitly: a local runner runs develop in that branch's
-own worktree; the github runner isolates via its job checkout and ignores it (so the
-same launch is substrate-agnostic). Name the branch `agent/issue-<issue-number>` — the
-same branch the proposal lands on. This dispatches the worker (it fetches issue
-`<issue-number>` as its subject). Never call `gh workflow run`/`termfleet` directly,
-and never inline an agent. You launch develop only; the PR is reviewed and merged
-without you.
+Launch the `develop` skill as its own agent session in a fresh worktree on branch
+`agent/issue-<issue-number>` (the branch the proposal lands on), with issue
+`<issue-number>` as its subject; the session proposes through `bun scripts/agent-propose.ts`.
+Never call `gh workflow run` directly, and never inline the developer in your own
+session. You launch develop only; the PR is reviewed and merged without you.
 
 1. **Gather GitHub state.**
    - Open issues: `gh issue list --state open --json number,title,labels,assignees`.
    - Open agent PRs: `gh pr list --state open --json number,headRefName,labels,statusCheckRollup,mergeable,mergeStateStatus`
      (a PR's `agent/issue-<n>` branch ties it to issue `<n>`).
-   - In-flight develop runs: `bun scripts/runner.ts list develop`.
+   - In-flight develop runs: the open PRs on `agent/issue-*` branches and the agent sessions you launched.
    - **For an issue you might rework** (its PR has a failed check or a conflict), read its **comment history**:
      `gh issue view <n> --json comments`. Your own prior `oa-rework:` marker comments are the ONLY record of
      how many times this issue has been reworked — without them you cannot honor the rework cap below.
@@ -81,11 +75,11 @@ without you.
        Relaunching here opens a **duplicate** PR for work that already merged.
      - An **open** PR exists → it's in review (handled by the open-PR case above), not fresh.
      - **No** PR in any state → it's fresh: launch the developer:
-       `bun scripts/runner.ts launch develop --ref <number> --branch agent/issue-<number>`.
+       a fresh `develop` agent session on branch `agent/issue-<number>`.
    - **Else** (no `ready` issue without a PR; or WIP full) → stop without dispatch.
 4. Leave a short status comment on the issue you acted on (`gh issue comment <n>`),
    saying what you decided and why. Do not wait for the launched agent to finish.
 
 Never implement, review, or mark ACs passed yourself — develop and reviewer do that.
 Never launch `draft` from a scheduled tick unless a human explicitly asked this tick
-to draft new work; when they do: `bun scripts/runner.ts launch draft --ref <number>`.
+to draft new work; when they do, launch the `draft` skill as its own agent session for issue `<number>`.

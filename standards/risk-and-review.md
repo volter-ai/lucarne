@@ -24,7 +24,7 @@ machinery that runs it. (Scoped to OA's own files by name; your project's own `s
 - `.open-autonomy/**`
 - `scheduler/run.mjs`, `scheduler/schedule.json`
 - **every OA script** under `scripts/` (the runner + the privileged scripts `merge.yml`/`security.yml` run):
-  `scripts/runner.ts`, `run-agent.mjs`, `autonomy-runner.mjs`, `runner-defaults.mjs`, `agent.ts`,
+  `agent.ts`,
   `agent-propose.ts`, `agent-visual-verify.ts`, `check-supply-chain.ts`, `claude-agent-run.ts`,
   `human-approval-gate.ts`, `model-proxy-*.ts`, `rearm-auto-merge.ts`, `reconcile-merged-issues.ts`,
   `transcript.ts`, and `scripts/prompts/**` (the launch→skill mapping). NOT your project's own `scripts/`.

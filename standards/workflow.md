@@ -12,14 +12,14 @@ durable across stateless runs — not a local ztrack store. ztrack is the accept
 |---|---|
 | `draft` | open issue, **no** `ready` label (a raw request not yet shaped) |
 | `ready` | open issue with the **`ready`** label + acceptance criteria in its body |
-| in progress | a `develop` run is in flight (`runner.ts list develop`) — no separate marker needed |
+| in progress | a `develop` agent session is in flight on branch `agent/issue-<n>` — no separate marker needed |
 | in review | an **open PR** on branch `agent/issue-<n>` (the substrate triggers the `reviewer` on it) |
 | `done` | the **PR merged** (issue auto-closes via `Closes #<n>`) |
 | parked | the `needs-info` or `human-required` label (waiting on a human) |
 
 ## WIP
 
-- **At most one develop in flight.** The PM reads `runner.ts list develop` + the open agent PRs and does
+- **At most one develop in flight.** The PM reads the open agent PRs on `agent/issue-*` branches and does
   not launch a second developer while one is running or an issue already has an open PR.
 - PM is the only dispatcher — it launches `develop` (and `draft` on request) **by issue number**; it does
   NOT dispatch review.
