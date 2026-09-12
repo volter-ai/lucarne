@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // The github-code-host PROPOSE effect — what a `code:propose` agent DOES after its skill runs: turn the
 // working tree into an auto-merging PR. This is agent methodology, deterministic (mechanical wiring a model
-// must not skip), and runner-INDEPENDENT: it uses git + gh, which behave identically whether the agent was
-// launched by GitHub Actions or by a local termfleet window. The RUNNER only provides the credential + env;
+// must not skip), and runner-INDEPENDENT: it uses git + gh, which behave identically however the agent was
+// launched. The RUNNER only provides the credential + env;
 // this script (agent-owned) performs the propose. It used to be inline shell in substrate-github's emitted
 // workflow — that conflated agent methodology into the runner (docs/CODE_HOST_RESOURCES.md, the runner=launch
 // principle). Now the runner just invokes it.
@@ -11,8 +11,7 @@
 //   ISSUE_REF        work-item ref the trigger forwarded (empty for an autonomous/cron proposer)
 //   AGENT_NAME       the agent's name (for the run-history folder + commit/PR title)
 //   AGENT_BOT_NAME   / AGENT_BOT_EMAIL   git author identity for the agent-proposed commit
-//   REVIEW_WORKFLOW  the reviewer's workflow to dispatch on github (empty if no review edge / non-github runner)
-//   REVIEW_AGENT     the reviewer AGENT to launch via the runner seam (a local runner's review-edge realization)
+//   REVIEW_WORKFLOW  the reviewer's workflow to dispatch on github (empty if no review edge)
 //   GH_TOKEN, GITHUB_RUN_ID  (the repo is resolved from the remote via gh's {owner}/{repo} placeholders)
 import { execFileSync } from 'node:child_process';
 
@@ -22,7 +21,6 @@ const agentName = env.AGENT_NAME || 'agent';
 const runId = env.GITHUB_RUN_ID || '0';
 const rid = `ir-${agentName}-${runId}`;
 const reviewWorkflow = (env.REVIEW_WORKFLOW ?? '').trim();
-const reviewAgent = (env.REVIEW_AGENT ?? '').trim();
 const isNumericRef = /^[0-9]+$/.test(ref);
 const branch = ref ? `agent/issue-${ref}` : `agent/${rid}`;
 
@@ -110,17 +108,7 @@ const headSha = sh('git', ['rev-parse', 'HEAD'], { allowFail: true });
 const prNumber = sh('gh', ['pr', 'view', branch, '--json', 'number', '--jq', '.number'], { allowFail: true });
 dispatch('ci', ['ci.yml', '--ref', branch, '-f', `sha=${headSha}`, '-f', `pr=${prNumber}`]);
 // Trigger the review edge. A bot-opened PR fires no pull_request event, so the proposer KICKS the reviewer
-// itself. Either form resolves to "launch the reviewer for this PR" through the Runner seam, the
-// substrate-correct realization of develop's `review:` edge: github carries REVIEW_WORKFLOW and dispatches
-// it as a workflow; a local runner carries REVIEW_AGENT and launches a termfleet reviewer session via the
-// same `runner.ts launch` the PM uses. (`runner.ts launch <reviewer> --ref <pr>` on github would itself
-// `gh workflow run reviewer.yml -f issue_number=<pr>`, so the two are equivalent; we keep both env forms so
-// the proven github path dispatches exactly as before.)
+// itself: REVIEW_WORKFLOW names the reviewer's workflow and this dispatches it, the code-host realization
+// of develop's `review:` edge.
 if (reviewWorkflow) dispatch('review', [reviewWorkflow, '-f', `issue_number=${prNumber}`]);
-else if (reviewAgent && prNumber) {
-  for (let i = 0; i < 6; i++) {
-    if (ok('bun', ['scripts/runner.ts', 'launch', reviewAgent, '--ref', prNumber])) break;
-    sleep(4);
-  }
-}
 dispatch('human-approval', ['human-approval.yml', '-f', `pr=${prNumber}`]);
